@@ -1,33 +1,43 @@
 /**
- * Central tuning table for the V0.0 Technical Demo.
+ * Central tuning table.
  *
- * Every gameplay/physics constant lives here so that later versions can expose
+ * Every gameplay/physics constant lives here so that a later version can expose
  * them in a settings menu without hunting through the codebase.
  */
 
-/** Player capsule approximated as an axis-aligned box (V0.0 uses AABB collision). */
+/** The player is approximated by an axis-aligned box. */
 export interface PlayerConfig {
   /** Half-width of the player box on X/Z. */
   readonly radius: number;
-  /** Total height of the player box. */
-  readonly height: number;
-  /** Camera height above the player's feet. */
-  readonly eyeHeight: number;
-  /** Target horizontal speed for plain walking (m/s). */
+  /** Box height while standing. */
+  readonly standHeight: number;
+  /** Box height while crouched (the V0.1 "crouch height change"). */
+  readonly crouchHeight: number;
+  /** Camera height above the feet while standing. */
+  readonly standEyeHeight: number;
+  /** Camera height above the feet while crouched. */
+  readonly crouchEyeHeight: number;
+  /** Target horizontal speed when walking (m/s). */
   readonly walkSpeed: number;
-  /** Acceleration factor applied to the walk input (1/s), Quake-style. */
+  /** Target horizontal speed when sprinting (m/s). */
+  readonly sprintSpeed: number;
+  /** Target horizontal speed when crouched (m/s). */
+  readonly crouchSpeed: number;
+  /** Upward velocity a jump imparts (m/s). */
+  readonly jumpSpeed: number;
+  /** Acceleration factor applied to the movement input (1/s), Quake-style. */
   readonly groundAcceleration: number;
   /** Weaker acceleration while airborne, so movement stays air-controllable. */
   readonly airAcceleration: number;
   /** Ground friction coefficient (1/s). */
   readonly groundFriction: number;
-  /** Friction never drops the speed below this value in one step (m/s). */
+  /** Total speed shed per second is never below this (m/s). */
   readonly stopSpeed: number;
   /** Downward acceleration (m/s^2). Tuned for game feel, not realism. */
   readonly gravity: number;
   /** Terminal falling speed (m/s). */
   readonly maxFallSpeed: number;
-  /** Highest speed the simulation will ever integrate (guards against NaN/blowups). */
+  /** Highest speed the simulation will ever integrate (guards against blow-ups). */
   readonly maxSpeed: number;
 }
 
@@ -41,12 +51,16 @@ export interface WorldConfig {
   /** Maximum distance the collision solver moves the player per sub-step (m). */
   readonly maxCollisionSubStep: number;
   /**
-   * Emergency floor: if the player's feet ever drop below this Y the demo
-   * snaps them back and logs a warning. V0.0 has no fall-death or respawn
-   * system (those arrive in V0.1) - this only prevents an endless fall off
-   * the demo geometry.
+   * Emergency floor. If the player ever drops below this the demo snaps them
+   * back to their spawn point. Fall *death* is handled by the level's kill
+   * plane; this only guarantees the demo cannot end up in the void.
    */
   readonly safetyFloorY: number;
+}
+
+export interface RespawnConfig {
+  /** Seconds between the player's death and their automatic respawn. */
+  readonly delaySeconds: number;
 }
 
 export interface CameraConfig {
@@ -70,6 +84,7 @@ export interface DebugConfig {
 export interface GameConfig {
   readonly player: PlayerConfig;
   readonly world: WorldConfig;
+  readonly respawn: RespawnConfig;
   readonly camera: CameraConfig;
   readonly debug: DebugConfig;
 }
@@ -77,9 +92,17 @@ export interface GameConfig {
 export const DEFAULT_CONFIG: GameConfig = {
   player: {
     radius: 0.35,
-    height: 1.8,
-    eyeHeight: 1.65,
+    standHeight: 1.8,
+    crouchHeight: 1.1,
+    standEyeHeight: 1.65,
+    crouchEyeHeight: 0.95,
     walkSpeed: 7.5,
+    sprintSpeed: 11.5,
+    // Crouching is a deliberate, slow shuffle rather than a stealth-walk.
+    crouchSpeed: 3.8,
+    // Apex is jumpSpeed^2 / (2 * gravity) = 1.0 m, which clears the 0.6 m and
+    // 1.2 m ledges on the demo roof when chained.
+    jumpSpeed: 7.2,
     groundAcceleration: 11,
     airAcceleration: 2.5,
     groundFriction: 9,
@@ -95,10 +118,13 @@ export const DEFAULT_CONFIG: GameConfig = {
     maxCollisionSubStep: 0.2,
     safetyFloorY: -250,
   },
+  respawn: {
+    delaySeconds: 1.6,
+  },
   camera: {
     fov: 82,
-    near: 0.05,
-    far: 1000,
+    near: 0.1,
+    far: 1200,
     sensitivity: 0.0022,
     maxPitch: (89 * Math.PI) / 180,
   },

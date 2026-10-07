@@ -14,7 +14,7 @@ import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
 import { buildScene, type BuiltScene } from './sceneBuilder.js';
-import { GraphicsUnavailableError, type GameViewLike } from './types.js';
+import { GraphicsUnavailableError, NO_ASSETS, type GameViewLike, type SceneAssets } from './types.js';
 
 export { GraphicsUnavailableError };
 export type { GameViewLike };
@@ -23,6 +23,12 @@ export interface GameViewOptions {
   readonly canvas: HTMLCanvasElement;
   readonly definition: LevelDefinition;
   readonly config: GameConfig;
+  /**
+   * Flat textures for the sky and the city backdrop.
+   *
+   * The view takes ownership: they are disposed with the rest of the scene.
+   */
+  readonly assets?: SceneAssets;
 }
 
 export class GameView implements GameViewLike {
@@ -67,9 +73,13 @@ export class GameView implements GameViewLike {
     // rolling as the player turns.
     this.camera.rotation.order = 'YXZ';
 
-    this.built = buildScene(options.definition);
+    this.built = buildScene(options.definition, options.assets ?? NO_ASSETS);
 
-    logger.info('render', 'view created', { renderer: this.rendererInfo ?? 'unknown' });
+    logger.info('render', 'view created', {
+      renderer: this.rendererInfo ?? 'unknown',
+      sky: this.built.sky !== null,
+      backdrop: this.built.backdrop !== null,
+    });
   }
 
   get scene(): THREE.Scene {

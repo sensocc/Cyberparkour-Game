@@ -136,18 +136,29 @@ export class CollisionWorld {
 
     // Resting contact produces a delta of zero on Y, which the sweep cannot
     // see. Probe a hair downwards so friction and gravity keep applying.
-    if (!result.grounded) {
+    //
+    // A rising player is deliberately not probed: they are leaving the ground,
+    // and reporting them as supported would let a jump re-trigger every step.
+    if (!result.grounded && velocity.y <= 0) {
       const ground = this.findGround(box, this.groundProbe);
       if (ground) {
         result.grounded = true;
         if (velocity.y < 0) velocity.y = 0;
         result.groundId = ground.id;
       }
-    } else {
+    } else if (result.grounded) {
       result.groundId = this.findGround(box, this.groundProbe)?.id ?? null;
     }
 
     return result;
+  }
+
+  /** True when the box does not overlap any collider. */
+  isFree(box: AABB): boolean {
+    for (const collider of this.colliders) {
+      if (overlaps(box, collider.box)) return false;
+    }
+    return true;
   }
 
   /** True when the box is supported from below within `distance`. */

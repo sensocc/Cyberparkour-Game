@@ -34,7 +34,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'lcov'],
-      include: ['src/**/*.ts'],
+      // `tools/` ships the texture generator, which is real (and tested) code.
+      include: ['src/**/*.ts', 'tools/**/*.ts'],
       exclude: ['src/main.ts', 'src/**/index.ts'],
     },
   },

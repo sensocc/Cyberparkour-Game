@@ -2,9 +2,13 @@
  * Entry point.
  *
  * Wires the four layers together - simulation (`Game`), presentation (`GameUi`),
- * input and diagnostics - and installs the global crash handlers. Everything
- * that can fail during boot does so *after* the reporter is installed, so even a
- * broken start-up produces a downloadable report.
+ * input and diagnostics - and installs the global crash handlers.
+ *
+ * Boot happens in two phases so the title screen is up immediately rather than
+ * waiting on the network: the shell (DOM, UI, crash reporter) is built first,
+ * then the flat textures are loaded, then the game is created. Everything that
+ * can fail does so *after* the reporter is installed, so even a broken start-up
+ * produces a downloadable report.
  */
 
 import './style.css';
@@ -28,6 +32,8 @@ import {
 import { Game } from './game/game.js';
 import { DEMO_ROOF } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
+import { disposeSceneAssets, loadSceneAssets } from './render/assets.js';
+import { NO_ASSETS, type SceneAssets } from './render/types.js';
 import { GameView } from './render/view.js';
 import { DebugHud } from './ui/hud.js';
 import { copyReport, downloadReport, downloadReports } from './ui/reportIO.js';
@@ -45,7 +51,19 @@ function requireElement<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-function boot(): CyberparkourHandle {
+/** Everything that exists before the renderer does. */
+interface Shell {
+  readonly app: HTMLElement;
+  readonly canvasHost: HTMLElement;
+  readonly input: InputState;
+  readonly hud: DebugHud;
+  readonly ui: GameUi;
+  readonly reporter: CrashReporter;
+  /** Assigned once the game exists; the UI callbacks read it lazily. */
+  readonly holder: { game: Game | null };
+}
+
+function createShell(): Shell {
   const app = requireElement('app');
   const canvasHost = requireElement('canvas-host');
   const uiRoot = requireElement('ui-root');
@@ -74,13 +92,18 @@ function boot(): CyberparkourHandle {
       onResume: () => holder.game?.resume(),
       onRestart: () => holder.game?.restart(),
       onQuit: () => holder.game?.quit(),
+      onRespawn: () => holder.game?.respawn(),
       onDownloadReport: (report) => {
         const ok = downloadReport(report);
         ui.toast(ok ? 'Crash report downloaded.' : 'The browser blocked the download.');
       },
       onCopyReport: (report) => {
         void copyReport(report).then((ok) => {
-          ui.toast(ok ? 'Crash report copied to the clipboard.' : 'Copy failed - select the text and copy it manually.');
+          ui.toast(
+            ok
+              ? 'Crash report copied to the clipboard.'
+              : 'Copy failed - select the text and copy it manually.',
+          );
         });
       },
       onDownloadRecovered: () => {
@@ -135,55 +158,87 @@ function boot(): CyberparkourHandle {
   reporter.install();
   logger.info('app', `${DEMO_LABEL} booting`);
 
+  return { app, canvasHost, input, hud, ui, reporter, holder };
+}
+
+/** Loads the flat textures, degrading to flat colours rather than failing. */
+async function loadAssets(): Promise<SceneAssets> {
+  try {
+    return await loadSceneAssets();
+  } catch (error) {
+    logger.warn('app', 'scene textures could not be loaded - using flat colours', {
+      error: String(error),
+    });
+    return NO_ASSETS;
+  }
+}
+
+function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
   // From here on, anything thrown is captured and shown rather than lost.
   const game = new Game({
-    host: canvasHost,
-    pointerLockTarget: app,
-    ui,
-    hud,
-    input,
-    crashReporter: reporter,
+    host: shell.canvasHost,
+    pointerLockTarget: shell.app,
+    ui: shell.ui,
+    hud: shell.hud,
+    input: shell.input,
+    crashReporter: shell.reporter,
     logBuffer: logger,
     config: DEFAULT_CONFIG,
     level: DEMO_ROOF,
-    createView: (canvas, definition, config) => new GameView({ canvas, definition, config }),
+    createView: (canvas, definition, config) =>
+      new GameView({ canvas, definition, config, assets }),
     onStatusChange: (status) => {
       logger.debug('app', `status -> ${status}`);
     },
   });
-  holder.game = game;
+  shell.holder.game = game;
 
   globalThis.addEventListener('pagehide', () => {
     logger.info('app', 'page hidden - releasing resources');
-    reporter.uninstall();
+    shell.reporter.uninstall();
     game.dispose();
+    // The view borrows the textures, so this is the only place they are freed.
+    disposeSceneAssets(assets);
   });
 
   logger.info('app', 'ready');
-  return { game, reporter, logs: logger };
+  return { game, reporter: shell.reporter, logs: logger };
 }
 
-try {
-  const handle = boot();
-  // Handy in the devtools console: `cyberparkour.game.snapshot()`.
-  (globalThis as { cyberparkour?: CyberparkourHandle }).cyberparkour = handle;
-} catch (error) {
-  // Last resort: the reporter itself could not be created, so fall back to a
-  // plain message rather than a blank screen.
-  logger.error('app', 'boot failed', { error: String(error) });
-
+/** Last-resort panel for a failure that happened before the UI existed. */
+function renderBootFailure(error: unknown): void {
   const root = document.getElementById('ui-root') ?? document.body;
   const panel = document.createElement('div');
   panel.className = 'screen screen--crash';
+
   const inner = document.createElement('div');
   inner.className = 'panel';
+
   const heading = document.createElement('h2');
   heading.className = 'screen__heading screen__heading--error';
   heading.textContent = 'Cyberparkour failed to start';
+
   const detail = document.createElement('pre');
   detail.className = 'crash__stack';
   detail.textContent = error instanceof Error ? (error.stack ?? error.message) : String(error);
+
   inner.append(heading, detail);
   panel.append(inner);
   root.append(panel);
+}
+
+let shell: Shell | null = null;
+
+try {
+  shell = createShell();
+  const assets = await loadAssets();
+  const handle = createGame(shell, assets);
+
+  // Handy in the devtools console: `cyberparkour.game.snapshot()`.
+  (globalThis as { cyberparkour?: CyberparkourHandle }).cyberparkour = handle;
+} catch (error) {
+  logger.error('app', 'boot failed', { error: String(error) });
+  // If the reporter made it up, the crash screen is already showing; otherwise
+  // fall back to a plain message rather than a blank page.
+  if (!shell) renderBootFailure(error);
 }

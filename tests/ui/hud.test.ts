@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { formatNumber, formatVector } from '../../src/ui/dom.js';
-import { DebugHud, formatHudRows, type HudSnapshot } from '../../src/ui/hud.js';
+import { DebugHud, describeGait, formatHudRows, type HudSnapshot } from '../../src/ui/hud.js';
 
 const SNAPSHOT: HudSnapshot = {
   fps: 59.94,
@@ -16,6 +16,10 @@ const SNAPSHOT: HudSnapshot = {
   pitch: -0.5,
   grounded: true,
   groundId: 'roof-deck',
+  stance: 'standing',
+  sprinting: false,
+  alive: true,
+  deaths: 0,
   frameCount: 1234,
   elapsedSeconds: 20.5,
   renderer: 'Test GPU',
@@ -78,6 +82,50 @@ describe('formatHudRows', () => {
     const labels = formatHudRows(SNAPSHOT).map((row) => row.label);
     expect(labels).toEqual(formatHudRows({ ...SNAPSHOT, fps: 1 }).map((row) => row.label));
     expect(labels).toContain('worst');
+    expect(labels).toContain('gait');
+    expect(labels).toContain('deaths');
+  });
+
+  it('names the locomotion mode, so crouch and sprint are visible', () => {
+    const rows = (snapshot: HudSnapshot): Record<string, string> =>
+      Object.fromEntries(formatHudRows(snapshot).map((row) => [row.label, row.value]));
+
+    expect(rows({ ...SNAPSHOT, sprinting: true }).gait).toBe('sprint');
+    expect(rows({ ...SNAPSHOT, sprinting: false }).gait).toBe('walk');
+    expect(rows({ ...SNAPSHOT, stance: 'crouched', sprinting: true }).gait).toBe('crouch');
+    expect(
+      rows({ ...SNAPSHOT, velocity: { x: 0, y: 0, z: 0 } }).gait,
+    ).toBe('idle');
+  });
+
+  it('reports a fallen player distinctly from an airborne one', () => {
+    const rows = (snapshot: HudSnapshot): Record<string, string> =>
+      Object.fromEntries(formatHudRows(snapshot).map((row) => [row.label, row.value]));
+
+    expect(rows({ ...SNAPSHOT, alive: false, grounded: false }).state).toBe('FALLEN');
+    expect(rows({ ...SNAPSHOT, grounded: false }).state).toBe('airborne');
+    expect(rows({ ...SNAPSHOT, groundId: null }).state).toBe('grounded');
+  });
+
+  it('counts deaths', () => {
+    const rows = Object.fromEntries(formatHudRows({ ...SNAPSHOT, deaths: 7 }).map((row) => [row.label, row.value]));
+    expect(rows.deaths).toBe('7');
+  });
+});
+
+describe('describeGait', () => {
+  it('prefers crouch over sprint', () => {
+    expect(describeGait('crouched', true, 10)).toBe('crouch');
+  });
+
+  it('reports idle below a walking pace', () => {
+    expect(describeGait('standing', false, 0)).toBe('idle');
+    expect(describeGait('standing', true, 0.05)).toBe('idle');
+  });
+
+  it('distinguishes walking from sprinting', () => {
+    expect(describeGait('standing', false, 7.5)).toBe('walk');
+    expect(describeGait('standing', true, 11.5)).toBe('sprint');
   });
 });
 

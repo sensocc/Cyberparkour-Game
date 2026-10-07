@@ -100,6 +100,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
       onStart: vi.fn(),
       onResume: vi.fn(),
       onRestart: vi.fn(),
+      onRespawn: vi.fn(),
       onQuit: vi.fn(),
       onDownloadReport: vi.fn(),
       onCopyReport: vi.fn(),
@@ -216,7 +217,7 @@ describe('Game.start', () => {
     const frame = harness.views[0]?.frames.at(-1);
     expect(frame).toBeDefined();
     // Feet rest on the deck at y = 0.001 (one collision skin), eye height 1.65.
-    expect(frame?.eye.y).toBeCloseTo(0.001 + DEFAULT_CONFIG.player.eyeHeight, 3);
+    expect(frame?.eye.y).toBeCloseTo(0.001 + DEFAULT_CONFIG.player.standEyeHeight, 3);
   });
 
   it('never renders the camera inside the floor', () => {
@@ -225,7 +226,7 @@ describe('Game.start', () => {
     stepFrames(harness, 90);
 
     for (const frame of harness.views[0]?.frames ?? []) {
-      expect(frame.eye.y).toBeGreaterThan(DEFAULT_CONFIG.player.height - 0.5);
+      expect(frame.eye.y).toBeGreaterThan(DEFAULT_CONFIG.player.standHeight - 0.5);
     }
   });
 
@@ -313,7 +314,13 @@ describe('Game.pause and resume', () => {
     harness.input.keyDown('KeyW');
     harness.game.pause('test');
 
-    expect(harness.input.moveInput).toEqual({ forward: 0, right: 0 });
+    expect(harness.input.moveInput).toMatchObject({
+      forward: 0,
+      right: 0,
+      sprint: false,
+      jump: false,
+      crouch: false,
+    });
   });
 
   it('does nothing when not playing', () => {
@@ -676,7 +683,10 @@ describe('Game snapshot', () => {
     expect(snapshot.stats.elapsedSeconds).toBeGreaterThan(0);
     expect(snapshot.renderer).toBe('Fake GPU');
     expect(snapshot.player.grounded).toBe(true);
-    expect(snapshot.player.groundId).toBe('roof-deck');
+    expect(snapshot.player.groundId).toBe('deck');
+    expect(snapshot.player.stance).toBe('standing');
+    expect(snapshot.player.alive).toBe(true);
+    expect(snapshot.player.deaths).toBe(0);
   });
 
   it('is safe to read before the game has started', () => {
@@ -703,5 +713,184 @@ describe('Game resize handling', () => {
     harness.game.start();
     harness.game.quit();
     expect(() => window.dispatchEvent(new Event('resize'))).not.toThrow();
+  });
+});
+
+describe('Game locomotion abilities', () => {
+  it('sprints faster than it walks when Shift is held', () => {
+    const walk = createHarness();
+    walk.game.start();
+    walk.input.keyDown('KeyW');
+    stepFrames(walk, 90);
+
+    const sprint = createHarness();
+    sprint.game.start();
+    sprint.input.keyDown('KeyW');
+    sprint.input.keyDown('ShiftLeft');
+    stepFrames(sprint, 90);
+
+    const walked = walk.game.snapshot().player.horizontalSpeed;
+    const sprinted = sprint.game.snapshot().player.horizontalSpeed;
+
+    expect(walked).toBeCloseTo(DEFAULT_CONFIG.player.walkSpeed, 1);
+    expect(sprinted).toBeCloseTo(DEFAULT_CONFIG.player.sprintSpeed, 1);
+    expect(sprinted).toBeGreaterThan(walked);
+  });
+
+  it('jumps on Space and lands again', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 30);
+
+    const groundY = harness.game.snapshot().player.position.y;
+    harness.input.keyDown('Space');
+    stepFrames(harness, 20);
+    const airborne = harness.game.snapshot().player;
+    harness.input.keyUp('Space');
+    stepFrames(harness, 120);
+
+    expect(airborne.grounded).toBe(false);
+    expect(airborne.position.y).toBeGreaterThan(groundY + 0.5);
+
+    const landed = harness.game.snapshot().player;
+    expect(landed.grounded).toBe(true);
+    expect(landed.position.y).toBeCloseTo(0.001, 3);
+  });
+
+  it('crouches on Ctrl, changing the stance and the camera height', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 60);
+
+    const standingEye = harness.views[0]?.frames.at(-1)?.eye.y ?? 0;
+
+    harness.input.keyDown('ControlLeft');
+    stepFrames(harness, 5);
+
+    expect(harness.game.snapshot().player.stance).toBe('crouched');
+    const crouchedEye = harness.views[0]?.frames.at(-1)?.eye.y ?? 0;
+    expect(standingEye - crouchedEye).toBeCloseTo(
+      DEFAULT_CONFIG.player.standEyeHeight - DEFAULT_CONFIG.player.crouchEyeHeight,
+      3,
+    );
+
+    // Releasing stands back up.
+    harness.input.keyUp('ControlLeft');
+    stepFrames(harness, 5);
+    expect(harness.game.snapshot().player.stance).toBe('standing');
+  });
+
+  it('reports the gait in the debug HUD', () => {
+    const harness = createHarness();
+    harness.game.start();
+
+    harness.input.keyDown('KeyW');
+    harness.input.keyDown('ShiftLeft');
+    stepFrames(harness, 90);
+
+    const text = document.querySelector('.hud__list')?.textContent ?? '';
+    expect(text).toContain('sprint');
+  });
+});
+
+describe('Game fall detection and respawn', () => {
+  /** Runs south off the deck and waits for the death to register. */
+  function fallOffTheRoof(harness: Harness): { diedAfter: number; overlayShown: boolean } {
+    harness.game.start();
+    stepFrames(harness, 20);
+
+    // The spawn is ~7 m from the south edge; sprinting backwards gets there fast.
+    harness.input.keyDown('KeyS');
+    harness.input.keyDown('ShiftLeft');
+
+    for (let frame = 0; frame < 600; frame += 1) {
+      stepFrames(harness, 1);
+      if (harness.ui.isDeathVisible) {
+        return { diedAfter: frame, overlayShown: true };
+      }
+    }
+    return { diedAfter: -1, overlayShown: false };
+  }
+
+  it('shows the death overlay when the player falls off the roof', () => {
+    const harness = createHarness();
+    const { overlayShown } = fallOffTheRoof(harness);
+
+    expect(overlayShown).toBe(true);
+    expect(harness.game.snapshot().player.alive).toBe(false);
+    expect(harness.game.snapshot().player.deaths).toBe(1);
+    expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('respawning clears the overlay and returns the player to spawn', () => {
+    const harness = createHarness();
+    fallOffTheRoof(harness);
+
+    harness.input.keyUp('KeyS');
+    harness.input.keyUp('ShiftLeft');
+
+    // Long enough for the respawn delay.
+    let respawned = false;
+    for (let frame = 0; frame < 600 && !respawned; frame += 1) {
+      stepFrames(harness, 1);
+      if (!harness.ui.isDeathVisible) respawned = true;
+    }
+
+    expect(respawned).toBe(true);
+    const player = harness.game.snapshot().player;
+    expect(player.alive).toBe(true);
+    expect(player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 3);
+    expect(player.position.x).toBeCloseTo(DEMO_ROOF.spawn.position.x, 3);
+    expect(player.deaths).toBe(1);
+    // Back in play, so the crosshair returns.
+    expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('respawn() returns the player to spawn on request', () => {
+    const harness = createHarness();
+    harness.game.start();
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 60);
+    harness.input.keyUp('KeyW');
+    expect(harness.game.snapshot().player.position.z).toBeLessThan(DEMO_ROOF.spawn.position.z - 1);
+
+    harness.game.respawn();
+
+    const player = harness.game.snapshot().player;
+    expect(player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 9);
+    expect(player.velocity).toEqual({ x: 0, y: 0, z: 0 });
+    expect(player.alive).toBe(true);
+    // A respawn is not a restart: the death count survives.
+    expect(player.deaths).toBe(0);
+  });
+
+  it('restarting clears the death count and the overlay', () => {
+    const harness = createHarness();
+    fallOffTheRoof(harness);
+    expect(harness.game.snapshot().player.deaths).toBe(1);
+
+    harness.game.restart();
+
+    expect(harness.game.snapshot().player.deaths).toBe(0);
+    expect(harness.ui.isDeathVisible).toBe(false);
+    expect(harness.game.snapshot().player.alive).toBe(true);
+  });
+
+  it('the death overlay is not up during normal play', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 120);
+    expect(harness.ui.isDeathVisible).toBe(false);
+  });
+
+  it('pausing while dead keeps the overlay and pauses the loop', () => {
+    const harness = createHarness();
+    fallOffTheRoof(harness);
+
+    harness.game.pause('test');
+
+    expect(harness.game.currentStatus).toBe('paused');
+    // Respawn is driven by the simulation, which is frozen while paused.
+    expect(harness.ui.isDeathVisible).toBe(true);
   });
 });

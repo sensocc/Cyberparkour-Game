@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_BINDINGS, actionForKey, isUiAction } from '../../src/input/bindings.js';
 import { InputState } from '../../src/input/inputState.js';
 
+/** The movement axes only; the sprint/jump/crouch flags are tested separately. */
+function axes(input: { forward: number; right: number }): { forward: number; right: number } {
+  return { forward: input.forward, right: input.right };
+}
+
 describe('bindings', () => {
   it('binds WASD and the arrow keys to movement', () => {
     expect(DEFAULT_BINDINGS.moveForward).toEqual(['KeyW', 'ArrowUp']);
@@ -28,7 +33,7 @@ describe('bindings', () => {
 describe('InputState movement', () => {
   it('reports no input when nothing is held', () => {
     const input = new InputState();
-    expect(input.moveInput).toEqual({ forward: 0, right: 0 });
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 0 });
     expect(input.heldKeyCount).toBe(0);
   });
 
@@ -36,16 +41,16 @@ describe('InputState movement', () => {
     const input = new InputState();
 
     input.keyDown('KeyW');
-    expect(input.moveInput).toEqual({ forward: 1, right: 0 });
+    expect(axes(input.moveInput)).toEqual({ forward: 1, right: 0 });
 
     input.keyDown('KeyD');
-    expect(input.moveInput).toEqual({ forward: 1, right: 1 });
+    expect(axes(input.moveInput)).toEqual({ forward: 1, right: 1 });
 
     input.keyDown('KeyS');
-    expect(input.moveInput).toEqual({ forward: 0, right: 1 });
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 1 });
 
     input.keyDown('KeyA');
-    expect(input.moveInput).toEqual({ forward: 0, right: 0 });
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 0 });
   });
 
   it('cancels opposing keys', () => {
@@ -62,7 +67,7 @@ describe('InputState movement', () => {
     const input = new InputState();
     input.keyDown('ArrowUp');
     input.keyDown('ArrowRight');
-    expect(input.moveInput).toEqual({ forward: 1, right: 1 });
+    expect(axes(input.moveInput)).toEqual({ forward: 1, right: 1 });
   });
 
   it('releases keys on keyUp', () => {
@@ -77,7 +82,7 @@ describe('InputState movement', () => {
     const input = new InputState();
     input.keyDown('KeyQ');
     input.keyDown('KeyZ');
-    expect(input.moveInput).toEqual({ forward: 0, right: 0 });
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 0 });
     expect(input.isPressed('KeyQ')).toBe(true);
     expect(input.heldKeyCount).toBe(2);
   });
@@ -94,6 +99,51 @@ describe('InputState movement', () => {
     input.keyUp('KeyI');
     input.keyDown('KeyW');
     expect(input.moveInput.forward).toBe(0);
+  });
+});
+
+describe('InputState ability flags', () => {
+  it('reports sprint, jump and crouch as held states', () => {
+    const input = new InputState();
+    expect(input.moveInput.sprint).toBe(false);
+    expect(input.moveInput.jump).toBe(false);
+    expect(input.moveInput.crouch).toBe(false);
+
+    input.keyDown('ShiftLeft');
+    input.keyDown('Space');
+    input.keyDown('ControlLeft');
+
+    expect(input.moveInput).toMatchObject({ sprint: true, jump: true, crouch: true });
+  });
+
+  it('accepts either shift as sprint', () => {
+    const input = new InputState();
+    input.keyDown('ShiftRight');
+    expect(input.moveInput.sprint).toBe(true);
+  });
+
+  it('accepts C as an alternative crouch key', () => {
+    const input = new InputState();
+    input.keyDown('KeyC');
+    expect(input.moveInput.crouch).toBe(true);
+  });
+
+  it('releases the flags with the keys', () => {
+    const input = new InputState();
+    input.keyDown('ShiftLeft');
+    input.keyDown('Space');
+    input.keyUp('ShiftLeft');
+    input.keyUp('Space');
+
+    expect(input.moveInput).toMatchObject({ sprint: false, jump: false });
+  });
+
+  it('never queues sprint, jump or crouch as UI actions', () => {
+    const input = new InputState();
+    input.keyDown('ShiftLeft');
+    input.keyDown('Space');
+    input.keyDown('ControlLeft');
+    expect(input.consumeActions()).toEqual([]);
   });
 });
 
@@ -166,7 +216,7 @@ describe('InputState.clear', () => {
     input.clear();
 
     expect(input.heldKeyCount).toBe(0);
-    expect(input.moveInput).toEqual({ forward: 0, right: 0 });
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 0 });
     expect(input.consumeActions()).toEqual([]);
     expect(input.consumePointerDelta()).toEqual({ dx: 0, dy: 0 });
   });

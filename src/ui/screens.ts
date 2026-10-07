@@ -15,6 +15,8 @@ export interface UiCallbacks {
   readonly onStart: () => void;
   readonly onResume: () => void;
   readonly onRestart: () => void;
+  /** Return the player to their spawn point without restarting the session. */
+  readonly onRespawn: () => void;
   readonly onQuit: () => void;
   readonly onDownloadReport: (report: CrashReport) => void;
   readonly onCopyReport: (report: CrashReport) => void;
@@ -31,6 +33,9 @@ export interface GameUiOptions {
 const CONTROLS: readonly [string, string][] = [
   ['W A S D', 'Move'],
   ['Mouse', 'Look'],
+  ['Shift', 'Sprint'],
+  ['Space', 'Jump'],
+  ['Ctrl / C', 'Crouch'],
   ['F3', 'Toggle debug info'],
   ['Esc', 'Pause'],
   ['R', 'Restart'],
@@ -44,12 +49,17 @@ export class GameUi {
   private readonly endedScreen: HTMLElement;
   private readonly crashScreen: HTMLElement;
   private readonly crosshair: HTMLElement;
+  private readonly deathOverlay: HTMLElement;
+  private readonly deathTitle: HTMLElement;
+  private readonly deathDetail: HTMLElement;
   private readonly crashTitle: HTMLElement;
   private readonly crashMeta: HTMLElement;
   private readonly crashStack: HTMLElement;
   private readonly recoveredBanner: HTMLElement;
   private readonly noticeBox: HTMLElement;
   private currentReport: CrashReport | null = null;
+  /** True while the presentation is "playing", so the crosshair can come back. */
+  private playMode = false;
 
   constructor(options: GameUiOptions) {
     this.callbacks = options.callbacks;
@@ -82,6 +92,10 @@ export class GameUi {
       el('h2', { className: 'screen__heading', text: 'PAUSED' }),
       el('p', { className: 'screen__sub', text: 'Mouse look is released while paused.' }),
       button('Resume', { className: 'btn btn--primary', onClick: () => this.callbacks.onResume() }),
+      button('Respawn', {
+        title: 'Return to the spawn point without restarting',
+        onClick: () => this.callbacks.onRespawn(),
+      }),
       button('Restart', { onClick: () => this.callbacks.onRestart() }),
       button('Quit demo', { className: 'btn btn--danger', onClick: () => this.callbacks.onQuit() }),
       this.buildControls(),
@@ -138,8 +152,24 @@ export class GameUi {
     this.crosshair = el('div', { className: 'crosshair', attrs: { 'aria-hidden': 'true' } });
     setHidden(this.crosshair, true);
 
+    // The death overlay is not a screen: it appears *during* play, over the
+    // scene, and the game keeps running underneath it.
+    this.deathTitle = el('h2', { className: 'death__title', text: 'YOU FELL' });
+    this.deathDetail = el('p', { className: 'death__detail' });
+
+    const deathPanel = el('div', { className: 'death__panel' });
+    deathPanel.append(this.deathTitle, this.deathDetail);
+
+    this.deathOverlay = el('div', {
+      className: 'death',
+      attrs: { role: 'status', 'aria-live': 'polite' },
+    });
+    this.deathOverlay.append(deathPanel);
+    setHidden(this.deathOverlay, true);
+
     this.root.append(
       this.crosshair,
+      this.deathOverlay,
       this.startScreen,
       this.pauseScreen,
       this.endedScreen,
@@ -153,24 +183,47 @@ export class GameUi {
   // -------------------------------------------------------------- visibility
 
   showStart(): void {
+    this.playMode = false;
     this.setActive(this.startScreen);
     this.setCrosshair(false);
+    this.hideDeath();
   }
 
   showPause(): void {
+    this.playMode = false;
     this.setActive(this.pauseScreen);
     this.setCrosshair(false);
   }
 
   showEnded(): void {
+    this.playMode = false;
     this.setActive(this.endedScreen);
     this.setCrosshair(false);
   }
 
   /** Hides every screen: the game is running. */
   showGame(): void {
+    this.playMode = true;
     this.setActive(null);
     this.setCrosshair(true);
+    this.hideDeath();
+  }
+
+  /** Shows the "you died" overlay while the respawn timer runs. */
+  showDeath(title: string, detail: string): void {
+    this.deathTitle.textContent = title;
+    this.deathDetail.textContent = detail;
+    setHidden(this.deathOverlay, false);
+    this.setCrosshair(false);
+  }
+
+  hideDeath(): void {
+    setHidden(this.deathOverlay, true);
+    if (this.playMode) this.setCrosshair(true);
+  }
+
+  get isDeathVisible(): boolean {
+    return !this.deathOverlay.hasAttribute('hidden');
   }
 
   showCrash(report: CrashReport): void {
@@ -191,6 +244,7 @@ export class GameUi {
       ...metaRow('gpu', report.environment.renderer ?? 'unknown'),
     );
 
+    this.playMode = false;
     this.setActive(this.crashScreen);
     this.setCrosshair(false);
   }
@@ -248,6 +302,7 @@ export class GameUi {
       setHidden(candidate, candidate !== screen);
     }
   }
+
 
   private setCrosshair(visible: boolean): void {
     setHidden(this.crosshair, !visible);

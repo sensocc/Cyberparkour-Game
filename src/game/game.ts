@@ -27,8 +27,11 @@ import { buildLevel, type BuiltLevel } from './level/level.js';
 import { DEMO_ROOF, type LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
+  eyeHeight,
   interpolatePlayerPosition,
   resetPlayerState,
+  respawnPlayer,
+  standingSize,
   snapshotPlayer,
   stepPlayer,
   type PlayerSnapshot,
@@ -96,6 +99,8 @@ export class Game {
   private hadPointerLock = false;
   private lastHudUpdate = 0;
   private resizeObserver: ResizeObserver | null = null;
+  /** Whether the sprint key is held, for the debug HUD only. */
+  private sprinting = false;
 
   // Reused per-frame scratch objects: the render path allocates nothing.
   private readonly scratchFeet: Vec3 = vec3();
@@ -117,7 +122,7 @@ export class Game {
     // so an authoring mistake surfaces at boot rather than on first frame.
     this.level = buildLevel(this.definition, {
       maxSubStep: this.config.world.maxCollisionSubStep,
-      player: this.config.player,
+      player: standingSize(this.config.player),
     });
     this.player = createPlayerState(this.definition.spawn);
 
@@ -289,15 +294,49 @@ export class Game {
 
   // ------------------------------------------------------------- internals
 
+  /** Options handed to every `stepPlayer` call. */
+  private stepOptions() {
+    return {
+      world: this.level.world,
+      config: this.config.player,
+      killPlaneY: this.definition.killPlaneY,
+      respawnDelaySeconds: this.config.respawn.delaySeconds,
+      safetyFloorY: this.config.world.safetyFloorY,
+    };
+  }
+
+  /** Fall detection fired: the player has fallen off the level. */
+  private handleDeath(): void {
+    this.log?.info('game', 'player died', {
+      y: this.player.position.y,
+      deaths: this.player.deaths,
+    });
+    this.options.ui.showDeath('YOU FELL', 'Respawning…');
+  }
+
+  private handleRespawn(): void {
+    this.log?.info('game', 'player respawned', { deaths: this.player.deaths });
+    this.options.ui.hideDeath();
+  }
+
+  /** Returns the player to the spawn point without going through death. */
+  respawn(): void {
+    respawnPlayer(this.player);
+    this.accumulator.reset();
+    this.options.ui.hideDeath();
+    this.log?.info('game', 'respawned on request');
+  }
+
   private resetSimulation(): void {
     this.level = buildLevel(this.definition, {
       maxSubStep: this.config.world.maxCollisionSubStep,
-      player: this.config.player,
+      player: standingSize(this.config.player),
     });
     resetPlayerState(this.player);
     this.accumulator.reset();
     this.stats.reset();
     this.lastHudUpdate = 0;
+    this.sprinting = false;
     this.options.input.clear();
   }
 
@@ -425,12 +464,12 @@ export class Game {
     }
 
     const moveInput = this.options.input.moveInput;
+    this.sprinting = moveInput.sprint;
+
     this.accumulator.run(delta, (step) => {
-      stepPlayer(this.player, moveInput, step, {
-        world: this.level.world,
-        config: this.config.player,
-        safetyFloorY: this.config.world.safetyFloorY,
-      });
+      const outcome = stepPlayer(this.player, moveInput, step, this.stepOptions());
+      if (outcome.died) this.handleDeath();
+      else if (outcome.respawned) this.handleRespawn();
     });
 
     this.stats.push(delta);
@@ -443,7 +482,8 @@ export class Game {
 
     const feet = interpolatePlayerPosition(this.player, this.accumulator.alpha, this.scratchFeet);
     this.scratchEye.x = feet.x;
-    this.scratchEye.y = feet.y + this.config.player.eyeHeight;
+    // Eye height follows the stance, so crouching visibly lowers the camera.
+    this.scratchEye.y = feet.y + eyeHeight(this.player, this.config.player);
     this.scratchEye.z = feet.z;
 
     this.view.render(this.scratchEye, this.player);
@@ -471,6 +511,10 @@ export class Game {
       pitch: player.pitch,
       grounded: player.grounded,
       groundId: player.groundId,
+      stance: player.stance,
+      sprinting: this.sprinting,
+      alive: player.alive,
+      deaths: player.deaths,
       frameCount: stats.frames,
       elapsedSeconds: stats.elapsedSeconds,
       renderer: this.rendererInfo,

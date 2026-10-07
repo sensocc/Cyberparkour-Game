@@ -1,8 +1,8 @@
 {
   "name": "cyberparkour",
   "private": true,
-  "version": "0.0.0",
-  "description": "Cyberparkour - a low-poly, Quake-styled first-person parkour game set in a cyberpunk city. V0.0 Technical Demo.",
+  "version": "0.1.0",
+  "description": "Cyberparkour - a low-poly, Quake-styled first-person parkour game set in a cyberpunk city. V0.1: movement, fall detection and a city backdrop.",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {
@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "assets": "node tools/generate-textures.ts",
     "build": "npm run typecheck && vite build",
     "build:only": "vite build",
     "preview": "vite preview",

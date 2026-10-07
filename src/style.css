@@ -291,6 +291,61 @@ body {
   font-size: 11px;
 }
 
+/* -------------------------------------------------------- death overlay --- */
+
+/* Shown over the running game, so it is not one of the modal screens. */
+.death {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(60, 6, 18, 0.35) 0%,
+    rgba(30, 2, 8, 0.62) 70%
+  );
+  animation: death-in 140ms ease-out;
+}
+
+.death[hidden] {
+  display: none;
+}
+
+.death__panel {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 20px 34px;
+  border: 1px solid rgba(255, 92, 114, 0.5);
+  background: rgba(12, 4, 8, 0.72);
+  border-radius: 4px;
+}
+
+.death__title {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: 0.3em;
+  color: var(--danger);
+  text-shadow: 0 0 18px rgba(255, 92, 114, 0.45);
+}
+
+.death__detail {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+
+@keyframes death-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 /* -------------------------------------------------------------- controls --- */
 
 .controls {

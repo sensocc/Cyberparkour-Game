@@ -11,6 +11,9 @@ export type KeyAction =
   | 'moveBackward'
   | 'moveLeft'
   | 'moveRight'
+  | 'sprint'
+  | 'jump'
+  | 'crouch'
   | 'toggleDebug'
   | 'pause'
   | 'restart';
@@ -22,16 +25,42 @@ export const DEFAULT_BINDINGS: Bindings = {
   moveBackward: ['KeyS', 'ArrowDown'],
   moveLeft: ['KeyA', 'ArrowLeft'],
   moveRight: ['KeyD', 'ArrowRight'],
+  // Both shifts, so either hand can sprint.
+  sprint: ['ShiftLeft', 'ShiftRight'],
+  jump: ['Space'],
+  // Control is the usual crouch key; C is there for keyboards/browsers that
+  // swallow it, and for players used to console layouts.
+  crouch: ['ControlLeft', 'ControlRight', 'KeyC'],
   toggleDebug: ['F3', 'Backquote'],
   pause: ['Escape'],
   restart: ['KeyR'],
 };
 
-/** Actions typed into the DOM, drained once per frame. */
+/**
+ * Actions that are held down as part of movement.
+ *
+ * These are read straight from the key state each step, unlike the one-shot
+ * actions below.
+ */
+export const MOVEMENT_ACTIONS: readonly KeyAction[] = [
+  'moveForward',
+  'moveBackward',
+  'moveLeft',
+  'moveRight',
+  'sprint',
+  'jump',
+  'crouch',
+];
+
+/** Actions triggered by a key press and drained once per frame. */
 export const UI_ACTIONS: readonly KeyAction[] = ['toggleDebug', 'pause', 'restart'];
 
 export function isUiAction(action: KeyAction): boolean {
   return UI_ACTIONS.includes(action);
+}
+
+export function isMovementAction(action: KeyAction): boolean {
+  return MOVEMENT_ACTIONS.includes(action);
 }
 
 /** Reverse lookup: which action (if any) a key code is bound to. */

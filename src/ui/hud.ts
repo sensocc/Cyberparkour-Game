@@ -1,13 +1,15 @@
 /**
  * Debug HUD.
  *
- * V0.0 requires FPS, player velocity and player coordinates on screen. The
- * formatting is a pure function so it can be asserted directly in tests, and
- * the DOM is refreshed on a timer rather than every frame to keep layout out of
- * the frame budget.
+ * V0.0 requires FPS, player velocity and player coordinates on screen; V0.1 adds
+ * the locomotion state, because "is the crouch actually applied?" is otherwise
+ * invisible. The formatting is a pure function so it can be asserted directly in
+ * tests, and the DOM is refreshed on a timer rather than every frame to keep
+ * layout out of the frame budget.
  */
 
 import type { ReadonlyVec3 } from '../core/vec3.js';
+import type { Stance } from '../game/player.js';
 import { el, formatNumber, formatVector } from './dom.js';
 
 export interface HudSnapshot {
@@ -21,6 +23,11 @@ export interface HudSnapshot {
   readonly pitch: number;
   readonly grounded: boolean;
   readonly groundId: string | null;
+  readonly stance: Stance;
+  /** Whether the sprint key is held right now. */
+  readonly sprinting: boolean;
+  readonly alive: boolean;
+  readonly deaths: number;
   readonly frameCount: number;
   readonly elapsedSeconds: number;
   readonly renderer: string | null;
@@ -31,10 +38,29 @@ export interface HudRow {
   readonly value: string;
 }
 
+/**
+ * Names the current way of moving.
+ *
+ * `crouch` and `sprint` are the V0.1 additions, and being able to read them off
+ * the HUD is how you confirm they are doing anything.
+ */
+export function describeGait(stance: Stance, sprinting: boolean, horizontalSpeed: number): string {
+  if (stance === 'crouched') return 'crouch';
+  if (horizontalSpeed < 0.1) return 'idle';
+  return sprinting ? 'sprint' : 'walk';
+}
+
+function describeState(snapshot: HudSnapshot): string {
+  if (!snapshot.alive) return 'FALLEN';
+  if (!snapshot.grounded) return 'airborne';
+  return snapshot.groundId ? `grounded (${snapshot.groundId})` : 'grounded';
+}
+
 /** Builds the HUD's display rows. Pure and unit-tested. */
 export function formatHudRows(snapshot: HudSnapshot): HudRow[] {
   const yawDegrees = ((snapshot.yaw * 180) / Math.PI).toFixed(0);
   const pitchDegrees = ((snapshot.pitch * 180) / Math.PI).toFixed(0);
+  const horizontalSpeed = Math.hypot(snapshot.velocity.x, snapshot.velocity.z);
 
   return [
     { label: 'fps', value: `${formatNumber(snapshot.fps, 1)} (${formatNumber(snapshot.frameTimeMs, 2)} ms)` },
@@ -42,8 +68,10 @@ export function formatHudRows(snapshot: HudSnapshot): HudRow[] {
     { label: 'pos', value: formatVector(snapshot.position) },
     { label: 'vel', value: formatVector(snapshot.velocity) },
     { label: 'speed', value: `${formatNumber(snapshot.speed, 2)} m/s` },
+    { label: 'gait', value: describeGait(snapshot.stance, snapshot.sprinting, horizontalSpeed) },
     { label: 'look', value: `yaw ${yawDegrees}\u00b0  pitch ${pitchDegrees}\u00b0` },
-    { label: 'state', value: snapshot.grounded ? `grounded${snapshot.groundId ? ` (${snapshot.groundId})` : ''}` : 'airborne' },
+    { label: 'state', value: describeState(snapshot) },
+    { label: 'deaths', value: String(snapshot.deaths) },
     { label: 'frames', value: `${snapshot.frameCount} in ${formatNumber(snapshot.elapsedSeconds, 1)} s` },
     { label: 'gpu', value: snapshot.renderer ?? 'unknown' },
   ];
@@ -115,6 +143,10 @@ const EMPTY_SNAPSHOT: HudSnapshot = {
   pitch: 0,
   grounded: false,
   groundId: null,
+  stance: 'standing',
+  sprinting: false,
+  alive: true,
+  deaths: 0,
   frameCount: 0,
   elapsedSeconds: 0,
   renderer: null,

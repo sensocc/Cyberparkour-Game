@@ -2,8 +2,9 @@
  * Turns a `LevelDefinition` into a collision world, and validates it.
  *
  * Validation runs at start-up and in the test suite: a level whose colliders
- * are too thin to catch the player, or whose spawn point starts inside
- * geometry, would otherwise fail in confusing ways at runtime.
+ * are too thin to catch the player, whose spawn point starts inside geometry, or
+ * whose kill plane would execute the player on sight would otherwise fail in
+ * confusing ways at runtime.
  */
 
 import { aabbFromCenterSize, minThickness, overlaps, type AABB } from '../physics/aabb.js';
@@ -12,7 +13,9 @@ import type { LevelDefinition, PropDefinition } from './levelData.js';
 
 /** Player dimensions, used for spawn validation. */
 export interface PlayerSize {
+  /** Half-width of the player box. */
   readonly radius: number;
+  /** Height of the player box. Validation uses the *standing* height. */
   readonly height: number;
 }
 
@@ -37,6 +40,12 @@ export interface BuiltLevel {
 
 export const DEFAULT_PLAYER_SIZE: PlayerSize = { radius: 0.35, height: 1.8 };
 
+/** How far above the nearest surface the spawn point may sit. */
+const MAX_SPAWN_DROP = 3;
+
+/** Minimum gap between a walkable surface and the kill plane. */
+const MIN_KILL_PLANE_CLEARANCE = 1;
+
 /** Collision box of a prop definition. */
 export function propBounds(prop: PropDefinition): AABB {
   return aabbFromCenterSize(prop.position, prop.size);
@@ -57,6 +66,29 @@ export function toColliders(definition: LevelDefinition): Collider[] {
     kind: prop.kind,
     box: propBounds(prop),
   }));
+}
+
+/**
+ * Highest solid surface directly under `point`, ignoring everything above it.
+ *
+ * @returns the surface Y, or `null` when there is nothing underneath.
+ */
+export function groundHeightAt(
+  definition: LevelDefinition,
+  point: { x: number; z: number },
+  fromY = Number.POSITIVE_INFINITY,
+): number | null {
+  let best: number | null = null;
+
+  for (const prop of definition.props) {
+    const box = propBounds(prop);
+    if (point.x < box.min.x || point.x > box.max.x) continue;
+    if (point.z < box.min.z || point.z > box.max.z) continue;
+    if (box.max.y > fromY) continue;
+    if (best === null || box.max.y > best) best = box.max.y;
+  }
+
+  return best;
 }
 
 /**
@@ -107,6 +139,73 @@ export function validateLevel(
     }
   }
 
+  // ...and must start on top of something, not in mid-air over the city.
+  const spawn = definition.spawn.position;
+  const surface = groundHeightAt(definition, { x: spawn.x, z: spawn.z });
+  if (surface === null) {
+    add('spawn point has no surface beneath it');
+  } else {
+    const drop = spawn.y - surface;
+    if (drop > MAX_SPAWN_DROP) {
+      add(`spawn point is ${drop.toFixed(2)}m above the surface below it (max ${MAX_SPAWN_DROP}m)`);
+    }
+  }
+
+  // Fall detection must not execute the player the moment they spawn, and must
+  // leave room to actually fall before it triggers.
+  if (!Number.isFinite(definition.killPlaneY)) {
+    add('killPlaneY must be a finite number');
+  } else {
+    if (definition.killPlaneY >= spawn.y) {
+      add(`killPlaneY (${definition.killPlaneY}) is not below the spawn point (${spawn.y})`);
+    }
+    if (surface !== null && definition.killPlaneY > surface - MIN_KILL_PLANE_CLEARANCE) {
+      add(
+        `killPlaneY (${definition.killPlaneY}) is within ${MIN_KILL_PLANE_CLEARANCE}m of the ` +
+          `walkable surface (${surface})`,
+      );
+    }
+  }
+
+  problems.push(...validateEnvironment(definition, add));
+
+  return problems;
+}
+
+function validateEnvironment(
+  definition: LevelDefinition,
+  add: (message: string) => void,
+): LevelProblem[] {
+  const problems: LevelProblem[] = [];
+  const environment = definition.environment;
+
+  for (const [name, color] of [
+    ['skyColor', environment.skyColor],
+    ['fogColor', environment.fogColor],
+    ['sunColor', environment.sunColor],
+    ['ambientSkyColor', environment.ambientSkyColor],
+    ['ambientGroundColor', environment.ambientGroundColor],
+  ] as const) {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) add(`environment.${name} must be a #rrggbb colour`);
+  }
+
+  if (environment.fogFar <= environment.fogNear) {
+    add('environment.fogFar must be greater than fogNear');
+  }
+
+  if (!(environment.skyRadius > 0)) add('environment.skyRadius must be > 0');
+
+  const backdrop = environment.backdrop;
+  if (!(backdrop.radius > 0)) add('environment.backdrop.radius must be > 0');
+  if (!(backdrop.height > 0)) add('environment.backdrop.height must be > 0');
+  if (!(backdrop.repeat > 0)) add('environment.backdrop.repeat must be > 0');
+  if (backdrop.radius >= environment.skyRadius) {
+    add('environment.backdrop.radius must be smaller than skyRadius, or it would be clipped');
+  }
+  if (backdrop.radius <= environment.fogNear) {
+    add('environment.backdrop.radius should be beyond fogNear, or the skyline is invisible');
+  }
+
   return problems;
 }
 
@@ -130,27 +229,4 @@ export function buildLevel(
   });
 
   return { definition, colliders, world };
-}
-
-/**
- * Highest solid surface directly under `point`, ignoring everything above it.
- *
- * @returns the surface Y, or `null` when there is nothing underneath.
- */
-export function groundHeightAt(
-  definition: LevelDefinition,
-  point: { x: number; z: number },
-  fromY = Number.POSITIVE_INFINITY,
-): number | null {
-  let best: number | null = null;
-
-  for (const prop of definition.props) {
-    const box = propBounds(prop);
-    if (point.x < box.min.x || point.x > box.max.x) continue;
-    if (point.z < box.min.z || point.z > box.max.z) continue;
-    if (box.max.y > fromY) continue;
-    if (best === null || box.max.y > best) best = box.max.y;
-  }
-
-  return best;
 }

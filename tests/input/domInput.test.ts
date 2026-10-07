@@ -111,7 +111,13 @@ describe('DomInput keyboard', () => {
     window.dispatchEvent(new Event('blur'));
 
     expect(harness.input.heldKeyCount).toBe(0);
-    expect(harness.input.moveInput).toEqual({ forward: 0, right: 0 });
+    expect(harness.input.moveInput).toMatchObject({
+      forward: 0,
+      right: 0,
+      sprint: false,
+      jump: false,
+      crouch: false,
+    });
   });
 });
 

@@ -38,6 +38,7 @@ function createUi(version = '0.0.0'): Harness {
     onStart: vi.fn(),
     onResume: vi.fn(),
     onRestart: vi.fn(),
+    onRespawn: vi.fn(),
     onQuit: vi.fn(),
     onDownloadReport: vi.fn((report: CrashReport) => {
       captured = report;
@@ -113,16 +114,25 @@ describe('GameUi callbacks', () => {
     expect(calls.onStart).toHaveBeenCalledOnce();
   });
 
-  it('fires onResume, onRestart and onQuit from the pause menu', () => {
+  it('offers a Respawn button in the pause menu', () => {
+    const { root, ui, calls } = createUi();
+    ui.showPause();
+    click(root.querySelector('.screen--pause') as HTMLElement, /^respawn$/i);
+    expect(calls.onRespawn).toHaveBeenCalledOnce();
+  });
+
+  it('fires onResume, onRespawn, onRestart and onQuit from the pause menu', () => {
     const { root, ui, calls } = createUi();
     ui.showPause();
     const pause = root.querySelector('.screen--pause') as HTMLElement;
 
     click(pause, /^resume$/i);
+    click(pause, /^respawn$/i);
     click(pause, /^restart$/i);
     click(pause, /quit/i);
 
     expect(calls.onResume).toHaveBeenCalledOnce();
+    expect(calls.onRespawn).toHaveBeenCalledOnce();
     expect(calls.onRestart).toHaveBeenCalledOnce();
     expect(calls.onQuit).toHaveBeenCalledOnce();
   });
@@ -399,5 +409,58 @@ describe('dom helpers', () => {
     expect(node.hasAttribute('hidden')).toBe(true);
     setHidden(node, false);
     expect(node.hasAttribute('hidden')).toBe(false);
+  });
+});
+
+describe('GameUi death overlay', () => {
+  it('is hidden until the player dies', () => {
+    const { ui } = createUi();
+    expect(ui.isDeathVisible).toBe(false);
+  });
+
+  it('shows the reason and the respawn note over the running game', () => {
+    const { root, ui } = createUi();
+    ui.showGame();
+
+    ui.showDeath('YOU FELL', 'Respawning…');
+
+    expect(ui.isDeathVisible).toBe(true);
+    expect(root.querySelector('.death__title')?.textContent).toBe('YOU FELL');
+    expect(root.querySelector('.death__detail')?.textContent).toBe('Respawning…');
+    // The overlay is not a screen: the game is still presented as running.
+    expect(root.querySelector('.screen--pause')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('hides the crosshair while dead and restores it on respawn', () => {
+    const { root, ui } = createUi();
+    ui.showGame();
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
+
+    ui.showDeath('YOU FELL', 'Respawning…');
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+
+    ui.hideDeath();
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('does not restore the crosshair when the game is not in play mode', () => {
+    const { root, ui } = createUi();
+    ui.showPause();
+    ui.hideDeath();
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('starting a game clears a leftover overlay', () => {
+    const { ui } = createUi();
+    ui.showDeath('YOU FELL', 'Respawning…');
+    ui.showGame();
+    expect(ui.isDeathVisible).toBe(false);
+  });
+
+  it('is announced politely to assistive technology', () => {
+    const { root } = createUi();
+    const overlay = root.querySelector('.death');
+    expect(overlay?.getAttribute('role')).toBe('status');
+    expect(overlay?.getAttribute('aria-live')).toBe('polite');
   });
 });

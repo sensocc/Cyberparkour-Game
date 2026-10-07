@@ -17,11 +17,14 @@ import {
   type LevelDefinition,
   type PropDefinition,
 } from '../../src/game/level/levelData.js';
+import { standingSize } from '../../src/game/player.js';
 
 const SUB_STEP = DEFAULT_CONFIG.world.maxCollisionSubStep;
 const PLAYER = DEFAULT_CONFIG.player;
+/** Validation always uses the player's largest footprint. */
+const STANDING = standingSize(PLAYER);
 
-const BUILD_OPTIONS: BuildLevelOptions = { maxSubStep: SUB_STEP, player: PLAYER };
+const BUILD_OPTIONS: BuildLevelOptions = { maxSubStep: SUB_STEP, player: STANDING };
 
 function prop(overrides: Partial<PropDefinition> & { id: string }): PropDefinition {
   return {
@@ -35,6 +38,12 @@ function prop(overrides: Partial<PropDefinition> & { id: string }): PropDefiniti
 
 function level(overrides: Partial<LevelDefinition> = {}): LevelDefinition {
   return { ...DEMO_ROOF, ...overrides };
+}
+
+function boundsOf(id: string): ReturnType<typeof propBounds> {
+  const found = DEMO_ROOF.props.find((entry) => entry.id === id);
+  expect(found, `expected a prop named ${id}`).toBeDefined();
+  return propBounds(found as PropDefinition);
 }
 
 describe('the shipped demo roof', () => {
@@ -80,8 +89,8 @@ describe('the shipped demo roof', () => {
     }
   });
 
-  it('spawns the player on top of the roof deck, clear of all geometry', () => {
-    const box = spawnBounds(DEMO_ROOF, PLAYER);
+  it('spawns the player on top of the deck, clear of all geometry', () => {
+    const box = spawnBounds(DEMO_ROOF, STANDING);
     for (const entry of DEMO_ROOF.props) {
       expect(overlaps(box, propBounds(entry)), `spawn intersects ${entry.id}`).toBe(false);
     }
@@ -97,64 +106,33 @@ describe('the shipped demo roof', () => {
     expect(DEMO_ROOF.spawn.position.y).toBeLessThan((surface ?? 0) + 1);
   });
 
-  it('spawns inside the roof footprint', () => {
-    const roof = DEMO_ROOF.props.find((entry) => entry.id === 'roof-deck');
-    expect(roof).toBeDefined();
-    const bounds = propBounds(roof as PropDefinition);
-    expect(DEMO_ROOF.spawn.position.x).toBeGreaterThan(bounds.min.x);
-    expect(DEMO_ROOF.spawn.position.x).toBeLessThan(bounds.max.x);
-    expect(DEMO_ROOF.spawn.position.z).toBeGreaterThan(bounds.min.z);
-    expect(DEMO_ROOF.spawn.position.z).toBeLessThan(bounds.max.z);
+  it('spawns well inside the deck footprint, away from the edges', () => {
+    const deck = boundsOf('deck');
+    const margin = 5;
+    expect(DEMO_ROOF.spawn.position.x).toBeGreaterThan(deck.min.x + margin);
+    expect(DEMO_ROOF.spawn.position.x).toBeLessThan(deck.max.x - margin);
+    expect(DEMO_ROOF.spawn.position.z).toBeGreaterThan(deck.min.z + margin);
+    expect(DEMO_ROOF.spawn.position.z).toBeLessThan(deck.max.z - margin);
   });
 
   it('has a walkable deck as its highest surface at the spawn', () => {
     // Nothing above head height at the spawn point, so the camera is clear.
     const { x, z } = DEMO_ROOF.spawn.position;
-    const surface = groundHeightAt(DEMO_ROOF, { x, z }, PLAYER.height) ?? 0;
+    const surface = groundHeightAt(DEMO_ROOF, { x, z }, STANDING.height) ?? 0;
     expect(surface).toBeCloseTo(0, 9);
   });
 
-  it('rings the roof with a parapet on all four sides', () => {
-    const ids = DEMO_ROOF.props.map((entry) => entry.id);
-    expect(ids).toContain('parapet-north');
-    expect(ids).toContain('parapet-south');
-    expect(ids).toContain('parapet-east');
-    expect(ids).toContain('parapet-west');
-  });
-
-  it('keeps every parapet inside the roof footprint', () => {
-    const roof = propBounds(
-      DEMO_ROOF.props.find((entry) => entry.id === 'roof-deck') as PropDefinition,
-    );
-    for (const id of ['parapet-north', 'parapet-south', 'parapet-east', 'parapet-west']) {
-      const bounds = propBounds(DEMO_ROOF.props.find((entry) => entry.id === id) as PropDefinition);
-      expect(bounds.min.x).toBeGreaterThanOrEqual(roof.min.x - 1e-9);
-      expect(bounds.max.x).toBeLessThanOrEqual(roof.max.x + 1e-9);
-      expect(bounds.min.z).toBeGreaterThanOrEqual(roof.min.z - 1e-9);
-      expect(bounds.max.z).toBeLessThanOrEqual(roof.max.z + 1e-9);
-    }
-  });
-
-  it('describes an environment with a fog range and a key light', () => {
-    const environment = DEMO_ROOF.environment;
-    expect(environment.fogFar).toBeGreaterThan(environment.fogNear);
-    expect(environment.sunIntensity).toBeGreaterThan(0);
-    expect(environment.ambientIntensity).toBeGreaterThan(0);
-    for (const color of [environment.skyColor, environment.fogColor, environment.sunColor]) {
-      expect(color).toMatch(/^#[0-9a-f]{6}$/i);
-    }
-  });
-
-  it('colours every prop with a valid hex string', () => {
-    for (const entry of DEMO_ROOF.props) {
-      expect(entry.color, entry.id).toMatch(/^#[0-9a-f]{6}$/i);
-    }
+  it('leaves the edges of the deck open', () => {
+    // V0.0 walled the roof in because a fall had no consequence. Fall detection
+    // and respawn now exist, so the parapet is gone and the roof is "bare".
+    const wallIds = DEMO_ROOF.props.filter((entry) => entry.kind === 'wall').map((entry) => entry.id);
+    expect(wallIds).toEqual(['tower-body', 'penthouse']);
   });
 
   it('supports every prop on the deck or on another prop', () => {
     // Nothing may float: each prop's underside must coincide with the top of a
-    // prop it overlaps in plan. The single lowest prop is the world floor and
-    // is allowed to rest on nothing.
+    // prop it overlaps in plan. The single lowest prop is the world floor and is
+    // allowed to rest on nothing.
     const boundsById = new Map(DEMO_ROOF.props.map((entry) => [entry.id, propBounds(entry)]));
     const lowest = DEMO_ROOF.props.reduce((best, entry) =>
       (boundsById.get(entry.id)?.min.y ?? 0) < (boundsById.get(best.id)?.min.y ?? 0) ? entry : best,
@@ -182,11 +160,97 @@ describe('the shipped demo roof', () => {
 
     expect(unsupported).toEqual([]);
   });
+
+  it('colours every prop with a valid hex string', () => {
+    for (const entry of DEMO_ROOF.props) {
+      expect(entry.color, entry.id).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+
+  it('describes an environment with a fog range, a key light and a backdrop', () => {
+    const environment = DEMO_ROOF.environment;
+    expect(environment.fogFar).toBeGreaterThan(environment.fogNear);
+    expect(environment.sunIntensity).toBeGreaterThan(0);
+    expect(environment.ambientIntensity).toBeGreaterThan(0);
+    expect(environment.backdrop.radius).toBeGreaterThan(0);
+    expect(environment.backdrop.height).toBeGreaterThan(0);
+    expect(environment.backdrop.radius).toBeLessThan(environment.skyRadius);
+    for (const color of [
+      environment.skyColor,
+      environment.fogColor,
+      environment.sunColor,
+      environment.ambientSkyColor,
+      environment.ambientGroundColor,
+    ]) {
+      expect(color).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+
+  it('places the skyline ground line at or below the city ground', () => {
+    // The backdrop's base must not float above the ground plane, or the city
+    // would appear to hover.
+    expect(DEMO_ROOF.environment.backdrop.baseY).toBeLessThanOrEqual(-34.8);
+  });
+});
+
+describe('the demo roof supports the V0.1 abilities', () => {
+  it('has a step a jump can clear from the deck', () => {
+    // Apex is jumpSpeed^2 / (2 * gravity); the first ledge must be under it.
+    const apex = (PLAYER.jumpSpeed * PLAYER.jumpSpeed) / (2 * PLAYER.gravity);
+    const ledgeLow = boundsOf('ledge-low');
+
+    expect(ledgeLow.max.y).toBeGreaterThan(0);
+    expect(ledgeLow.max.y, 'ledge-low must be jumpable from the deck').toBeLessThan(apex);
+  });
+
+  it('has a second step reachable only from the first', () => {
+    const apex = (PLAYER.jumpSpeed * PLAYER.jumpSpeed) / (2 * PLAYER.gravity);
+    const ledgeLow = boundsOf('ledge-low');
+    const ledgeMid = boundsOf('ledge-mid');
+
+    // Too high to jump from the deck...
+    expect(ledgeMid.max.y).toBeGreaterThan(apex);
+    // ...but an easy hop up from ledge-low.
+    expect(ledgeMid.max.y - ledgeLow.max.y).toBeLessThan(apex);
+  });
+
+  it('has a duct that can only be passed while crouched', () => {
+    const clearance = boundsOf('duct').min.y;
+    expect(clearance).toBeLessThan(PLAYER.standHeight);
+    expect(clearance).toBeGreaterThan(PLAYER.crouchHeight);
+  });
+
+  it('gives the duct supports that reach exactly up to it', () => {
+    const duct = boundsOf('duct');
+    for (const id of ['duct-support-north', 'duct-support-south']) {
+      expect(boundsOf(id).max.y).toBeCloseTo(duct.min.y, 9);
+    }
+  });
+
+  it('places the duct supports clear of the passage through it', () => {
+    // The gap between the supports is what the player crawls through.
+    const north = boundsOf('duct-support-north');
+    const south = boundsOf('duct-support-south');
+    expect(north.min.z - south.max.z).toBeGreaterThan(2 * STANDING.radius + 1);
+  });
+
+  it('sets the kill plane far below the deck but above the city ground', () => {
+    expect(DEMO_ROOF.killPlaneY).toBeLessThan(0);
+    expect(DEMO_ROOF.killPlaneY).toBeGreaterThan(boundsOf('city-ground').max.y);
+  });
+
+  it('has room to sprint: more than 30 m of diagonal deck', () => {
+    const deck = boundsOf('deck');
+    const diagonal = Math.hypot(deck.max.x - deck.min.x, deck.max.z - deck.min.z);
+    expect(diagonal).toBeGreaterThan(30);
+  });
 });
 
 describe('propBounds', () => {
   it('converts a centred prop into min/max bounds', () => {
-    const bounds = propBounds(prop({ id: 'p', position: { x: 2, y: 3, z: 4 }, size: { x: 10, y: 2, z: 6 } }));
+    const bounds = propBounds(
+      prop({ id: 'p', position: { x: 2, y: 3, z: 4 }, size: { x: 10, y: 2, z: 6 } }),
+    );
     expect(bounds.min).toEqual({ x: -3, y: 2, z: 1 });
     expect(bounds.max).toEqual({ x: 7, y: 4, z: 7 });
   });
@@ -205,8 +269,9 @@ describe('toColliders', () => {
   it('preserves ids and kinds', () => {
     const colliders = toColliders(DEMO_ROOF);
     expect(colliders.map((entry) => entry.id)).toEqual(DEMO_ROOF.props.map((entry) => entry.id));
-    expect(colliders.find((entry) => entry.id === 'roof-deck')?.kind).toBe('floor');
-    expect(colliders.find((entry) => entry.id === 'parapet-north')?.kind).toBe('wall');
+    expect(colliders.find((entry) => entry.id === 'deck')?.kind).toBe('floor');
+    expect(colliders.find((entry) => entry.id === 'penthouse')?.kind).toBe('wall');
+    expect(colliders.find((entry) => entry.id === 'duct')?.kind).toBe('prop');
   });
 });
 
@@ -225,9 +290,9 @@ describe('validateLevel', () => {
       level({ props: [prop({ id: 'dup' }), prop({ id: 'dup', position: { x: 50, y: 0, z: 50 } })] }),
       BUILD_OPTIONS,
     );
-    expect(problems).toHaveLength(1);
-    expect(problems[0]?.prop).toBe('dup');
-    expect(problems[0]?.message).toMatch(/duplicate prop id/);
+    const duplicates = problems.filter((problem) => /duplicate prop id/.test(problem.message));
+    expect(duplicates).toHaveLength(1);
+    expect(duplicates[0]?.prop).toBe('dup');
   });
 
   it('flags a non-positive extent on any axis', () => {
@@ -243,9 +308,9 @@ describe('validateLevel', () => {
       level({ props: [prop({ id: 'wafer', size: { x: 10, y: 0.05, z: 10 } })] }),
       BUILD_OPTIONS,
     );
-    expect(problems).toHaveLength(1);
-    expect(problems[0]?.prop).toBe('wafer');
-    expect(problems[0]?.message).toMatch(/below the 0\.2m collision sub-step/);
+    const thin = problems.filter((problem) => /collision sub-step/.test(problem.message));
+    expect(thin).toHaveLength(1);
+    expect(thin[0]?.prop).toBe('wafer');
   });
 
   it('flags a spawn point buried inside geometry', () => {
@@ -256,7 +321,109 @@ describe('validateLevel', () => {
       }),
       BUILD_OPTIONS,
     );
-    expect(problems.map((problem) => problem.message).join()).toMatch(/spawn point intersects prop "block"/);
+    expect(problems.map((problem) => problem.message).join()).toMatch(
+      /spawn point intersects prop "block"/,
+    );
+  });
+
+  it('flags a spawn point with nothing underneath it', () => {
+    const problems = validateLevel(
+      level({
+        spawn: { position: { x: 900, y: 0.5, z: 900 }, yaw: 0, pitch: 0 },
+        props: [
+          prop({
+            id: 'deck',
+            kind: 'floor',
+            position: { x: 0, y: -0.4, z: 0 },
+            size: { x: 20, y: 0.8, z: 20 },
+          }),
+        ],
+      }),
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message)).toContain(
+      'spawn point has no surface beneath it',
+    );
+  });
+
+  it('flags a spawn point left hanging far above the surface', () => {
+    const problems = validateLevel(
+      level({
+        spawn: { position: { x: 0, y: 40, z: 0 }, yaw: 0, pitch: 0 },
+        props: [
+          prop({
+            id: 'deck',
+            kind: 'floor',
+            position: { x: 0, y: -0.4, z: 0 },
+            size: { x: 20, y: 0.8, z: 20 },
+          }),
+        ],
+      }),
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message).join()).toMatch(
+      /spawn point is 40\.00m above the surface/,
+    );
+  });
+
+  it('flags a kill plane that is not a finite number', () => {
+    const problems = validateLevel(level({ killPlaneY: Number.NaN }), BUILD_OPTIONS);
+    expect(problems.map((problem) => problem.message)).toContain(
+      'killPlaneY must be a finite number',
+    );
+  });
+
+  it('flags a kill plane at or above the spawn point', () => {
+    const problems = validateLevel(level({ killPlaneY: 5 }), BUILD_OPTIONS);
+    expect(problems.map((problem) => problem.message).join()).toMatch(
+      /killPlaneY \(5\) is not below the spawn point/,
+    );
+  });
+
+  it('flags a kill plane too close to the walkable surface', () => {
+    const problems = validateLevel(level({ killPlaneY: -0.5 }), BUILD_OPTIONS);
+    expect(problems.map((problem) => problem.message).join()).toMatch(
+      /within 1m of the walkable surface/,
+    );
+  });
+
+  it('flags an environment with an inverted fog range', () => {
+    const definitions = level();
+    const problems = validateLevel(
+      { ...definitions, environment: { ...definitions.environment, fogNear: 500, fogFar: 100 } },
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message)).toContain(
+      'environment.fogFar must be greater than fogNear',
+    );
+  });
+
+  it('flags a backdrop that would be clipped by the sky dome', () => {
+    const definitions = level();
+    const problems = validateLevel(
+      {
+        ...definitions,
+        environment: {
+          ...definitions.environment,
+          backdrop: { ...definitions.environment.backdrop, radius: 900 },
+        },
+      },
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message)).toContain(
+      'environment.backdrop.radius must be smaller than skyRadius, or it would be clipped',
+    );
+  });
+
+  it('flags an unparseable environment colour', () => {
+    const definitions = level();
+    const problems = validateLevel(
+      { ...definitions, environment: { ...definitions.environment, skyColor: 'blue' } },
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message)).toContain(
+      'environment.skyColor must be a #rrggbb colour',
+    );
   });
 
   it('reports the level id on every problem', () => {
@@ -278,13 +445,7 @@ describe('validateLevel', () => {
 describe('buildLevel', () => {
   it('throws with a readable report when the level is invalid', () => {
     expect(() =>
-      buildLevel(
-        level({
-          id: 'broken',
-          props: [prop({ id: 'dup' }), prop({ id: 'dup' })],
-        }),
-        BUILD_OPTIONS,
-      ),
+      buildLevel(level({ id: 'broken', props: [prop({ id: 'dup' }), prop({ id: 'dup' })] }), BUILD_OPTIONS),
     ).toThrow(/Invalid level "broken"/);
   });
 
@@ -301,15 +462,15 @@ describe('buildLevel', () => {
 
   it('produces a world that catches a falling player', () => {
     const built = buildLevel(DEMO_ROOF, BUILD_OPTIONS);
-    const box = spawnBounds(DEMO_ROOF, PLAYER);
+    const box = spawnBounds(DEMO_ROOF, STANDING);
     box.min.y = 20;
-    box.max.y = 20 + PLAYER.height;
+    box.max.y = 20 + STANDING.height;
 
     const velocity = { x: 0, y: -20, z: 0 };
     const result = built.world.move(box, { x: 0, y: -20, z: 0 }, velocity);
 
     expect(result.grounded).toBe(true);
-    expect(result.groundId).toBe('roof-deck');
+    expect(result.groundId).toBe('deck');
     expect(velocity.y).toBe(0);
     // Either left exactly flush or pushed out by one collision skin - never
     // inside the deck.
@@ -319,26 +480,26 @@ describe('buildLevel', () => {
 });
 
 describe('groundHeightAt', () => {
-  it('finds the roof deck under the spawn point', () => {
-    expect(groundHeightAt(DEMO_ROOF, { x: 0, z: 11 })).toBeCloseTo(0, 9);
+  it('finds the deck under the spawn point', () => {
+    expect(groundHeightAt(DEMO_ROOF, { x: 0, z: 13 })).toBeCloseTo(0, 9);
   });
 
   it('respects an upper limit so overhead geometry is ignored', () => {
     // The stacked crate tops out at 2.8 m.
-    expect(groundHeightAt(DEMO_ROOF, { x: -5, z: 4.5 })).toBeCloseTo(2.8, 9);
-    expect(groundHeightAt(DEMO_ROOF, { x: -5, z: 4.5 }, 2.0)).toBeCloseTo(1.4, 9);
+    expect(groundHeightAt(DEMO_ROOF, { x: 6, z: 13 })).toBeCloseTo(2.8, 9);
+    expect(groundHeightAt(DEMO_ROOF, { x: 6, z: 13 }, 2.0)).toBeCloseTo(1.4, 9);
+  });
+
+  it('finds the duct overhead, not the deck, when the limit allows', () => {
+    expect(groundHeightAt(DEMO_ROOF, { x: 18, z: 0 })).toBeCloseTo(2.6, 9);
   });
 
   it('returns null for a point outside every collider footprint', () => {
-    expect(groundHeightAt(DEMO_ROOF, { x: 500, z: 500 })).toBeNull();
+    expect(groundHeightAt(DEMO_ROOF, { x: 900, z: 900 })).toBeNull();
   });
 
   it('ignores geometry that does not span the point in both axes', () => {
-    // The vent stack sits at (7.5, -2.5); a point at its X but far in Z misses it.
-    const under = groundHeightAt(DEMO_ROOF, { x: 7.5, z: -2.5 });
-    expect(under).toBeCloseTo(2.6, 9);
-
-    const beside = groundHeightAt(DEMO_ROOF, { x: 7.5, z: 11 });
-    expect(beside).toBeCloseTo(0, 9);
+    expect(groundHeightAt(DEMO_ROOF, { x: 18, z: 0 })).toBeCloseTo(2.6, 9);
+    expect(groundHeightAt(DEMO_ROOF, { x: 18, z: 13 })).toBeCloseTo(0, 9);
   });
 });

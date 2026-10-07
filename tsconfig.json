@@ -7,6 +7,9 @@
     "moduleDetection": "force",
     "noEmit": true,
     "isolatedModules": true,
+    // `tools/` runs on Node directly, so it imports with explicit ".ts"
+    // specifiers; `src/` is bundled by Vite and uses ".js" specifiers.
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
@@ -18,5 +21,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "tools", "vite.config.ts"]
 }

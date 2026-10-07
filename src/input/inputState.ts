@@ -53,11 +53,23 @@ export class InputState {
     return this.bindings[action].some((code) => this.pressedCodes.has(code));
   }
 
-  /** Movement intent derived from the held keys. */
+  /**
+   * The full movement intent for this step.
+   *
+   * Sprint and crouch are held states, and jump is deliberately "held" rather
+   * than edge-triggered: holding the key while landing jumps again, which is
+   * what players expect and avoids a one-frame input buffer.
+   */
   get moveInput(): MoveInput {
     const forward = Number(this.isActionPressed('moveForward')) - Number(this.isActionPressed('moveBackward'));
     const right = Number(this.isActionPressed('moveRight')) - Number(this.isActionPressed('moveLeft'));
-    return { forward, right };
+    return {
+      forward,
+      right,
+      sprint: this.isActionPressed('sprint'),
+      jump: this.isActionPressed('jump'),
+      crouch: this.isActionPressed('crouch'),
+    };
   }
 
   /**
