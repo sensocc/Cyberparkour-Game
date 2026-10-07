@@ -1,0 +1,74 @@
+name: CI
+
+# Runs on every push to the default branch and on every pull request, so a
+# regression is caught before it lands rather than when someone opens the demo.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The workflow only reads the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      # Report every version's result instead of stopping at the first failure.
+      fail-fast: false
+      matrix:
+        # Both LTS lines supported by the toolchain. Node 26 is also accepted
+        # (see "engines" in package.json) but is not an Actions-standard version.
+        node: ['22.x', '24.x']
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # TypeScript type-check (including the test suite as well as src).
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Unit + integration tests with a coverage report.
+      - name: Test
+        run: npm run test:coverage
+
+      # Production bundle - proves the demo still builds.
+      - name: Build
+        run: npm run build:only
+
+      - name: Upload coverage report
+        if: matrix.node == '22.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-node-${{ matrix.node }}
+          path: coverage/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload demo build
+        if: matrix.node == '22.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyberparkour-demo-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
