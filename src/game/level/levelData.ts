@@ -1,5 +1,5 @@
 /**
- * Declarative definition of the V0.3 demo district.
+ * Declarative definition of the V0.4 demo district.
  *
  * Keeping the level as plain data (rather than as three.js objects) means it
  * can be validated, collision-tested and rendered from a single source of
@@ -33,6 +33,13 @@ export interface PropDefinition {
   readonly tints?: Readonly<Record<string, string>>;
   /** Whether the player can climb this prop's face. */
   readonly climbable?: boolean;
+  /**
+   * Whether this prop is a *pipe* the player can climb up and down.
+   *
+   * Separate from `climbable` because a pipe is two-way: a face is only ever
+   * ascended, a pipe is also descended and slid down.
+   */
+  readonly pipe?: boolean;
   readonly castShadow?: boolean;
   readonly receiveShadow?: boolean;
 }
@@ -62,6 +69,43 @@ export interface CheckpointDefinition {
   readonly position: ReadonlyVec3;
   /** Facing on respawn, in radians. Defaults to the level spawn's yaw. */
   readonly yaw?: number;
+}
+
+/**
+ * A point light in the level.
+ *
+ * V0.4 needs these for interiors: the sun and the hemisphere light do not reach
+ * inside a building, and a room with no light of its own is a black void. They
+ * also let a neon sign throw a little colour onto the wall behind it.
+ */
+export interface LightDefinition {
+  readonly id: string;
+  readonly position: ReadonlyVec3;
+  readonly color: string;
+  readonly intensity: number;
+  /** How far the light carries, in metres. */
+  readonly distance: number;
+}
+
+/**
+ * A door: a panel that swings open on a vertical hinge.
+ *
+ * The closed panel is a collider; an open one is not. That is the whole
+ * mechanism - `CollisionWorld` can switch a collider off, and the door swings its
+ * mesh to match.
+ */
+export interface DoorDefinition {
+  readonly id: string;
+  /** Centre of the closed panel. */
+  readonly position: ReadonlyVec3;
+  /** Full extents of the panel. */
+  readonly size: ReadonlyVec3;
+  /** The vertical edge the door turns about. */
+  readonly hinge: 'x-' | 'x+' | 'z-' | 'z+';
+  /** How far it swings, in radians. Signed, so a door can open inward or out. */
+  readonly openAngle: number;
+  /** Whether the door starts open. */
+  readonly open?: boolean;
 }
 
 export interface BackdropDefinition {
@@ -104,6 +148,10 @@ export interface LevelDefinition {
   readonly environment: EnvironmentDefinition;
   readonly props: readonly PropDefinition[];
   readonly checkpoints: readonly CheckpointDefinition[];
+  /** Doors in the level. Absent means a level with no doors. */
+  readonly doors?: readonly DoorDefinition[];
+  /** Point lights placed in the level. Absent means none. */
+  readonly lights?: readonly LightDefinition[];
 }
 
 // ---------------------------------------------------------------- authoring
@@ -118,6 +166,7 @@ interface BoxSpec {
   readonly model?: string;
   readonly tints?: Readonly<Record<string, string>>;
   readonly climbable?: boolean;
+  readonly pipe?: boolean;
   readonly receiveShadow?: boolean;
 }
 
@@ -135,6 +184,7 @@ function box(id: string, spec: BoxSpec): PropDefinition {
     size: { x: sx, y: sy, z: sz },
     ...(spec.tints ? { tints: spec.tints } : {}),
     ...(spec.climbable ? { climbable: true } : {}),
+    ...(spec.pipe ? { pipe: true } : {}),
     ...(spec.receiveShadow === undefined ? {} : { receiveShadow: spec.receiveShadow }),
   };
 }
@@ -223,6 +273,138 @@ function roof(spec: {
     }),
   ];
 }
+
+/**
+ * A walk-in interior: four walls, a ceiling, a doorway, and the door in it.
+ *
+ * The floor is deliberately the deck the room stands on - adding a raised floor
+ * would put a lip across the doorway, and a lip is a step the mantle band will
+ * not take (its floor is 0.4 m) but a walk into it will not either. So the room
+ * is walls and a roof, and the deck is the floor.
+ *
+ * The doorway wall is split into two segments with a lintel over the gap, because
+ * collision is per-prop boxes: a wall with a hole needs two walls and a beam, not
+ * a hole.
+ */
+function room(spec: {
+  readonly id: string;
+  /** Centre of the room's interior, on X/Z. */
+  readonly at: readonly [number, number];
+  /** Interior width (X) and depth (Z). */
+  readonly size: readonly [number, number];
+  /** Y of the floor: the deck top the room stands on. */
+  readonly bottom: number;
+  /** Interior height, floor to the underside of the ceiling. */
+  readonly height: number;
+  /** Which wall carries the doorway. Rooms here open to +Z or -Z. */
+  readonly entry: 'z+' | 'z-';
+  readonly tint?: string;
+  readonly tintDark?: string;
+}): { readonly props: PropDefinition[]; readonly door: DoorDefinition } {
+  const [cx, cz] = spec.at;
+  const [width, depth] = spec.size;
+  const wall = 0.3;
+  const ceiling = 0.25;
+  const doorWidth = 1.4;
+  const doorHeight = 2.2;
+  /** Width of the door jambs, which is what the lintel rests on. */
+  const jamb = 0.3;
+  const openingHalf = doorWidth / 2 + jamb;
+  /** Top of the walls. The roof sits on this, so nothing floats. */
+  const top = spec.bottom + spec.height;
+
+  const tints = {
+    concrete: spec.tint ?? '#5a636f',
+    'concrete-dark': spec.tintDark ?? '#49515c',
+    metal: '#77808d',
+  };
+  const panel = (
+    id: string,
+    x: number,
+    z: number,
+    size: readonly [number, number, number],
+    bottom: number,
+  ): PropDefinition => box(`${spec.id}-${id}`, { at: [x, z], bottom, size, kind: 'wall', model: 'slab', tints });
+
+  const sideX = (width + wall) / 2;
+  const sideDepth = depth + wall;
+  // The doorway wall is at `depth / 2 + wall / 2` from the centre, and which of
+  // the two it is depends on which way the room opens.
+  const openingZ = depth / 2 + wall / 2;
+  const frontZ = cz + (spec.entry === 'z+' ? openingZ : -openingZ);
+  const backZ = cz - (spec.entry === 'z+' ? openingZ : -openingZ);
+  const frontSegment = sideX - openingHalf;
+  // A small overhang, so the roof reads as a roof and there is a lip to land on
+  // when something climbs up the outside.
+  const overhang = 0.4;
+
+  const props: PropDefinition[] = [
+    panel('wall-w', cx - sideX, cz, [wall, spec.height, sideDepth], spec.bottom),
+    panel('wall-e', cx + sideX, cz, [wall, spec.height, sideDepth], spec.bottom),
+    panel('wall-back', cx, backZ, [width + wall * 2, spec.height, wall], spec.bottom),
+    panel('wall-front-l', cx - openingHalf - frontSegment / 2, frontZ, [frontSegment, spec.height, wall], spec.bottom),
+    panel('wall-front-r', cx + openingHalf + frontSegment / 2, frontZ, [frontSegment, spec.height, wall], spec.bottom),
+    // The jambs stop at the door head, and the lintel then rests on them - which
+    // is both how a real doorway is built and what keeps the level's "nothing
+    // floats" rule satisfied, since a lintel supported only by the wall beside it
+    // shares no top face with anything.
+    panel('jamb-l', cx - doorWidth / 2 - jamb / 2, frontZ, [jamb, doorHeight, wall], spec.bottom),
+    panel('jamb-r', cx + doorWidth / 2 + jamb / 2, frontZ, [jamb, doorHeight, wall], spec.bottom),
+    panel('lintel', cx, frontZ, [openingHalf * 2, spec.height - doorHeight, wall], spec.bottom + doorHeight),
+    // The roof: its top is the room's roof, which is walkable like any other.
+    panel('roof', cx, cz, [width + wall * 2 + overhang, ceiling, sideDepth + overhang], top),
+  ];
+
+  const door: DoorDefinition = {
+    id: `${spec.id}-door`,
+    position: { x: cx, y: spec.bottom + doorHeight / 2, z: frontZ },
+    size: { x: doorWidth, y: doorHeight, z: wall },
+    hinge: 'x-',
+    // Swings inward, which is why the sign flips with the wall it is on.
+    openAngle: spec.entry === 'z+' ? 2.1 : -2.1,
+  };
+
+  return { props, door };
+}
+
+/** A neon sign, hung on a wall. The lit face looks along +Z. */
+function sign(spec: {
+  readonly id: string;
+  readonly at: readonly [number, number, number];
+  readonly size: readonly [number, number];
+  readonly tint: string;
+}): PropDefinition {
+  return box(spec.id, {
+    at: [spec.at[0], spec.at[2]],
+    bottom: spec.at[1],
+    size: [spec.size[0], spec.size[1], 0.25],
+    model: 'neon-sign',
+    tints: { neon: spec.tint },
+  });
+}
+
+/** The two walk-in rooms, so their props and doors are authored together. */
+const EAST_ROOM = room({
+  id: 'east-room',
+  at: [36, -1],
+  size: [7, 5],
+  bottom: 1.2,
+  height: 3.2,
+  entry: 'z+',
+  tint: '#5f6a76',
+  tintDark: '#4b5560',
+});
+
+const FAR_ROOM = room({
+  id: 'far-room',
+  at: [94, -3],
+  size: [7, 5],
+  bottom: 1.2,
+  height: 3,
+  entry: 'z+',
+  tint: '#59616d',
+  tintDark: '#464e59',
+});
 
 /**
  * The technical demo's rooftop district.
@@ -318,6 +500,9 @@ export const DEMO_DISTRICT: LevelDefinition = {
     }),
     // The slow route: a 1 m service beam, which a 0.7 m player box can walk.
     box('canyon-beam', { at: [78, 4], bottom: 2.3, size: [12, 0.5, 1], model: 'deck' }),
+    // Signage on the canyon facade, read from the roofs on either side. The lit
+    // face looks +Z, back across the gap.
+    sign({ id: 'sign-canyon', at: [78, 5.4, -11.05], size: [4.4, 1.6], tint: '#57e0ff' }),
 
     // ------------------------------------------------------------- home roof
     box('penthouse', {
@@ -355,12 +540,22 @@ export const DEMO_DISTRICT: LevelDefinition = {
     // -------------------------------------------------------------- east roof
     box('ac-unit-east-a', { at: [26, 5], size: [3.2, 1.7, 2.4], model: 'ac-unit', bottom: 1.2 }),
     box('ac-unit-east-b', { at: [30, 5], size: [3.2, 1.7, 2.4], model: 'ac-unit', bottom: 1.2 }),
-    box('vent-stack-east', { at: [40, -5], size: [1.8, 3, 1.8], model: 'vent-stack', bottom: 1.2, climbable: true }),
+    // Moved clear of the machine room, which now takes the middle of the roof.
+    box('vent-stack-east', { at: [42, -6], size: [1.8, 3, 1.8], model: 'vent-stack', bottom: 1.2, climbable: true }),
     box('barrier-east', { at: [24, -4], size: [0.5, 1.1, 6], model: 'barrier', bottom: 1.2 }),
     box('skylight-east', { at: [28, -6], size: [5, 0.5, 4], model: 'skylight', bottom: 1.2 }),
     box('crate-east-a', { at: [36, 7], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
     box('crate-east-b', { at: [37.7, 7.8], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
     box('junction-east', { at: [33, -8], size: [1.6, 1.8, 1.6], model: 'junction-box', bottom: 1.2 }),
+
+    // The east room: a machine room you can walk into. Walls and roof of its own,
+    // a door you open with E, fittings inside, a sign on the back wall, and a pipe
+    // up the outside that reaches the roof.
+    ...EAST_ROOM.props,
+    box('pipe-east', { at: [40, -1], bottom: 1.2, size: [0.4, 3.45, 0.4], model: 'pipe-vertical', pipe: true }),
+    box('junction-east-inner', { at: [34, -2.6], size: [1.4, 1.6, 1.4], model: 'junction-box', bottom: 1.2 }),
+    box('crate-east-inner', { at: [38.4, -2.4], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
+    sign({ id: 'sign-east-room', at: [36, 2.9, -3.35], size: [3.2, 1], tint: '#ff4fd8' }),
 
     // -------------------------------------------------------------- high roof
     box('water-tank-high', { at: [56, 4], size: [3.2, 3.4, 3.2], model: 'water-tank', bottom: 3.6 }),
@@ -386,10 +581,17 @@ export const DEMO_DISTRICT: LevelDefinition = {
     }),
     box('ac-unit-far-b', { at: [96, 4], size: [3.2, 1.7, 2.4], model: 'ac-unit', bottom: 1.2 }),
     box('barrier-far', { at: [90, 7], size: [0.5, 1.1, 6], model: 'barrier', bottom: 1.2 }),
-    box('pipe-run-far', { at: [98, 0], bottom: 1.2, size: [0.6, 0.6, 10], model: 'pipe-run' }),
+    box('pipe-run-far', { at: [99, 0], bottom: 1.2, size: [0.6, 0.6, 10], model: 'pipe-run' }),
     box('crate-far-a', { at: [101, -4], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
     box('crate-far-b', { at: [102.7, -4.8], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
     box('cable-spool-far', { at: [101, 7], size: [2, 2, 2], model: 'cable-spool', bottom: 1.2 }),
+
+    // The far room: the same idea as the east one, a floor lower, so entering a
+    // building is a thing the district does rather than a one-off on one roof.
+    ...FAR_ROOM.props,
+    box('junction-far-inner', { at: [92, -1.8], size: [1.4, 1.6, 1.4], model: 'junction-box', bottom: 1.2 }),
+    box('crate-far-inner', { at: [95.6, -1.4], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
+    sign({ id: 'sign-far-room', at: [94, 2.8, -5.35], size: [3, 1], tint: '#ffc247' }),
 
     // ---------------------------------------------------- background massing
     box('tower-a', {
@@ -432,5 +634,17 @@ export const DEMO_DISTRICT: LevelDefinition = {
       tints: { concrete: '#323d51', 'concrete-dark': '#28303f' },
       receiveShadow: false,
     }),
+  ],
+  doors: [EAST_ROOM.door, FAR_ROOM.door],
+  lights: [
+    // An interior lamp in each room: the sun cannot reach inside a building, and
+    // without one a room is a black hole you can hear your footsteps in.
+    { id: 'lamp-east-room', position: { x: 36, y: 3.6, z: -1 }, color: '#ffd9a0', intensity: 9, distance: 14 },
+    { id: 'lamp-far-room', position: { x: 94, y: 3.1, z: -3 }, color: '#ffd9a0', intensity: 8, distance: 12 },
+    // Spill from the signs, so a neon sign lights the wall it is on rather than
+    // being a glowing rectangle on a black one.
+    { id: 'glow-canyon', position: { x: 78, y: 5.6, z: -10.1 }, color: '#57e0ff', intensity: 11, distance: 20 },
+    { id: 'glow-east-sign', position: { x: 36, y: 3.1, z: -2.7 }, color: '#ff4fd8', intensity: 5, distance: 10 },
+    { id: 'glow-far-sign', position: { x: 94, y: 3, z: -4.5 }, color: '#ffc247', intensity: 4, distance: 9 },
   ],
 };

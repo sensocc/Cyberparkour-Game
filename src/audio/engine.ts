@@ -136,11 +136,15 @@ export class WebAudio implements AudioOutput {
 
     try {
       switch (cue.kind) {
-        case 'footstep':
-          this.oneShot(`step-${cue.gait}-${cue.variant}`, () =>
-            renderFootstep({ variant: cue.variant as FootstepVariant, gait: cue.gait === 'slide' ? 'sprint' : cue.gait }),
+        case 'footstep': {
+          // A slide borrows the sprint sample; there is no such thing as a
+          // "sliding footstep", and it would only add a buffer nobody asked for.
+          const gait = cue.gait === 'slide' ? 'sprint' : cue.gait;
+          this.oneShot(`step-${gait}-${cue.surface}-${cue.variant}`, () =>
+            renderFootstep({ variant: cue.variant as FootstepVariant, gait, surface: cue.surface }),
           );
           break;
+        }
         case 'scrape':
           this.oneShot(`scrape-${cue.variant % 3}`, () => renderScrape(cue.variant % 3));
           break;

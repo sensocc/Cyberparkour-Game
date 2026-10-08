@@ -93,9 +93,9 @@ function makeEngine() {
 }
 
 const EVERY_CUE: AudioCue[] = [
-  { kind: 'footstep', gait: 'walk', variant: 0 },
-  { kind: 'footstep', gait: 'sprint', variant: 1 },
-  { kind: 'footstep', gait: 'crouch', variant: 2 },
+  { kind: 'footstep', gait: 'walk', variant: 0, surface: 'metal' },
+  { kind: 'footstep', gait: 'sprint', variant: 1, surface: 'grate' },
+  { kind: 'footstep', gait: 'crouch', variant: 2, surface: 'concrete' },
   { kind: 'scrape', variant: 0 },
   { kind: 'climb-tick', variant: 1 },
   { kind: 'land', intensity: 0 },
@@ -158,7 +158,7 @@ describe('WebAudio', () => {
     try {
       const before = buffers.length;
       for (let repeat = 0; repeat < 3; repeat += 1) {
-        engine.play({ kind: 'footstep', gait: 'walk', variant: 0 });
+        engine.play({ kind: 'footstep', gait: 'walk', variant: 0, surface: 'metal' });
       }
       expect(buffers.length).toBe(before + 1);
     } finally {

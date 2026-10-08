@@ -10,6 +10,7 @@ import * as THREE from 'three';
 
 import type { GameConfig } from '../core/config.js';
 import { logger } from '../core/log.js';
+import { clamp01 } from '../core/math.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
@@ -35,6 +36,7 @@ export class GameView implements GameViewLike {
   private readonly renderer: THREE.WebGLRenderer;
   private readonly built: BuiltScene;
   private readonly camera: THREE.PerspectiveCamera;
+  private readonly doorAngles: ReadonlyMap<string, number>;
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -74,6 +76,9 @@ export class GameView implements GameViewLike {
     this.camera.rotation.order = 'YXZ';
 
     this.built = buildScene(options.definition, options.assets ?? NO_ASSETS);
+    this.doorAngles = new Map(
+      (options.definition.doors ?? []).map((door) => [door.id, door.openAngle] as const),
+    );
 
     logger.info('render', 'view created', {
       renderer: this.rendererInfo ?? 'unknown',
@@ -127,6 +132,21 @@ export class GameView implements GameViewLike {
     this.camera.rotation.set(orientation.pitch, orientation.yaw, 0);
 
     this.renderer.render(this.built.scene, this.camera);
+  }
+
+  /**
+   * Swings a door.
+   *
+   * The door group's origin is the hinge line, so turning it about Y is the whole
+   * animation - and, because three.js propagates transforms, the leaf's shadow
+   * and lighting follow it for free.
+   */
+  setDoorOpen(id: string, open: number): void {
+    if (this.disposed) return;
+    const group = this.built.doors.get(id);
+    const angle = this.doorAngles.get(id);
+    if (!group || angle === undefined) return;
+    group.rotation.y = clamp01(open) * angle;
   }
 
   /** Releases the GPU context and all scene resources. */

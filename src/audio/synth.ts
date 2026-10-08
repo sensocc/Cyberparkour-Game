@@ -12,6 +12,7 @@
  */
 
 import { createRandom } from '../core/random.js';
+import type { AcousticMaterial } from '../game/level/surfaces.js';
 
 export const SAMPLE_RATE = 48000;
 
@@ -170,7 +171,49 @@ export type FootstepVariant = 0 | 1 | 2 | 3;
 export interface FootstepOptions {
   readonly variant: FootstepVariant;
   readonly gait: 'walk' | 'sprint' | 'crouch';
+  /**
+   * What was stepped on.
+   *
+   * Defaults to metal, the demo's commonest surface and the V0.3 sound, so a
+   * caller that does not care about surfaces gets exactly what it used to.
+   */
+  readonly surface?: AcousticMaterial;
 }
+
+/**
+ * How a footstep differs by material, before the gait is applied.
+ *
+ * Four numbers carry the whole character: where the scuff is filtered, the pitch
+ * and length of the body thump, and how the two are balanced. A metal deck rings,
+ * a concrete roof thuds, a grate rattles and a glass panel tinks - and that is
+ * all the difference there is.
+ */
+interface AcousticProfile {
+  /** Seed offset, so one variant is not identical noise across materials. */
+  readonly seed: number;
+  /** Scuff low-pass at walking pace (Hz). */
+  readonly scuffCutoff: number;
+  readonly scuffHighpass: number;
+  /** Body tone at walking pace (Hz). */
+  readonly bodyHz: number;
+  /** Body decay at walking pace (s). */
+  readonly bodyDecay: number;
+  /** Scuff level relative to metal. */
+  readonly scuffMix: number;
+  /** Body level relative to metal. */
+  readonly bodyMix: number;
+}
+
+const ACOUSTIC_PROFILE: Readonly<Record<AcousticMaterial, AcousticProfile>> = {
+  // Tread plate and panels: the V0.3 sound, and the baseline everything scales from.
+  metal: { seed: 0, scuffCutoff: 1050, scuffHighpass: 95, bodyHz: 68, bodyDecay: 44, scuffMix: 1, bodyMix: 1 },
+  // Bare concrete: duller, lower, and mostly body.
+  concrete: { seed: 7, scuffCutoff: 700, scuffHighpass: 70, bodyHz: 58, bodyDecay: 42, scuffMix: 0.6, bodyMix: 1.15 },
+  // A grated walkway: bright and noisy, and hollow underneath.
+  grate: { seed: 13, scuffCutoff: 2400, scuffHighpass: 320, bodyHz: 96, bodyDecay: 62, scuffMix: 1.3, bodyMix: 0.5 },
+  // Glass: a high tick with almost no thump at all.
+  glass: { seed: 19, scuffCutoff: 3600, scuffHighpass: 900, bodyHz: 150, bodyDecay: 80, scuffMix: 1.15, bodyMix: 0.4 },
+};
 
 /**
  * A footstep: a soft filtered scuff over a low body thump.
@@ -180,15 +223,21 @@ export interface FootstepOptions {
  * every step, and at three and a half steps a second that is exhausting. Now the
  * attack is a slow-in over 10 ms, the decay is three times as long, the filter is
  * darker, and most of the level is in the low body rather than the scuff.
+ *
+ * V0.4 makes it **surface-aware**: the gait picks the pace, the material picks
+ * the character, and the two are independent so every combination is covered
+ * without a sample per case.
  */
 export function renderFootstep(options: FootstepOptions): Float32Array {
   const gait = options.gait;
+  const profile = ACOUSTIC_PROFILE[options.surface ?? 'metal'];
+
   const length = Math.round(SAMPLE_RATE * (gait === 'crouch' ? 0.2 : 0.26));
-  const scuff = whiteNoise(length, 0x1000 + options.variant * 97 + gait.length);
-  lowpass(scuff, gait === 'sprint' ? 1500 : gait === 'crouch' ? 650 : 1050);
+  const scuff = whiteNoise(length, 0x1000 + options.variant * 97 + gait.length + profile.seed);
+  lowpass(scuff, profile.scuffCutoff * (gait === 'sprint' ? 1.43 : gait === 'crouch' ? 0.62 : 1));
   // A gentle high-pass keeps the low body from booming on a big speaker, without
   // putting any brightness back.
-  highpass(scuff, 95);
+  highpass(scuff, profile.scuffHighpass);
 
   const envelope = decayEnvelope(
     length,
@@ -201,8 +250,8 @@ export function renderFootstep(options: FootstepOptions): Float32Array {
 
   const body = decayingTone(
     length,
-    gait === 'crouch' ? 54 : 68 + options.variant * 5,
-    gait === 'crouch' ? 40 : 44,
+    (gait === 'crouch' ? profile.bodyHz * 0.794 : profile.bodyHz) + options.variant * 5,
+    gait === 'crouch' ? profile.bodyDecay * 0.909 : profile.bodyDecay,
     0.075,
   );
   const bodyEnvelope = decayEnvelope(length, 0.006, 0.07);
@@ -212,8 +261,8 @@ export function renderFootstep(options: FootstepOptions): Float32Array {
 
   const samples = new Float32Array(length);
   // Mostly body, a little scuff: a footfall, not a click.
-  const scuffGain = gait === 'sprint' ? 0.42 : gait === 'crouch' ? 0.16 : 0.3;
-  const bodyGain = gait === 'crouch' ? 0.3 : 0.72;
+  const scuffGain = (gait === 'sprint' ? 0.42 : gait === 'crouch' ? 0.16 : 0.3) * profile.scuffMix;
+  const bodyGain = (gait === 'crouch' ? 0.3 : 0.72) * profile.bodyMix;
   mixInto(samples, scuff, 0, scuffGain);
   mixInto(samples, body, 0, bodyGain);
   // Well under full scale, so footsteps sit beneath the music instead of over it.

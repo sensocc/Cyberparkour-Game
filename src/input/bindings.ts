@@ -14,6 +14,7 @@ export type KeyAction =
   | 'sprint'
   | 'jump'
   | 'crouch'
+  | 'interact'
   | 'toggleDebug'
   | 'mute'
   | 'pause'
@@ -32,6 +33,9 @@ export const DEFAULT_BINDINGS: Bindings = {
   // Control is the usual crouch key; C is there for keyboards/browsers that
   // swallow it, and for players used to console layouts.
   crouch: ['ControlLeft', 'ControlRight', 'KeyC'],
+  // E works a door the player is standing next to. F is a common alternative and
+  // costs nothing to accept.
+  interact: ['KeyE', 'KeyF'],
   toggleDebug: ['F3', 'Backquote'],
   mute: ['KeyM'],
   pause: ['Escape'],
@@ -55,7 +59,7 @@ export const MOVEMENT_ACTIONS: readonly KeyAction[] = [
 ];
 
 /** Actions triggered by a key press and drained once per frame. */
-export const UI_ACTIONS: readonly KeyAction[] = ['toggleDebug', 'mute', 'pause', 'restart'];
+export const UI_ACTIONS: readonly KeyAction[] = ['interact', 'toggleDebug', 'mute', 'pause', 'restart'];
 
 export function isUiAction(action: KeyAction): boolean {
   return UI_ACTIONS.includes(action);

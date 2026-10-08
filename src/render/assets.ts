@@ -26,6 +26,7 @@ import surfaceGlass from '../assets/textures/surface-glass.png';
 import surfaceGrille from '../assets/textures/surface-grille.png';
 import surfaceHazard from '../assets/textures/surface-hazard.png';
 import surfaceMetalPanel from '../assets/textures/surface-metal-panel.png';
+import surfaceSign from '../assets/textures/surface-sign.png';
 import type { SceneAssets } from './types.js';
 
 /**
@@ -63,6 +64,7 @@ export const TEXTURE_URLS = {
     hazard: surfaceHazard,
     grille: surfaceGrille,
     glass: surfaceGlass,
+    sign: surfaceSign,
   } satisfies Record<SurfaceTextureId, string>,
 } as const;
 

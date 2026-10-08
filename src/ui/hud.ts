@@ -68,6 +68,8 @@ export function describeLocomotion(snapshot: HudSnapshot): string {
       return 'HANGING';
     case 'climbing':
       return 'CLIMBING';
+    case 'piping':
+      return 'PIPE';
     case 'sliding':
       return 'SLIDING';
     case 'wall-running':

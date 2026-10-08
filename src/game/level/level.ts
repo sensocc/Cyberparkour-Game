@@ -8,10 +8,10 @@
  */
 
 import { aabbFromCenterSize, minThickness, overlaps, type AABB } from '../physics/aabb.js';
-import { CollisionWorld, type Collider } from '../physics/collision.js';
+import { CollisionWorld, type Collider, type ColliderKind } from '../physics/collision.js';
 import type { LevelDefinition, PropDefinition } from './levelData.js';
-import { modelById, resolveModelParts, type ResolvedPart } from './models.js';
-import { surfaceById } from './surfaces.js';
+import { modelById, resolveModelParts, topSurface, type ResolvedPart } from './models.js';
+import { acousticForSurface, surfaceById } from './surfaces.js';
 
 /** Player dimensions, used for spawn validation. */
 export interface PlayerSize {
@@ -79,13 +79,55 @@ export function resolvePropParts(prop: PropDefinition): ResolvedPart[] {
  *
  * One collider per prop, from the prop's box: the model parts are surface
  * detail, and a box is the right approximation for all of them.
+ *
+ * Each collider also carries the prop's **footstep surface** - the acoustic
+ * material of the model's topmost part - so the audio can tell a metal deck from
+ * a concrete roof without the physics layer knowing what a surface is.
  */
 export function toColliders(definition: LevelDefinition): Collider[] {
-  return definition.props.map((prop) => ({
-    id: prop.id,
-    kind: prop.climbable ? 'climbable' : prop.kind,
-    box: propBounds(prop),
-  }));
+  const colliders: Collider[] = definition.props.map((prop) => {
+    const model = modelById(prop.model);
+    const acoustic = model ? acousticForSurface(topSurface(model) ?? '') : undefined;
+
+    return {
+      id: prop.id,
+      kind: colliderKindFor(prop),
+      box: propBounds(prop),
+      ...(acoustic ? { surface: acoustic } : {}),
+    };
+  });
+
+  // Doors are colliders too, but they are not props: they have no model parts of
+  // their own (the scene builder swings the leaf) and the game may switch them
+  // off. A panel is metal, so a footstep on a closed one rings.
+  for (const door of definition.doors ?? []) {
+    colliders.push({
+      id: door.id,
+      kind: 'door',
+      box: aabbFromCenterSize(door.position, door.size),
+      surface: 'metal',
+    });
+  }
+
+  return colliders;
+}
+
+/** The collision tag for a prop: pipes and climbables are specialisations. */
+export function colliderKindFor(prop: PropDefinition): ColliderKind {
+  if (prop.kind === 'door') return 'door';
+  if (prop.pipe) return 'pipe';
+  if (prop.climbable) return 'climbable';
+  return prop.kind;
+}
+
+/** Ids of colliders the pipe-climbing ability can use. */
+export function pipeIds(colliders: readonly Collider[]): Set<string> {
+  return new Set(colliders.filter((collider) => collider.kind === 'pipe').map((c) => c.id));
+}
+
+/** Ids of climbable (non-pipe) colliders. */
+export function climbableIds(colliders: readonly Collider[]): Set<string> {
+  return new Set(colliders.filter((collider) => collider.kind === 'climbable').map((c) => c.id));
 }
 
 /**
@@ -158,11 +200,19 @@ export function validateLevel(
     }
   }
 
+  validateDoors(definition, add, maxSubStep, seen);
+  validateLights(definition, add);
+
   // Spawn sanity: the player must not start inside geometry.
   const box = spawnBounds(definition, player);
   for (const prop of definition.props) {
     if (overlaps(box, propBounds(prop))) {
       add(`spawn point intersects prop "${prop.id}"`, prop.id);
+    }
+  }
+  for (const door of definition.doors ?? []) {
+    if (overlaps(box, aabbFromCenterSize(door.position, door.size))) {
+      add(`spawn point intersects door "${door.id}"`, door.id);
     }
   }
 
@@ -197,6 +247,57 @@ export function validateLevel(
   problems.push(...validateEnvironment(definition, add));
 
   return problems;
+}
+
+/** The four edges a door may hinge on. */
+const DOOR_HINGES: readonly string[] = ['x-', 'x+', 'z-', 'z+'];
+
+/**
+ * Doors share the prop id namespace, so a clash is rejected rather than silently
+ * shadowed. A door has the same thinness rule as a prop, because the solver has
+ * no idea it is a door: it is a box like any other.
+ */
+function validateDoors(
+  definition: LevelDefinition,
+  add: (message: string, id?: string) => void,
+  maxSubStep: number,
+  seenIds: Set<string>,
+): void {
+  for (const door of definition.doors ?? []) {
+    if (seenIds.has(door.id)) add(`duplicate id "${door.id}" (shared with a prop or another door)`, door.id);
+    seenIds.add(door.id);
+
+    for (const axis of ['x', 'y', 'z'] as const) {
+      if (!(door.size[axis] > 0)) add(`door size.${axis} must be > 0`, door.id);
+    }
+    if (!DOOR_HINGES.includes(door.hinge)) {
+      add(`door hinge "${door.hinge}" must be one of ${DOOR_HINGES.join(' ')}`, door.id);
+    }
+    if (!Number.isFinite(door.openAngle)) add('door openAngle must be finite', door.id);
+
+    const thin = minThickness(aabbFromCenterSize(door.position, door.size));
+    if (Number.isFinite(thin) && thin < maxSubStep) {
+      add(
+        `door thinnest extent is ${thin.toFixed(3)}m, below the ${maxSubStep}m collision sub-step`,
+        door.id,
+      );
+    }
+  }
+}
+
+/** Lights are decoration with consequences, so their numbers must make sense. */
+function validateLights(
+  definition: LevelDefinition,
+  add: (message: string, id?: string) => void,
+): void {
+  const seen = new Set<string>();
+  for (const light of definition.lights ?? []) {
+    if (seen.has(light.id)) add(`duplicate light id "${light.id}"`, light.id);
+    seen.add(light.id);
+    if (!/^#[0-9a-f]{6}$/i.test(light.color)) add('light colour must be a #rrggbb colour', light.id);
+    if (!(light.intensity > 0)) add('light intensity must be > 0', light.id);
+    if (!(light.distance > 0)) add('light distance must be > 0', light.id);
+  }
 }
 
 function validateEnvironment(

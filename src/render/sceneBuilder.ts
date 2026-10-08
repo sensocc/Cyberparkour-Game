@@ -16,6 +16,7 @@ import * as THREE from 'three';
 
 import type { LevelDefinition } from '../game/level/levelData.js';
 import { resolvePropParts } from '../game/level/level.js';
+import { modelById, resolveModelParts } from '../game/level/models.js';
 import { surfaceById } from '../game/level/surfaces.js';
 import { NO_ASSETS, type SceneAssets } from './types.js';
 
@@ -24,6 +25,13 @@ export interface BuiltScene {
   readonly sun: THREE.DirectionalLight;
   /** Meshes by prop id, one entry per part. */
   readonly meshes: ReadonlyMap<string, readonly THREE.Mesh[]>;
+  /**
+   * Door leaves, keyed by door id.
+   *
+   * Each is a pivot group at the hinge; the game rotates it to open and close the
+   * door. Kept separate from `meshes` because these move.
+   */
+  readonly doors: ReadonlyMap<string, THREE.Object3D>;
   /** The city skyline, when one was built. */
   readonly backdrop: THREE.Mesh | null;
   dispose(): void;
@@ -64,11 +72,20 @@ export function buildScene(
     if (cached) return cached;
 
     const surface = surfaceById(surfaceId);
+    const texture = surface ? (assets.surfaces.get(surface.texture) ?? null) : null;
+    // An emissive surface lights itself: the tint becomes the *emissive* colour
+    // and the map modulates it, so only the light parts of the sign texture glow.
+    // The albedo goes dark, so the sun does not wash the glow out.
+    const emissive = surface?.emissive === true;
+
     const material = new THREE.MeshLambertMaterial({
-      color: new THREE.Color(tint),
-      map: surface ? (assets.surfaces.get(surface.texture) ?? null) : null,
+      color: new THREE.Color(emissive ? '#1a1e26' : tint),
+      map: texture,
       // Flat shading keeps the low-poly silhouette crisp, Quake-style.
       flatShading: true,
+      ...(emissive
+        ? { emissive: new THREE.Color(tint), emissiveMap: texture, emissiveIntensity: 1 }
+        : {}),
     });
     materials.set(key, material);
     return material;
@@ -118,6 +135,67 @@ export function buildScene(
     meshes.set(prop.id, propMeshes);
   }
 
+  // ----------------------------------------------------------------- doors
+  // A door is not a prop: it hangs off a pivot at its hinge and turns. The pivot
+  // is a vertical line, so the group sits on that line and the leaf is built in
+  // the group's local space, offset from the hinge.
+  const doors = new Map<string, THREE.Object3D>();
+  const doorModel = modelById('door-panel');
+  for (const door of definition.doors ?? []) {
+    if (!doorModel) break;
+    const { x: sx, y: sy, z: sz } = door.size;
+
+    let hingeX = door.position.x;
+    let hingeZ = door.position.z;
+    if (door.hinge === 'x-') hingeX = door.position.x - sx / 2;
+    else if (door.hinge === 'x+') hingeX = door.position.x + sx / 2;
+    else if (door.hinge === 'z-') hingeZ = door.position.z - sz / 2;
+    else hingeZ = door.position.z + sz / 2;
+
+    const group = new THREE.Group();
+    group.position.set(hingeX, door.position.y, hingeZ);
+    group.name = `door:${door.id}`;
+
+    const origin = {
+      x: door.position.x - sx / 2 - hingeX,
+      y: -sy / 2,
+      z: door.position.z - sz / 2 - hingeZ,
+    };
+
+    for (const [index, entry] of resolveModelParts(doorModel, origin, door.size).entries()) {
+      const width = entry.max.x - entry.min.x;
+      const height = entry.max.y - entry.min.y;
+      const depth = entry.max.z - entry.min.z;
+      if (width <= 0 || height <= 0 || depth <= 0) continue;
+
+      const surface = surfaceById(entry.surface);
+      const metresPerTile = surface?.metresPerTile ?? 2;
+      const geometry = new THREE.BoxGeometry(width, height, depth);
+      scaleBoxUvs(geometry, metresPerTile, {
+        u: [depth, depth, width, width, width, width],
+        v: [height, height, depth, depth, height, height],
+      });
+      geometries.push(geometry);
+
+      const mesh = new THREE.Mesh(geometry, materialFor(entry.surface, surface?.tint ?? '#8a8f99'));
+      mesh.position.set(
+        (entry.min.x + entry.max.x) / 2,
+        (entry.min.y + entry.max.y) / 2,
+        (entry.min.z + entry.max.z) / 2,
+      );
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.name = `${door.id}#${index}`;
+      mesh.matrixAutoUpdate = false;
+      mesh.updateMatrix();
+      group.add(mesh);
+    }
+
+    group.rotation.y = (door.open === true ? 1 : 0) * door.openAngle;
+    scene.add(group);
+    doors.set(door.id, group);
+  }
+
   // ------------------------------------------------------------- lighting
   const ambient = new THREE.HemisphereLight(
     new THREE.Color(environment.ambientSkyColor),
@@ -153,6 +231,17 @@ export function buildScene(
   scene.add(sun);
   scene.add(sun.target);
 
+  // ---------------------------------------------------------- scene lights
+  // Interior lamps and sign glow. These cast no shadows: a point light shadow is
+  // a cube map per light, and the demo's look does not need one.
+  for (const light of definition.lights ?? []) {
+    const point = new THREE.PointLight(new THREE.Color(light.color), light.intensity, light.distance);
+    point.position.set(light.position.x, light.position.y, light.position.z);
+    point.name = light.id;
+    point.castShadow = false;
+    scene.add(point);
+  }
+
   // --------------------------------------------------------- city backdrop
   const backdrop = buildCityBackdrop(definition, assets.cityBackdrop);
   if (backdrop) scene.add(backdrop);
@@ -169,6 +258,7 @@ export function buildScene(
     scene,
     sun,
     meshes,
+    doors,
     backdrop,
     dispose(): void {
       scene.clear();

@@ -11,12 +11,19 @@
 import { clamp, clamp01 } from '../core/math.js';
 import type { GameConfig } from '../core/config.js';
 import { lengthXZ } from '../core/vec3.js';
+import { ACOUSTIC_MATERIALS, type AcousticMaterial } from '../game/level/surfaces.js';
 import type { ManeuverKind, PlayerState } from '../game/player.js';
 
 export type Gait = 'walk' | 'sprint' | 'crouch' | 'slide';
 
 export type AudioCue =
-  | { readonly kind: 'footstep'; readonly gait: Gait; readonly variant: number }
+  | {
+      readonly kind: 'footstep';
+      readonly gait: Gait;
+      readonly variant: number;
+      /** Acoustic material underfoot, so a deck and a roof do not sound alike. */
+      readonly surface: AcousticMaterial;
+    }
   | { readonly kind: 'scrape'; readonly variant: number }
   | { readonly kind: 'climb-tick'; readonly variant: number }
   | { readonly kind: 'land'; readonly intensity: 0 | 1 | 2 }
@@ -39,6 +46,9 @@ export interface AudioFrame {
 /** How often a slide scrapes, and a climb ticks, in seconds. */
 const SCRAPE_INTERVAL = 0.24;
 const CLIMB_INTERVAL = 0.42;
+
+/** The acoustic materials, as a set, for validating what the collider carried. */
+const KNOWN_ACOUSTICS: ReadonlySet<string> = new Set(ACOUSTIC_MATERIALS);
 
 /** Falling speed at which the wind starts, in m/s. */
 const WIND_FLOOR = 9;
@@ -76,7 +86,9 @@ export class AudioDirector {
   }
 
   maneuverStart(kind: ManeuverKind): void {
-    if (kind === 'hang') this.push({ kind: 'grab' });
+    // A grab is a grab: catching a ledge and latching onto a pipe are the same
+    // sound, and both are the hand closing on metal.
+    if (kind === 'hang' || kind === 'pipe-grab') this.push({ kind: 'grab' });
     else if (kind === 'slide') this.push({ kind: 'slide-start' });
     else if (kind === 'climb') return;
     // The three airborne moves share one sound: a breathy swell of air, which is
@@ -127,17 +139,28 @@ export class AudioDirector {
       if (this.distanceSinceStep >= stepLength) {
         this.distanceSinceStep %= stepLength;
         this.stepVariant = (this.stepVariant + 1) % FOOTSTEP_VARIANTS;
-        cues.push({ kind: 'footstep', gait, variant: this.stepVariant });
+        cues.push({
+          kind: 'footstep',
+          gait,
+          variant: this.stepVariant,
+          surface: this.acousticSurface(state),
+        });
       }
     } else {
       // Reset so the first step after landing or a manoeuvre is immediate.
       this.distanceSinceStep = this.strideFor('walk') / 2;
     }
 
-    // Sliding drags on the floor, wall running drags on the wall, and a roll
-    // drags on both. Same sound, and it is the contact that makes all three read
-    // as movement you are committed to rather than floating.
-    if (state.sliding || state.wallId !== null || state.maneuver?.kind === 'roll') {
+    // Sliding drags on the floor, wall running drags on the wall, a roll drags
+    // on both, and sliding *down* a pipe drags on the pipe. Same sound, and it is
+    // the contact that makes them read as movement you are committed to rather
+    // than floating.
+    if (
+      state.sliding ||
+      state.wallId !== null ||
+      state.maneuver?.kind === 'roll' ||
+      (state.pipeId !== null && state.pipeDirection < 0)
+    ) {
       this.scrapeTimer -= dt;
       if (this.scrapeTimer <= 0) {
         this.scrapeTimer = SCRAPE_INTERVAL;
@@ -147,7 +170,9 @@ export class AudioDirector {
       this.scrapeTimer = 0;
     }
 
-    if (state.climbId !== null) {
+    // A face climb and a pipe climb both tick: they are the same hand-over-hand
+    // sound against metal.
+    if (state.climbId !== null || state.pipeId !== null) {
       this.climbTimer -= dt;
       if (this.climbTimer <= 0) {
         this.climbTimer = CLIMB_INTERVAL;
@@ -188,6 +213,18 @@ export class AudioDirector {
 
   private sprinting(speed: number): boolean {
     return speed > this.config.player.walkSpeed * 1.02;
+  }
+
+  /**
+   * The acoustic material underfoot.
+   *
+   * The value on the player comes from the collider, which is a plain string, so
+   * it is validated here rather than trusted: an unknown or missing surface falls
+   * back to concrete, which is the demo's default ground.
+   */
+  private acousticSurface(state: PlayerState): AcousticMaterial {
+    const id = state.groundSurface;
+    return id !== null && KNOWN_ACOUSTICS.has(id) ? (id as AcousticMaterial) : 'concrete';
   }
 
   private strideFor(gait: Gait): number {

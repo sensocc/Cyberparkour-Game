@@ -36,6 +36,7 @@ const GAME: CrashGameState = {
     pitch: 0,
     grounded: true,
     groundId: 'roof-deck',
+    groundSurface: 'metal',
     stance: 'standing',
     alive: true,
     deaths: 0,

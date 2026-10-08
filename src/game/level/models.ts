@@ -301,6 +301,38 @@ const barrier: ModelDefinition = {
   ],
 };
 
+// ------------------------------------------------------- signage and doors
+
+const neonSign: ModelDefinition = {
+  id: 'neon-sign',
+  note: 'A lit sign panel on a frame. The glowing face is +Z.',
+  parts: [
+    // The dark housing, so a sign is a solid object and not a floating plane.
+    part([0, 0, 0], [1, 1, 0.72], 'metal-dark'),
+    band(0, 0.05, 'metal', 0.015),
+    band(0.95, 1, 'metal', 0.015),
+    // The lit face, proud of the housing so it catches the eye from the side too.
+    part([0.06, 0.06, 0.72], [0.94, 0.94, 1], 'neon'),
+    // A bracket on the back, for mounting to a facade.
+    part([0.36, 0.36, -0.22], [0.64, 0.64, 0], 'metal-dark'),
+  ],
+};
+
+const doorPanel: ModelDefinition = {
+  id: 'door-panel',
+  note: 'A swinging door leaf. Hinges about its -X edge, which is the origin.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'metal'),
+    band(0.02, 0.14, 'metal-dark', 0.03),
+    band(0.86, 0.98, 'metal-dark', 0.03),
+    // A window in the upper half, so a door reads as a door at a glance.
+    part([0.24, 0.5, 0.44], [0.76, 0.84, 0.58], 'glass'),
+    // A handle on the far edge.
+    part([0.82, 0.42, 0.9], [0.94, 0.54, 1.16], 'metal-light'),
+    part([0.82, 0.32, 0.96], [0.94, 0.64, 1.04], 'metal-warm'),
+  ],
+};
+
 const MODELS: readonly ModelDefinition[] = [
   slab,
   deck,
@@ -321,6 +353,8 @@ const MODELS: readonly ModelDefinition[] = [
   cableSpool,
   skylight,
   barrier,
+  neonSign,
+  doorPanel,
 ];
 
 const BY_ID = new Map(MODELS.map((model) => [model.id, model]));
@@ -331,6 +365,22 @@ export function modelById(id: string): ModelDefinition | undefined {
 
 export function modelIds(): string[] {
   return MODELS.map((model) => model.id).sort();
+}
+
+/**
+ * The surface you would stand on if the model were a floor.
+ *
+ * The topmost part by normalised height: because parts scale linearly with the
+ * prop, the part that is highest in model space is highest in world space too,
+ * so this needs no prop size. V0.4 uses it to give every collider a footstep
+ * sound derived from what it is actually made of.
+ */
+export function topSurface(model: ModelDefinition): string | undefined {
+  let best: ModelPart | undefined;
+  for (const entry of model.parts) {
+    if (best === undefined || entry.max.y > best.max.y) best = entry;
+  }
+  return best?.surface;
 }
 
 export interface ResolvedPart {

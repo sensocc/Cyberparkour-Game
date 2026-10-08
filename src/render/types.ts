@@ -44,6 +44,13 @@ export interface GameViewLike {
   setSize(width: number, height: number): void;
   /** Draws one frame from an eye position and orientation. */
   render(eye: ReadonlyVec3, orientation: Orientation): void;
+  /**
+   * Swings a door to a fraction of its opening: 0 closed, 1 fully open.
+   *
+   * Unknown ids are ignored, so the game can drive doors without checking that
+   * the renderer knows about them.
+   */
+  setDoorOpen(id: string, open: number): void;
   /** Releases every GPU resource. */
   dispose(): void;
 }

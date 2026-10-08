@@ -120,6 +120,66 @@ describe('the footstep cadence', () => {
     }
   });
 
+  it('names the surface underfoot, so a deck and a roof do not sound alike', () => {
+    const director = new AudioDirector(DEFAULT_CONFIG);
+    const state = createPlayerState(ON_DECK, CONFIG);
+    const seen = new Set<string>();
+
+    for (const surface of ['metal', 'concrete', 'grate', 'glass'] as const) {
+      state.groundSurface = surface;
+      state.velocity = vec3(0, 0, -DEFAULT_CONFIG.player.walkSpeed);
+      state.grounded = true;
+      state.crouching = false;
+      for (let step = 0; step < 40; step += 1) {
+        for (const cue of director.update(state, STEP).cues) {
+          if (cue.kind === 'footstep') seen.add(cue.surface);
+        }
+      }
+      expect(seen, surface).toContain(surface);
+    }
+  });
+
+  it('falls back to concrete when the surface is missing or nonsense', () => {
+    const director = new AudioDirector(DEFAULT_CONFIG);
+    const state = createPlayerState(ON_DECK, CONFIG);
+    const surfaces = (): string[] => {
+      const found: string[] = [];
+      state.velocity = vec3(0, 0, -DEFAULT_CONFIG.player.walkSpeed);
+      state.grounded = true;
+      for (let step = 0; step < 40; step += 1) {
+        for (const cue of director.update(state, STEP).cues) {
+          if (cue.kind === 'footstep') found.push(cue.surface);
+        }
+      }
+      return found;
+    };
+
+    state.groundSurface = null;
+    expect(new Set(surfaces())).toEqual(new Set(['concrete']));
+
+    // A collider carries a plain string, so the director validates it rather than
+    // trusting it.
+    state.groundSurface = 'cheese';
+    expect(new Set(surfaces())).toEqual(new Set(['concrete']));
+  });
+
+  it('scrapes while sliding down a pipe and ticks while climbing one', () => {
+    const director = new AudioDirector(DEFAULT_CONFIG);
+    const state = createPlayerState(ON_DECK, CONFIG);
+    const count = (kind: string, pipes: number, steps: number): number => {
+      state.pipeId = 'pipe';
+      state.pipeDirection = pipes;
+      let total = 0;
+      for (let step = 0; step < steps; step += 1) {
+        total += kinds(director.update(state, STEP).cues).filter((entry) => entry === kind).length;
+      }
+      return total;
+    };
+
+    expect(count('climb-tick', 1, 60)).toBeGreaterThan(0);
+    expect(count('scrape', -1, 60)).toBeGreaterThan(0);
+  });
+
   it('steps immediately after landing rather than waiting for a whole stride', () => {
     const director = new AudioDirector(DEFAULT_CONFIG);
     const state = createPlayerState(ON_DECK, CONFIG);

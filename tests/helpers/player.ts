@@ -70,6 +70,7 @@ export interface RunOptions {
   readonly respawnDelaySeconds?: number;
   readonly safetyFloorY?: number;
   readonly climbableIds?: ReadonlySet<string>;
+  readonly pipeIds?: ReadonlySet<string>;
   readonly onStep?: (state: PlayerState, step: number) => void;
 }
 
@@ -93,6 +94,7 @@ export function run(collisionWorld: CollisionWorld, runOptions: RunOptions): Pla
       : { respawnDelaySeconds: runOptions.respawnDelaySeconds }),
     ...(runOptions.safetyFloorY === undefined ? {} : { safetyFloorY: runOptions.safetyFloorY }),
     ...(runOptions.climbableIds === undefined ? {} : { climbableIds: runOptions.climbableIds }),
+    ...(runOptions.pipeIds === undefined ? {} : { pipeIds: runOptions.pipeIds }),
   });
 
   for (let step = 0; step < runOptions.steps; step += 1) {

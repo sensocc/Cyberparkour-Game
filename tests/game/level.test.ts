@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
-import { overlaps } from '../../src/game/physics/aabb.js';
+import { aabbFromCenterSize, overlaps } from '../../src/game/physics/aabb.js';
 import {
   DEFAULT_PLAYER_SIZE,
   buildLevel,
@@ -20,7 +20,7 @@ import {
 } from '../../src/game/level/levelData.js';
 import { standingSize } from '../../src/game/player.js';
 import { modelById } from '../../src/game/level/models.js';
-import { surfaceById } from '../../src/game/level/surfaces.js';
+import { surfaceById, ACOUSTIC_MATERIALS } from '../../src/game/level/surfaces.js';
 
 /** The manoeuvre bands, as the level design reasons about them. */
 const PLAYER_MANEUVER = DEFAULT_CONFIG.maneuver;
@@ -64,7 +64,11 @@ describe('the shipped demo roof', () => {
 
   it('builds into a collision world', () => {
     const built = buildLevel(DEMO_DISTRICT, BUILD_OPTIONS);
-    expect(built.colliders).toHaveLength(DEMO_DISTRICT.props.length);
+    // One collider per prop, plus one per door: a door is a collider that is not
+    // a prop.
+    expect(built.colliders).toHaveLength(
+      DEMO_DISTRICT.props.length + (DEMO_DISTRICT.doors?.length ?? 0),
+    );
     expect(built.world.colliders).toHaveLength(built.colliders.length);
     expect(built.definition).toBe(DEMO_DISTRICT);
   });
@@ -173,10 +177,16 @@ describe('the shipped demo roof', () => {
     // Structures that deliberately span a gap have nothing under them by design,
     // and are checked separately below.
     const spanning = new Set(['canyon-beam', 'facade-canyon']);
+    // Signage is bolted to a wall face rather than stacked on a surface, so its
+    // underside rests on nothing. The flush-underside rule cannot see a wall - a
+    // sign shares no *top* face with what holds it up.
+    const mounted = new Set(
+      DEMO_DISTRICT.props.filter((entry) => entry.model === 'neon-sign').map((entry) => entry.id),
+    );
 
     const unsupported: string[] = [];
     for (const entry of DEMO_DISTRICT.props) {
-      if (entry.id === lowest.id || spanning.has(entry.id)) continue;
+      if (entry.id === lowest.id || spanning.has(entry.id) || mounted.has(entry.id)) continue;
 
       const bounds = boundsById.get(entry.id) as ReturnType<typeof propBounds>;
       const restsOnSomething = DEMO_DISTRICT.props.some((other) => {
@@ -403,10 +413,27 @@ describe('spawnBounds', () => {
 describe('toColliders', () => {
   it('preserves ids and kinds', () => {
     const colliders = toColliders(DEMO_DISTRICT);
-    expect(colliders.map((entry) => entry.id)).toEqual(DEMO_DISTRICT.props.map((entry) => entry.id));
+    expect(colliders.slice(0, DEMO_DISTRICT.props.length).map((entry) => entry.id)).toEqual(
+      DEMO_DISTRICT.props.map((entry) => entry.id),
+    );
     expect(colliders.find((entry) => entry.id === 'deck')?.kind).toBe('floor');
     expect(colliders.find((entry) => entry.id === 'penthouse')?.kind).toBe('wall');
     expect(colliders.find((entry) => entry.id === 'duct')?.kind).toBe('prop');
+    // V0.4 kinds: a pipe is a two-way climbable, and every door is a collider the
+    // game may switch off.
+    expect(colliders.find((entry) => entry.id === 'pipe-east')?.kind).toBe('pipe');
+    for (const door of DEMO_DISTRICT.doors ?? []) {
+      expect(colliders.find((entry) => entry.id === door.id)?.kind).toBe('door');
+    }
+  });
+
+  it('gives every collider a footstep surface to walk on', () => {
+    // V0.4: the sound of a step follows from what the prop is made of, so every
+    // collider carries an acoustic material.
+    for (const collider of toColliders(DEMO_DISTRICT)) {
+      expect(collider.surface, collider.id).toBeDefined();
+      expect(ACOUSTIC_MATERIALS).toContain(collider.surface);
+    }
   });
 });
 
@@ -667,5 +694,86 @@ describe('groundHeightAt', () => {
   it('ignores geometry that does not span the point in both axes', () => {
     expect(groundHeightAt(DEMO_DISTRICT, { x: 4, z: 6 })).toBeCloseTo(2.6, 9);
     expect(groundHeightAt(DEMO_DISTRICT, { x: 4, z: -8 })).toBeCloseTo(0, 9);
+  });
+});
+
+describe('the V0.4 interiors, doors, signage and pipes', () => {
+  const doors = DEMO_DISTRICT.doors ?? [];
+
+  it('gives every room a door, a roof and a full set of walls', () => {
+    expect(doors.length).toBeGreaterThanOrEqual(2);
+    const ids = new Set(DEMO_DISTRICT.props.map((entry) => entry.id));
+    for (const door of doors) {
+      const prefix = door.id.replace(/-door$/, '');
+      for (const part of ['wall-w', 'wall-e', 'wall-back', 'wall-front-l', 'wall-front-r', 'lintel', 'roof']) {
+        expect(ids.has(`${prefix}-${part}`), `${prefix}-${part}`).toBe(true);
+      }
+    }
+  });
+
+  it('stands every room on a roof rather than over the void', () => {
+    for (const door of doors) {
+      const floor = door.position.y - door.size.y / 2;
+      const surface = groundHeightAt(DEMO_DISTRICT, { x: door.position.x, z: door.position.z }, floor + 0.01);
+      expect(surface, door.id).not.toBeNull();
+      // The room's floor is the deck it stands on, so the doorway has no lip.
+      expect(surface ?? 0, door.id).toBeCloseTo(floor, 3);
+    }
+  });
+
+  it('keeps the doorway clear, so an open door is actually passable', () => {
+    // Nothing but the door itself may occupy the doorway's volume. The jambs and
+    // the lintel share its faces without overlapping it, which is the difference
+    // between a doorway and a blocked one.
+    const margin = 1e-6;
+    for (const door of doors) {
+      const doorway = aabbFromCenterSize(door.position, door.size);
+      for (const prop of DEMO_DISTRICT.props) {
+        const box = propBounds(prop);
+        const blocks =
+          box.min.x < doorway.max.x - margin &&
+          box.max.x > doorway.min.x + margin &&
+          box.min.y < doorway.max.y - margin &&
+          box.max.y > doorway.min.y + margin &&
+          box.min.z < doorway.max.z - margin &&
+          box.max.z > doorway.min.z + margin;
+        expect(blocks, `${prop.id} blocks ${door.id}`).toBe(false);
+      }
+    }
+  });
+
+  it('lights every room from the inside', () => {
+    for (const door of doors) {
+      const light = (DEMO_DISTRICT.lights ?? []).find(
+        (entry) =>
+          Math.abs(entry.position.x - door.position.x) < 5 &&
+          Math.abs(entry.position.z - door.position.z) < 5 &&
+          entry.position.y > door.position.y - 2,
+      );
+      expect(light, door.id).toBeDefined();
+    }
+  });
+
+  it('hangs every sign on a surface that lights itself', () => {
+    const signs = DEMO_DISTRICT.props.filter((entry) => entry.model === 'neon-sign');
+    expect(signs.length).toBeGreaterThanOrEqual(3);
+    for (const entry of signs) {
+      const model = modelById(entry.model);
+      const lit = (model?.parts ?? []).filter((part) => surfaceById(part.surface)?.emissive === true);
+      expect(lit.length, entry.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('gives the pipe a roof to top out onto', () => {
+    const pipe = DEMO_DISTRICT.props.find((entry) => entry.pipe === true);
+    expect(pipe).toBeDefined();
+    if (!pipe) throw new Error('expected a climbable pipe');
+
+    const top = propBounds(pipe).max.y;
+    // Just inside the pipe, the room's roof is at the same height as the pipe's
+    // head - so the climb ends on a surface rather than in the air.
+    const beside = groundHeightAt(DEMO_DISTRICT, { x: pipe.position.x - 0.6, z: pipe.position.z }, top + 1);
+    expect(beside).not.toBeNull();
+    expect(Math.abs((beside ?? 0) - top)).toBeLessThan(0.05);
   });
 });

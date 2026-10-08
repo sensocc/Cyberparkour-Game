@@ -25,7 +25,9 @@ import { FrameStats, type StatsSnapshot } from '../diagnostics/stats.js';
 import { DomInput } from '../input/domInput.js';
 import type { InputState } from '../input/inputState.js';
 import { applyLook } from './look.js';
-import { buildLevel, type BuiltLevel } from './level/level.js';
+import { buildLevel, climbableIds as collectClimbableIds, pipeIds as collectPipeIds, type BuiltLevel } from './level/level.js';
+import { DoorSystem } from './level/doors.js';
+import { MotionTracker } from './movement.js';
 import { DEMO_DISTRICT, type LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
@@ -89,9 +91,19 @@ export class Game {
   private readonly accumulator: FixedStepAccumulator;
   private readonly stats: FrameStats;
   private readonly domInput: DomInput;
+  /**
+   * Watches the movement state machine.
+   *
+   * V0.4 made the movement modes explicit; this is the observer that notices if
+   * the game ever makes a transition the graph forbids. It never drives anything
+   * - it reports, which is the whole point of keeping it separate.
+   */
+  private readonly motion = new MotionTracker();
 
   private level: BuiltLevel;
   private player: PlayerState;
+  /** Doors, and which are open. Rebuilt with the level. */
+  private doors: DoorSystem;
   private view: GameViewLike | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private status: GameStatus = 'idle';
@@ -109,6 +121,8 @@ export class Game {
   private sprinting = false;
   /** Colliders tagged climbable, resolved once per level build. */
   private climbables: ReadonlySet<string> = new Set();
+  /** Colliders that are climbable pipes, resolved once per level build. */
+  private pipes: ReadonlySet<string> = new Set();
   /** Whether the player has muted the demo. */
   private muted = false;
   private readonly audioDirector: AudioDirector;
@@ -136,9 +150,9 @@ export class Game {
       maxSubStep: this.config.world.maxCollisionSubStep,
       player: standingSize(this.config.player),
     });
-    this.climbables = new Set(
-      this.level.colliders.filter((collider) => collider.kind === 'climbable').map((c) => c.id),
-    );
+    this.climbables = collectClimbableIds(this.level.colliders);
+    this.pipes = collectPipeIds(this.level.colliders);
+    this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
     this.player = createPlayerState(this.definition.spawn, this.config);
 
     this.domInput = new DomInput({
@@ -348,6 +362,7 @@ export class Game {
       config: this.config.player,
       game: this.config,
       climbableIds: this.climbables,
+      pipeIds: this.pipes,
       checkpoints: this.definition.checkpoints,
       killPlaneY: this.definition.killPlaneY,
       respawnDelaySeconds: this.config.respawn.delaySeconds,
@@ -426,6 +441,9 @@ export class Game {
       maxSubStep: this.config.world.maxCollisionSubStep,
       player: standingSize(this.config.player),
     });
+    this.climbables = collectClimbableIds(this.level.colliders);
+    this.pipes = collectPipeIds(this.level.colliders);
+    this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
     resetPlayerState(this.player, this.config);
     this.audioDirector.reset();
     this.audioOutput.silence();
@@ -434,6 +452,14 @@ export class Game {
     this.lastHudUpdate = 0;
     this.sprinting = false;
     this.options.input.clear();
+    this.motion.reset();
+    this.applyDoorState();
+  }
+
+  /** Pushes every door's current opening to a freshly created view. */
+  private applyDoorState(): void {
+    if (!this.view) return;
+    for (const door of this.doors.snapshot()) this.view.setDoorOpen(door.id, door.open);
   }
 
   private ensureView(): void {
@@ -573,14 +599,33 @@ export class Game {
     });
 
     this.updateAudio(steps * fixedStep(this.config));
+    this.trackMotion();
+    const swing = this.doors.update(steps * fixedStep(this.config));
+    for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
     this.stats.push(delta);
     this.renderFrame();
     this.updateHud();
   }
 
+  /**
+   * Watches the movement state machine and complains about illegal moves.
+   *
+   * An illegal transition is a bug in one of the abilities - the kind that is
+   * otherwise invisible until a play session feels wrong. Naming it in the log
+   * turns it into something a crash report carries.
+   */
+  private trackMotion(): void {
+    const change = this.motion.update(this.player);
+    if (change.illegal) {
+      this.log?.warn('movement', 'illegal transition', {
+        from: change.illegal.from,
+        to: change.illegal.to,
+      });
+    }
+  }
+
   /** Plays the cues this frame produced and updates the continuous wind. */
-  private updateAudio(simulatedSeconds: number): void {
-    if (this.status !== 'playing') return;
+  private updateAudio(simulatedSeconds: number): void {    if (this.status !== 'playing') return;
 
     let frame;
     try {
@@ -663,6 +708,14 @@ export class Game {
           this.muted = !this.muted;
           this.audioOutput.setMuted(this.muted);
           this.options.ui.toast(this.muted ? 'Sound muted (M)' : 'Sound on (M)');
+          break;
+        }
+        case 'interact': {
+          // Works whichever door the player is standing next to, if any. Doing
+          // nothing when there is none is correct: there is no "use" target, so
+          // there is nothing to report.
+          const worked = this.doors.toggleNear(this.player.position);
+          if (worked !== null) this.log?.debug('game', 'door worked', { door: worked });
           break;
         }
         case 'pause':

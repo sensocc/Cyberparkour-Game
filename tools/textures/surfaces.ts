@@ -32,7 +32,8 @@ export type SurfaceTextureId =
   | 'concrete'
   | 'hazard'
   | 'grille'
-  | 'glass';
+  | 'glass'
+  | 'sign';
 
 export interface SurfaceTextureDefinition {
   readonly id: SurfaceTextureId;
@@ -286,6 +287,67 @@ function generateGlass(size = DEFAULT_SIZE): RgbaImage {
   return image;
 }
 
+// ------------------------------------------------------------------ signage
+
+/**
+ * A neon sign panel: bright glyphs on a dark backing.
+ *
+ * The texture is used as both the albedo and the emissive map, so the glyphs are
+ * what glows and the dark panel settles behind them. The glyphs are abstract
+ * blocks rather than letters: at the distance a sign is read in this demo a real
+ * typeface would only be mush, and bars read as "sign" from across the canyon.
+ */
+function generateSign(size = DEFAULT_SIZE): RgbaImage {
+  const image = createImage(size, size);
+  const random = createRandom(0x519a);
+
+  const backing = hexColor('#0b1118');
+  const tracing = hexColor('#1d2b3a');
+  const glyph = hexColor('#f2fbff');
+
+  // Dark backing with a faint panel edge, so the sign has a shape of its own.
+  fillRect(image, 0, 0, size, size, backing);
+  const inset = Math.max(2, Math.round(size / 32));
+  fillRect(image, inset, inset, size - inset * 2, 1, tracing);
+  fillRect(image, inset, size - inset - 1, size - inset * 2, 1, tracing);
+  fillRect(image, inset, inset, 1, size - inset * 2, tracing);
+  fillRect(image, size - inset - 1, inset, 1, size - inset * 2, tracing);
+
+  // Three rows of abstract glyphs, each a handful of strokes inside a cell.
+  const columns = 6;
+  const rows = 3;
+  const cellWidth = Math.floor(size / (columns + 1));
+  const cellHeight = Math.floor(size / (rows + 1));
+  const stroke = Math.max(1, Math.round(size / 56));
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const originX = Math.round(cellWidth * (column + 0.5));
+      const originY = Math.round(cellHeight * (row + 0.5));
+      const strokes = 2 + Math.floor(random() * 3);
+
+      for (let index = 0; index < strokes; index += 1) {
+        const length = Math.round((0.35 + random() * 0.55) * Math.min(cellWidth, cellHeight) * 0.85);
+        const offset = Math.round((random() - 0.5) * cellHeight * 0.4);
+        if (random() < 0.6) {
+          fillRect(image, originX - Math.round(length / 2), originY + offset, length, stroke, glyph);
+        } else {
+          fillRect(image, originX + offset, originY - Math.round(length / 2), stroke, length, glyph);
+        }
+      }
+    }
+  }
+
+  // A little dim wear, so the panel is not perfectly regular.
+  for (let index = 0; index < Math.round(size * size * 0.008); index += 1) {
+    const x = Math.floor(random() * size);
+    const y = Math.floor(random() * size);
+    setPixel(image, x, y, scaleColor(tracing, 0.5 + random() * 0.7));
+  }
+
+  return image;
+}
+
 // -------------------------------------------------------------------------
 
 export const SURFACE_TEXTURES: readonly SurfaceTextureDefinition[] = [
@@ -295,6 +357,7 @@ export const SURFACE_TEXTURES: readonly SurfaceTextureDefinition[] = [
   { id: 'hazard', size: DEFAULT_SIZE, metresPerTile: 1.2, generate: generateHazard },
   { id: 'grille', size: DEFAULT_SIZE, metresPerTile: 0.8, generate: generateGrille },
   { id: 'glass', size: DEFAULT_SIZE, metresPerTile: 2, generate: generateGlass },
+  { id: 'sign', size: DEFAULT_SIZE, metresPerTile: 2, generate: generateSign },
 ];
 
 export function surfaceMetresPerTile(id: SurfaceTextureId): number {

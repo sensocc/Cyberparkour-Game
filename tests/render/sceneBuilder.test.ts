@@ -242,6 +242,94 @@ describe('buildScene lighting', () => {
   });
 });
 
+describe('buildScene V0.4 content', () => {
+  it('adds a point light for every level light', () => {
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      const lights = built.scene.children.filter(
+        (child): child is THREE.PointLight => child instanceof THREE.PointLight,
+      );
+      expect(lights).toHaveLength(DEMO_DISTRICT.lights?.length ?? 0);
+      const names = lights.map((light) => light.name);
+      expect(names).toContain('lamp-east-room');
+      expect(names).toContain('glow-canyon');
+      // Interior lamps must not try to cast shadows: a point-light shadow is a
+      // cube map per light, and the demo does not need one.
+      expect(lights.every((light) => !light.castShadow)).toBe(true);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('hangs each door off a pivot on its hinge line', () => {
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      const door = DEMO_DISTRICT.doors?.find((entry) => entry.id === 'east-room-door');
+      expect(door).toBeDefined();
+      const group = built.doors.get('east-room-door');
+      expect(group).toBeDefined();
+      if (!door || !group) throw new Error('missing door');
+
+      // A 'x-' hinge is the door's west edge, so the pivot sits there, on the
+      // panel's centre line, at half its height.
+      expect(group.position.x).toBeCloseTo(door.position.x - door.size.x / 2, 9);
+      expect(group.position.z).toBeCloseTo(door.position.z, 9);
+      expect(group.position.y).toBeCloseTo(door.position.y, 9);
+      // A closed door has not swung at all.
+      expect(group.rotation.y).toBe(0);
+      // ...and the leaf is inside the pivot, so turning the pivot turns the door.
+      expect(group.children.length).toBeGreaterThan(0);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('starts a door where the level says it starts', () => {
+    const definition = {
+      ...DEMO_DISTRICT,
+      doors: (DEMO_DISTRICT.doors ?? []).map((door) => ({ ...door, open: true })),
+    };
+    const built = buildScene(definition, assetTextures());
+    try {
+      for (const [id, group] of built.doors) {
+        expect(Math.abs(group.rotation.y), id).toBeGreaterThan(0);
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('lights a neon sign from the inside', () => {
+    // An emissive surface glows: the tint becomes the emissive colour and the
+    // sign texture becomes the emissive map, so only the glyphs light up.
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      const parts = partsOf(built, 'sign-east-room');
+      const neon = parts.find((mesh) => {
+        const material = mesh.material as THREE.MeshLambertMaterial;
+        return material.emissive !== undefined && material.emissive.getHex() !== 0;
+      });
+      expect(neon).toBeDefined();
+      const material = (neon as THREE.Mesh).material as THREE.MeshLambertMaterial;
+      expect(material.emissive.getHex()).toBe(new THREE.Color('#ff4fd8').getHex());
+      expect(material.emissiveMap).not.toBeNull();
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('leaves ordinary surfaces unlit', () => {
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      const material = meshOf(built, 'deck').material as THREE.MeshLambertMaterial;
+      expect(material.emissive.getHex()).toBe(0);
+      expect(material.emissiveMap).toBeNull();
+    } finally {
+      built.dispose();
+    }
+  });
+});
+
 describe('buildScene sky dome', () => {
   it('uses the cube skybox as the scene background', () => {
     const assets = assetTextures();

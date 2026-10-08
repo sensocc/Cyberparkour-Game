@@ -1,8 +1,8 @@
 {
   "name": "cyberparkour",
   "private": true,
-  "version": "0.3.0",
-  "description": "Cyberparkour - a low-poly, Quake-styled first-person parkour game set in a cyberpunk city. V0.3: wall running, wall jumping, vaulting, Kong vaults, landing rolls, checkpoints and a district of rooftops.",
+  "version": "0.4.0",
+  "description": "Cyberparkour - a low-poly, Quake-styled first-person parkour game set in a cyberpunk city. V0.4: pipe climbing, a movement state machine, walk-in interiors with doors, neon signs and surface-aware footsteps.",
   "type": "module",
   "license": "UNLICENSED",
   "engines": {

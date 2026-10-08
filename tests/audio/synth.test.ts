@@ -239,6 +239,41 @@ describe('the individual sounds', () => {
     expect(rmsOf(tail)).toBeLessThan(rmsOf(peak));
   });
 
+  it('sounds different on each surface underfoot', () => {
+    // V0.4: the same step is a different sound on metal, concrete, a grate and
+    // glass - which is the whole feature, so they must not come out identical.
+    const surfaces = ['metal', 'concrete', 'grate', 'glass'] as const;
+    const steps = surfaces.map((surface) => renderFootstep({ variant: 0, gait: 'walk', surface }));
+
+    for (const [index, step] of steps.entries()) {
+      const surface = surfaces[index] as string;
+      expect(step.length, surface).toBe(steps[0]?.length);
+      expect(peakOf(step), surface).toBeLessThanOrEqual(0.65);
+      expect(rmsOf(step), surface).toBeGreaterThan(0);
+    }
+
+    // A grated walkway is brighter (more scuff, higher up) than bare concrete:
+    // the simplest numeric proxy is how often the waveform crosses zero.
+    const crossings = (samples: Float32Array): number => {
+      let count = 0;
+      for (let index = 1; index < samples.length; index += 1) {
+        if (((samples[index] as number) >= 0) !== ((samples[index - 1] as number) >= 0)) count += 1;
+      }
+      return count;
+    };
+    expect(crossings(steps[2] as Float32Array)).toBeGreaterThan(crossings(steps[1] as Float32Array));
+  });
+
+  it('keeps the default footstep exactly as it was', () => {
+    // A caller that does not know about surfaces gets metal, which is the V0.3
+    // sound, byte for byte - so nothing else has to change.
+    for (const gait of ['walk', 'sprint', 'crouch'] as const) {
+      const explicit = renderFootstep({ variant: 2, gait, surface: 'metal' });
+      const fallback = renderFootstep({ variant: 2, gait });
+      expect(Array.from(explicit), gait).toEqual(Array.from(fallback));
+    }
+  });
+
   it('renders a whoosh for the airborne moves', () => {
     const whoosh = renderWhoosh();
     const at = (fraction: number): number => Math.abs(whoosh[Math.floor(whoosh.length * fraction)] as number);

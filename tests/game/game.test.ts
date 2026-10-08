@@ -30,6 +30,7 @@ class FakeView implements GameViewLike {
   readonly rendererInfo = 'Fake GPU';
   readonly frames: RenderedFrame[] = [];
   readonly sizes: { width: number; height: number }[] = [];
+  readonly doors: { id: string; open: number }[] = [];
   disposed = false;
 
   setSize(width: number, height: number): void {
@@ -38,6 +39,10 @@ class FakeView implements GameViewLike {
 
   render(eye: ReadonlyVec3, orientation: Orientation): void {
     this.frames.push({ eye: { ...eye }, orientation: { ...orientation } });
+  }
+
+  setDoorOpen(id: string, open: number): void {
+    this.doors.push({ id, open });
   }
 
   dispose(): void {
@@ -994,3 +999,63 @@ describe('the V0.3 play HUD and checkpoints', () => {
   });
 });
 
+
+describe('the V0.4 doors', () => {
+  /** The demo district, with a door standing just north of the spawn. */
+  const DOOR_LEVEL = {
+    ...DEMO_DISTRICT,
+    doors: [
+      { id: 'test-door', position: { x: 0, y: 1.1, z: 1 }, size: { x: 1.4, y: 2.2, z: 0.3 }, hinge: 'x-' as const, openAngle: 2.1 },
+    ],
+  };
+
+  it('pushes every door to a freshly created view, shut to begin with', () => {
+    const harness = createHarness({ level: DOOR_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+
+    const view = harness.views[0];
+    expect(view).toBeDefined();
+    expect(view?.doors.length).toBeGreaterThan(0);
+    // Every door starts closed, so the view was told about all of them at zero.
+    expect(view?.doors.every((entry) => entry.id === 'test-door' && entry.open === 0)).toBe(true);
+  });
+
+  it('works the door the player is standing next to with E', () => {
+    const harness = createHarness({ level: DOOR_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+
+    harness.input.keyDown('KeyE');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyE');
+
+    // The leaf takes about a second to swing, so let it.
+    stepFrames(harness, 90);
+
+    const view = harness.views[0];
+    const latest = view?.doors.filter((entry) => entry.id === 'test-door').at(-1);
+    expect(latest?.open).toBeGreaterThan(0.5);
+  });
+
+  it('closes it again on a second press', () => {
+    const harness = createHarness({ level: DOOR_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+
+    const press = (): void => {
+      harness.input.keyDown('KeyE');
+      stepFrames(harness, 1);
+      harness.input.keyUp('KeyE');
+    };
+
+    press();
+    stepFrames(harness, 90);
+    press();
+    stepFrames(harness, 90);
+
+    const view = harness.views[0];
+    const latest = view?.doors.filter((entry) => entry.id === 'test-door').at(-1);
+    expect(latest?.open).toBe(0);
+  });
+});

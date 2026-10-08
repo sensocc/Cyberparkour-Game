@@ -52,6 +52,11 @@ function stepOptions(level: BuiltLevel, climbables: ReadonlySet<string>) {
     config: PLAYER,
     game: CONFIG,
     climbableIds: climbables,
+    // V0.4 pipes, read straight from the level: the shipped district has one, and
+    // the whole point of the integration suite is to exercise what actually ships.
+    pipeIds: new Set(
+      level.colliders.filter((collider) => collider.kind === 'pipe').map((collider) => collider.id),
+    ),
     killPlaneY: DEMO_DISTRICT.killPlaneY,
     respawnDelaySeconds: CONFIG.respawn.delaySeconds,
     safetyFloorY: CONFIG.world.safetyFloorY,
@@ -361,6 +366,27 @@ describe('the V0.3 abilities, on the district that ships', () => {
     // Climbing reaches higher than any grab could.
     expect(trace.maxY).toBeGreaterThan(CONFIG.maneuver.pullUp.maxHeight);
     expect(trace.maxY).toBeGreaterThan(pipeTop - 0.5);
+    expect(trace.worstPenetration).toBe(0);
+  });
+
+  it('climbs the machine room pipe up to its roof', () => {
+    const { level, player, climbables } = createSimulation();
+    const pipe = DEMO_DISTRICT.props.find((entry) => entry.id === 'pipe-east') as PropDefinition;
+    expect(pipe, 'expected the east machine room pipe').toBeDefined();
+    const pipeTop = propBounds(pipe).max.y;
+
+    // Stand east of the pipe on the east roof, facing it, and climb.
+    placeAt(player, pipe.position.x + pipe.size.x / 2 + 0.6, pipe.position.z, Math.PI / 2);
+    player.position.y = 1.21;
+    player.previousPosition = { ...player.position };
+
+    const trace = simulate(level, player, climbables, 8, () => FORWARD);
+
+    expect(trace.maneuvers.has('pipe-grab')).toBe(true);
+    // A pipe is climbed, which reaches higher than any grab can.
+    expect(trace.maxY).toBeGreaterThan(CONFIG.maneuver.pullUp.maxHeight);
+    // ...and it tops out at the room's roof, which is a surface you can stand on.
+    expect(trace.maxY).toBeGreaterThanOrEqual(pipeTop - 0.2);
     expect(trace.worstPenetration).toBe(0);
   });
 

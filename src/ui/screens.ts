@@ -36,6 +36,7 @@ export interface GameUiOptions {
 export const ABOUT_LINES: readonly string[] = [
   'A low-poly first-person parkour run across a cyberpunk rooftop district.',
   'Five furnished roofs, six metres apart horizontally and up to four apart vertically, crossed by mantling, pull-ups, climbing, vaulting, wall running and well-timed landings.',
+  'Two of the roofs have machine rooms you can walk into, lit from the inside and behind a door you open yourself, and the signage across them glows.',
   'Fall and you go back to the last checkpoint you reached — not to the start.',
 ];
 
@@ -43,11 +44,13 @@ const CONTROLS: readonly [string, string][] = [
   ['W A S D', 'Move'],
   ['Mouse', 'Look'],
   ['Shift', 'Sprint'],
-  ['Space', 'Jump · pull up from a hang · kick off a wall'],
+  ['Space', 'Jump · pull up from a hang · kick off a wall · kick off a pipe'],
   ['Ctrl / C', 'Crouch · slide at speed · roll on a hard landing'],
   ['W into a ledge', 'Mantle; keep running into a waist-high rail to vault it'],
   ['Sprint at a rail', 'Kong vault — a diving vault that keeps its speed'],
   ['Aim along a wall', 'Wall run; chain two facing walls to climb'],
+  ['W into a pipe', 'Climb it; C or S slides down it, faster than climbing'],
+  ['E at a door', 'Open or close it'],
   ['F3', 'Toggle debug info'],
   ['M', 'Mute'],
   ['Esc', 'Pause'],
@@ -93,7 +96,7 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.3 technical demo: vertical rooftops, gaps between buildings, and the moves that cross them.',
+        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.4 technical demo: walk-in interiors, doors, neon signage and pipes to climb, on top of the rooftops and the moves that cross them.',
       }),
       this.menu([
         button('Play', {

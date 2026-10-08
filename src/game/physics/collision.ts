@@ -27,14 +27,23 @@ export const COLLISION_SKIN = 1e-3;
  * Semantic tag for a collider.
  *
  * `climbable` is what the climbing ability looks for: a face the player can
- * ascend by holding forward into it.
+ * ascend by holding forward into it. `pipe` is a climbable the player may also
+ * descend, and `door` is a collider the game may switch off when the door swings
+ * open.
  */
-export type ColliderKind = 'floor' | 'wall' | 'prop' | 'boundary' | 'climbable';
+export type ColliderKind = 'floor' | 'wall' | 'prop' | 'boundary' | 'climbable' | 'pipe' | 'door';
 
 export interface Collider {
   readonly id: string;
   readonly kind: ColliderKind;
   readonly box: AABB;
+  /**
+   * What the surface sounds like underfoot (`AcousticMaterial`).
+   *
+   * Kept as a plain string so the physics layer stays independent of the level
+   * tables; the level decides it from the prop's model.
+   */
+  readonly surface?: string;
 }
 
 export interface MoveResult {
@@ -46,6 +55,8 @@ export interface MoveResult {
   readonly blocked: Record<Axis, boolean>;
   /** Id of the collider supporting the player, if any. */
   groundId: string | null;
+  /** Acoustic material of the ground, for surface-aware footsteps. */
+  groundSurface: string | null;
 }
 
 export function createMoveResult(): MoveResult {
@@ -55,6 +66,7 @@ export function createMoveResult(): MoveResult {
     hitWall: false,
     blocked: { x: false, y: false, z: false },
     groundId: null,
+    groundSurface: null,
   };
 }
 
@@ -66,6 +78,7 @@ export function resetMoveResult(result: MoveResult): void {
   result.blocked.y = false;
   result.blocked.z = false;
   result.groundId = null;
+  result.groundSurface = null;
 }
 
 export interface CollisionWorldOptions {
@@ -79,6 +92,15 @@ export class CollisionWorld {
   readonly colliders: readonly Collider[];
   private readonly maxSubStep: number;
   private readonly groundProbe: number;
+  /**
+   * Ids switched off at runtime.
+   *
+   * Doors are the only reason this exists: a door that has swung open must stop
+   * blocking, and rebuilding the whole world to express that would be absurd. A
+   * collider is solid unless its id is in here, so the common case costs one set
+   * lookup per candidate.
+   */
+  private readonly disabled = new Set<string>();
 
   constructor(colliders: readonly Collider[], options: CollisionWorldOptions = {}) {
     this.colliders = colliders.slice();
@@ -150,17 +172,37 @@ export class CollisionWorld {
         result.grounded = true;
         if (velocity.y < 0) velocity.y = 0;
         result.groundId = ground.id;
+        result.groundSurface = ground.surface ?? null;
       }
     } else if (result.grounded) {
-      result.groundId = this.findGround(box, this.groundProbe)?.id ?? null;
+      const ground = this.findGround(box, this.groundProbe);
+      result.groundId = ground?.id ?? null;
+      result.groundSurface = ground?.surface ?? null;
     }
 
     return result;
   }
 
-  /** True when the box does not overlap any collider. */
+  /**
+   * Switches a collider on or off.
+   *
+   * Used by doors: an open door stops blocking without the world being rebuilt.
+   * Unknown ids are ignored rather than throwing, so the game can call this from
+   * a render loop without existence checks.
+   */
+  setColliderEnabled(id: string, enabled: boolean): void {
+    if (enabled) this.disabled.delete(id);
+    else this.disabled.add(id);
+  }
+
+  isColliderEnabled(id: string): boolean {
+    return !this.disabled.has(id);
+  }
+
+  /** True when the box does not overlap any *enabled* collider. */
   isFree(box: AABB): boolean {
     for (const collider of this.colliders) {
+      if (this.disabled.has(collider.id)) continue;
       if (overlaps(box, collider.box)) return false;
     }
     return true;
@@ -173,6 +215,7 @@ export class CollisionWorld {
 
   private findGround(box: AABB, distance: number): Collider | null {
     for (const collider of this.colliders) {
+      if (this.disabled.has(collider.id)) continue;
       if (overlapsWhenOffset(box, 'y', -distance, collider.box)) return collider;
     }
     return null;
@@ -214,6 +257,7 @@ export class CollisionWorld {
     let push = 0;
 
     for (const collider of this.colliders) {
+      if (this.disabled.has(collider.id)) continue;
       if (!overlaps(box, collider.box)) continue;
 
       const separation =

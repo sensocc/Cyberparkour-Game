@@ -1,15 +1,18 @@
 /**
  * Player state and movement.
  *
- * V0.1 had one movement mode and V0.2 six. V0.3 adds wall running and the
+ * V0.1 had one movement mode and V0.2 six. V0.3 added wall running and the
  * scripted traversal moves - the landing roll, the vault and the Kong vault -
- * which sit beside V0.2's mantling and pull-ups. Rather than a formal state
- * machine they are resolved by a priority chain at the top of `stepPlayer`:
+ * and V0.4 adds pipe climbing, the one ability that works both ways. Rather than
+ * a formal state machine they are resolved by a priority chain at the top of
+ * `stepPlayer`:
  *
- *   dead -> scripted move -> hanging -> climbing -> locomotion
+ *   dead -> scripted move -> hanging -> climbing -> piping -> locomotion
  *
  * A scripted move owns the body outright; wall running, sliding and the ordinary
- * gaits are all decided inside the locomotion step.
+ * gaits are all decided inside the locomotion step. *Which* mode is current is
+ * not decided here at all - that is `movement.ts`, which owns the state machine
+ * and the table of legal transitions.
  *
  * A manoeuvre in progress owns the player completely - input is ignored while
  * mantling, because the body is mid-move and being able to steer out of it would
@@ -23,6 +26,7 @@
 
 import type { GameConfig, PlayerConfig, RollConfig, SlideConfig } from '../core/config.js';
 import { clamp, damp } from '../core/math.js';
+import { deriveMotionState, type MotionState } from './movement.js';
 import {
   applySafetyFloor,
   clampSpeed,
@@ -73,19 +77,13 @@ export const NO_INPUT: MoveInput = {
   crouch: false,
 };
 
-/** What the player is doing, for the HUD and for tests. */
-export type Locomotion =
-  | 'grounded'
-  | 'airborne'
-  | 'mantling'
-  | 'pulling-up'
-  | 'vaulting'
-  | 'rolling'
-  | 'wall-running'
-  | 'hanging'
-  | 'climbing'
-  | 'sliding'
-  | 'dead';
+/**
+ * What the player is doing, for the HUD and for tests.
+ *
+ * V0.4 moved this to the movement state machine; it is re-exported here because
+ * that is where callers have always found it.
+ */
+export type Locomotion = MotionState;
 
 export type Stance = 'standing' | 'crouched' | 'rolling';
 
@@ -103,18 +101,11 @@ export type ManeuverKind =
   | 'vault'
   | 'kong-vault'
   | 'wall-run'
-  | 'wall-jump';
+  | 'wall-jump'
+  | 'pipe-grab';
 
 /** The moves that are scripted paths rather than simulated motion. */
 export type ScriptedMove = 'mantle' | 'pull-up' | 'roll' | 'vault' | 'kong-vault';
-
-const MANEUVER_LOCOMOTION: Readonly<Record<ScriptedMove, Locomotion>> = {
-  mantle: 'mantling',
-  'pull-up': 'pulling-up',
-  roll: 'rolling',
-  vault: 'vaulting',
-  'kong-vault': 'vaulting',
-};
 
 /** A scripted move from one position to another. */
 export interface ManeuverMove {
@@ -151,6 +142,8 @@ export interface PlayerState {
   grounded: boolean;
   /** Id of the collider the player is standing on, if any. */
   groundId: string | null;
+  /** Acoustic material underfoot, for surface-aware footsteps. */
+  groundSurface: string | null;
   /** True while the player is crouched. */
   crouching: boolean;
   alive: boolean;
@@ -179,6 +172,14 @@ export interface PlayerState {
   jumpLatch: boolean;
   /** Collider being climbed, if any. */
   climbId: string | null;
+  /** Pipe being climbed, if any. */
+  pipeId: string | null;
+  /** Vertical direction the player is working the pipe: +1 up, -1 down. */
+  pipeDirection: number;
+  /** Horizontal unit vector from the player towards the pipe. */
+  pipeNormal: Vec3;
+  /** Seconds until the same pipe can be grabbed again. */
+  pipeCooldown: number;
   /** In-progress scripted move, if any. */
   maneuver: ManeuverMove | null;
   /** Deepest downward speed since leaving the ground, for fall damage. */
@@ -217,6 +218,8 @@ export interface PlayerStepOptions {
   readonly checkpoints?: readonly CheckpointDefinition[];
   /** Ids of colliders that can be climbed. */
   readonly climbableIds?: ReadonlySet<string>;
+  /** Ids of colliders that are climbable pipes. */
+  readonly pipeIds?: ReadonlySet<string>;
   /** Fall detection: the Y at or below which the player dies. */
   readonly killPlaneY?: number;
   /** Seconds between death and the automatic respawn. */
@@ -280,6 +283,7 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     pitch: spawn.pitch,
     grounded: false,
     groundId: null,
+    groundSurface: null,
     crouching: false,
     alive: true,
     deadFor: 0,
@@ -293,6 +297,10 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     grabCooldown: 0,
     jumpLatch: false,
     climbId: null,
+    pipeId: null,
+    pipeDirection: 0,
+    pipeNormal: vec3(0, 0, 0),
+    pipeCooldown: 0,
     maneuver: null,
     peakFallSpeed: 0,
     bobPhase: 0,
@@ -339,16 +347,14 @@ export function stance(state: PlayerState): Stance {
   return state.crouching ? 'crouched' : 'standing';
 }
 
-/** What the player is doing right now. */
+/**
+ * What the player is doing right now.
+ *
+ * The decision itself lives in the movement state machine; this is the thin
+ * adapter that hands it the player's flags.
+ */
 export function locomotion(state: PlayerState): Locomotion {
-  if (!state.alive) return 'dead';
-  if (state.maneuver) return MANEUVER_LOCOMOTION[state.maneuver.kind];
-  if (state.hangId) return 'hanging';
-  if (state.climbId) return 'climbing';
-  if (state.wallId) return 'wall-running';
-  if (state.sliding) return 'sliding';
-  if (!state.grounded) return 'airborne';
-  return 'grounded';
+  return deriveMotionState(state);
 }
 
 /**
@@ -380,6 +386,7 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.pitch = state.respawn.pitch;
   state.grounded = false;
   state.groundId = null;
+  state.groundSurface = null;
   state.crouching = false;
   state.alive = true;
   state.deadFor = 0;
@@ -390,6 +397,12 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.grabCooldown = 0;
   state.jumpLatch = false;
   state.climbId = null;
+  state.pipeId = null;
+  state.pipeDirection = 0;
+  state.pipeNormal.x = 0;
+  state.pipeNormal.y = 0;
+  state.pipeNormal.z = 0;
+  state.pipeCooldown = 0;
   state.maneuver = null;
   state.peakFallSpeed = 0;
   state.bobPhase = 0;
@@ -428,6 +441,7 @@ export function stepPlayer(
 
   if (state.grabCooldown > 0) state.grabCooldown = Math.max(0, state.grabCooldown - dt);
   if (state.wallCooldown > 0) state.wallCooldown = Math.max(0, state.wallCooldown - dt);
+  if (state.pipeCooldown > 0) state.pipeCooldown = Math.max(0, state.pipeCooldown - dt);
 
   // While dead the player keeps falling - so the death reads as a fall rather
   // than a freeze - but no input is accepted and the death cannot re-trigger.
@@ -449,6 +463,7 @@ export function stepPlayer(
   if (state.maneuver) result = stepManeuver(state, dt, options);
   else if (state.hangId) result = stepHanging(state, input, dt, options);
   else if (state.climbId) result = stepClimbing(state, input, dt, options);
+  else if (state.pipeId) result = stepPiping(state, input, dt, options);
   else result = stepLocomotion(state, input, dt, options);
 
   // Checkpoints are watched in every mode, so passing one mid-vault counts.
@@ -536,6 +551,7 @@ function stepManeuver(state: PlayerState, dt: number, options: PlayerStepOptions
   state.velocity.z = 0;
   state.grounded = false;
   state.groundId = null;
+  state.groundSurface = null;
 
   if (raw < 1) {
     advanceHeadBob(state, options, dt, 0);
@@ -665,6 +681,171 @@ function stepClimbing(
   return outcome(move);
 }
 
+// ------------------------------------------------------------------- pipes
+
+/** Lets go of a pipe, with the cooldown that stops an instant re-grab. */
+function releasePipe(state: PlayerState, cooldownSeconds: number): void {
+  state.pipeId = null;
+  state.pipeDirection = 0;
+  state.pipeCooldown = cooldownSeconds;
+}
+
+/**
+ * Climbing a pipe.
+ *
+ * The one ability that works both ways: forward climbs, back or crouch works the
+ * player *down* - fast, because descending a pipe is a slide - and jump kicks off
+ * it. That two-way travel is the whole reason a pipe is a separate ability from a
+ * climbable face, which can only ever be ascended.
+ */
+function stepPiping(
+  state: PlayerState,
+  input: MoveInput,
+  dt: number,
+  options: PlayerStepOptions,
+): PlayerStepOutcome {
+  const { config, world } = options;
+  const pipe = options.game.maneuver.pipe;
+  copyVec3(state.previousPosition, state.position);
+
+  const id = state.pipeId;
+  const collider = id === null ? undefined : world.colliders.find((entry) => entry.id === id);
+  if (!collider) {
+    releasePipe(state, pipe.releaseCooldownSeconds);
+    return outcome(createMoveResult(), { ended: 'climb' });
+  }
+
+  // Jump kicks off the pipe: out and up, so leaving it keeps the height gained.
+  if (input.jump) {
+    releasePipe(state, pipe.releaseCooldownSeconds);
+    state.velocity.x = -state.pipeNormal.x * pipe.kickSpeed;
+    state.velocity.z = -state.pipeNormal.z * pipe.kickSpeed;
+    state.velocity.y = pipe.kickUpSpeed;
+    return outcome(createMoveResult(), { ended: 'climb' });
+  }
+
+  // Forward climbs, back or crouch slides down, neither holds position.
+  const direction = input.crouch || input.forward < 0 ? -1 : input.forward > 0 ? 1 : 0;
+  state.pipeDirection = direction;
+
+  if (direction > 0 && state.position.y + config.standHeight >= collider.box.max.y) {
+    const to = landingFeet(
+      {
+        world,
+        box: playerBox(state.position, config.radius, playerHeight(state, config)),
+        direction: state.pipeNormal,
+        reach: pipe.reach,
+        minTopY: 0,
+        maxTopY: Number.POSITIVE_INFINITY,
+        radius: config.radius,
+        standHeight: config.standHeight,
+      },
+      state.pipeNormal,
+      collider.box.max.y,
+    );
+    const standBox = aabbFromCenterSize(
+      { x: to.x, y: to.y + config.standHeight / 2, z: to.z },
+      { x: config.radius * 2, y: config.standHeight, z: config.radius * 2 },
+    );
+    if (world.isFree(standBox)) {
+      state.pipeId = null;
+      startLadderManeuver(state, to, 'mantle', options);
+      return outcome(createMoveResult(), { ended: 'climb', started: 'mantle' });
+    }
+
+    // Nothing to stand on up there. Hold, so a pipe is not a way into a wall.
+    state.velocity.x = 0;
+    state.velocity.y = 0;
+    state.velocity.z = 0;
+    advanceHeadBob(state, options, dt, 0);
+    return outcome(createMoveResult());
+  }
+
+  const speed = direction > 0 ? pipe.climbSpeed : direction < 0 ? -pipe.slideSpeed : 0;
+  state.velocity.x = 0;
+  state.velocity.z = 0;
+  state.velocity.y = speed;
+
+  const box = playerBox(state.position, config.radius, playerHeight(state, config));
+  const move = world.move(box, { x: 0, y: speed * dt, z: 0 }, state.velocity);
+  adoptBox(state, box, config, move);
+  // Working a pipe is a controlled climb, not a fall.
+  state.peakFallSpeed = 0;
+
+  // Sliding down onto the floor lets go into ordinary locomotion.
+  if (direction < 0 && move.grounded) {
+    releasePipe(state, pipe.releaseCooldownSeconds);
+    advanceHeadBob(state, options, dt, 0);
+    return outcome(move, { ended: 'climb' });
+  }
+
+  advanceHeadBob(state, options, dt, 0);
+  return outcome(move);
+}
+
+/**
+ * Latches onto a pipe the player is pushing into.
+ *
+ * Unlike a climbable face, a pipe can be taken from the air as well as the
+ * ground: the whole point of a pipe is that you can jump onto it.
+ */
+function tryPipe(state: PlayerState, input: MoveInput, options: PlayerStepOptions): boolean {
+  const pipeIds = options.pipeIds;
+  if (!pipeIds || pipeIds.size === 0) return false;
+  if (state.pipeCooldown > 0) return false;
+
+  const { config, world } = options;
+  const pipe = options.game.maneuver.pipe;
+
+  const wish = wishDirection(state, input);
+  if (!wish) return false;
+
+  const box = playerBox(state.position, config.radius, playerHeight(state, config));
+  const surface = findClimbable({
+    world,
+    box,
+    direction: wish,
+    reach: pipe.reach,
+    minTopY: pipe.minHeight,
+    maxTopY: Number.POSITIVE_INFINITY,
+    radius: config.radius,
+    standHeight: config.standHeight,
+    ignoreId: state.groundId,
+    climbableIds: pipeIds,
+  });
+  if (!surface) return false;
+
+  state.pipeId = surface.id;
+  state.pipeDirection = 0;
+  // Flush against the face that was pushed into - and only the dominant axis, so
+  // a diagonal push cannot snap the player to the pipe's corner. A collision skin
+  // is left on purpose: landing *exactly* on the face leaves the box overlapping
+  // by a rounding error, and the solver's response to an overlap is to push the
+  // player out of it - which, on the wrong axis, is straight down.
+  if (Math.abs(wish.x) >= Math.abs(wish.z)) {
+    state.position.x =
+      flushAgainst(state.position.x, surface.box.min.x, surface.box.max.x, wish.x, config.radius) -
+      wish.x * COLLISION_SKIN;
+  } else {
+    state.position.z =
+      flushAgainst(state.position.z, surface.box.min.z, surface.box.max.z, wish.z, config.radius) -
+      wish.z * COLLISION_SKIN;
+  }
+  copyVec3(state.pipeNormal, wish);
+  copyVec3(state.previousPosition, state.position);
+
+  state.velocity.x = 0;
+  state.velocity.y = 0;
+  state.velocity.z = 0;
+  state.crouching = false;
+  state.sliding = false;
+  state.maneuver = null;
+  state.hangId = null;
+  state.climbId = null;
+  state.peakFallSpeed = 0;
+  return true;
+}
+
 // ---------------------------------------------------------------- locomotion
 
 function stepLocomotion(
@@ -780,6 +961,12 @@ function stepLocomotion(
     else if (tryClimb(state, input, options)) started = 'climb';
   }
 
+  // A pipe can be taken from the ground or the air, and is checked after the
+  // ledge and wall moves so catching a ledge still wins when both are in reach.
+  if (state.alive && started === null && !state.maneuver && tryPipe(state, input, options)) {
+    started = 'pipe-grab';
+  }
+
   advanceHeadBob(state, options, dt, state.grounded ? lengthXZ(state.velocity) : 0);
 
   if (options.killPlaneY !== undefined && state.alive && state.position.y <= options.killPlaneY) {
@@ -801,6 +988,7 @@ function adoptBox(
   state.position.z = box.min.z + config.radius;
   state.grounded = move.grounded;
   state.groundId = move.groundId;
+  state.groundSurface = move.groundSurface;
 }
 
 function targetSpeed(state: PlayerState, input: MoveInput, config: PlayerConfig): number {
@@ -1270,6 +1458,7 @@ function tryGrab(state: PlayerState, input: MoveInput, options: PlayerStepOption
   state.velocity.z = 0;
   state.grounded = false;
   state.groundId = null;
+  state.groundSurface = null;
   state.crouching = false;
   state.sliding = false;
   state.peakFallSpeed = 0;
@@ -1376,6 +1565,7 @@ function startManeuver(state: PlayerState, spec: ManeuverSpec): void {
   };
   state.hangId = null;
   state.climbId = null;
+  state.pipeId = null;
   state.sliding = false;
   state.wallId = null;
   state.grounded = false;
@@ -1552,6 +1742,7 @@ function killPlayer(state: PlayerState, cause: DeathCause): void {
   state.velocity.z = 0;
   state.grounded = false;
   state.groundId = null;
+  state.groundSurface = null;
   state.sliding = false;
   state.hangId = null;
   state.climbId = null;
@@ -1587,6 +1778,8 @@ export interface PlayerSnapshot {
   readonly pitch: number;
   readonly grounded: boolean;
   readonly groundId: string | null;
+  /** Acoustic material underfoot, for surface-aware footsteps. */
+  readonly groundSurface: string | null;
   readonly stance: Stance;
   readonly alive: boolean;
   readonly deaths: number;
@@ -1607,6 +1800,7 @@ export function snapshotPlayer(state: PlayerState): PlayerSnapshot {
     pitch: state.pitch,
     grounded: state.grounded,
     groundId: state.groundId,
+    groundSurface: state.groundSurface,
     stance: stance(state),
     alive: state.alive,
     deaths: state.deaths,

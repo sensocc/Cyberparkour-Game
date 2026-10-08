@@ -98,6 +98,31 @@ export interface ClimbConfig {
   readonly reach: number;
 }
 
+/**
+ * Pipe climbing.
+ *
+ * A pipe is the two-way cousin of a climbable face: you can go *down* it as well
+ * as up, and going down is a controlled slide rather than a climb. That is the
+ * whole reason it is a separate ability - a face you can only ascend is a
+ * staircase, but a pipe is a decision about which way to travel.
+ */
+export interface PipeConfig {
+  /** Upward speed while climbing a pipe (m/s). */
+  readonly climbSpeed: number;
+  /** Downward speed while sliding one (m/s). Faster than climbing, on purpose. */
+  readonly slideSpeed: number;
+  /** How far ahead the grab probe looks (m). */
+  readonly reach: number;
+  /** How far a pipe must rise above the feet before it can be grabbed (m). */
+  readonly minHeight: number;
+  /** Seconds before the same pipe can be grabbed again after letting go. */
+  readonly releaseCooldownSeconds: number;
+  /** Horizontal speed of a jump off a pipe (m/s). */
+  readonly kickSpeed: number;
+  /** Upward speed of that jump (m/s). */
+  readonly kickUpSpeed: number;
+}
+
 export interface SlideConfig {
   /** Speed needed to start a slide (m/s). */
   readonly minSpeed: number;
@@ -279,6 +304,7 @@ export interface GameConfig {
     readonly mantle: MantleConfig;
     readonly pullUp: PullUpConfig;
     readonly climb: ClimbConfig;
+    readonly pipe: PipeConfig;
     readonly slide: SlideConfig;
     readonly wallRun: WallRunConfig;
     readonly wallJump: WallJumpConfig;
@@ -340,6 +366,21 @@ export const DEFAULT_CONFIG: GameConfig = {
       speed: 2.4,
       minHeight: 1.6,
       reach: 0.45,
+    },
+
+    pipe: {
+      // A little faster than a face climb, because a pipe is the route that is
+      // *meant* to be climbed, and the descent is a genuine slide: nearly three
+      // times the speed, which is what makes dropping down a pipe a move rather
+      // than a hand-over-hand crawl.
+      climbSpeed: 3.4,
+      slideSpeed: 9.5,
+      reach: 0.5,
+      minHeight: 1.2,
+      releaseCooldownSeconds: 0.3,
+      // A hop off the pipe: out and up, so leaving it keeps the height gained.
+      kickSpeed: 4.5,
+      kickUpSpeed: 5.6,
     },
 
     slide: {

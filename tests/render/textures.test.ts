@@ -131,7 +131,15 @@ describe('the object surfaces', () => {
 
   it('are light, because they are tinted down by the surface colour', () => {
     // If a detail map were dark, `tint x map` would come out almost black.
+    //
+    // The exception is an *emissive* map (the neon sign): there the dark parts
+    // are the point - they are what does not glow - so its mean brightness is
+    // deliberately low and the rule does not apply.
+    const emissiveTextures = new Set(SURFACES.filter((surface) => surface.emissive).map((s) => s.texture));
+
     for (const definition of SURFACE_TEXTURES) {
+      if (emissiveTextures.has(definition.id)) continue;
+
       const image = definition.generate();
       let total = 0;
       let samples = 0;
@@ -146,6 +154,28 @@ describe('the object surfaces', () => {
       expect(mean, `${definition.id} mean brightness`).toBeGreaterThan(70);
       expect(mean, `${definition.id} mean brightness`).toBeLessThan(230);
     }
+  });
+
+  it('has an emissive sign map that is mostly dark with bright glyphs', () => {
+    // The inverse of the rule above, and the reason the exception exists: the
+    // sign's backing must be near-black so only the glyphs glow.
+    const sign = SURFACE_TEXTURES.find((definition) => definition.id === 'sign');
+    expect(sign).toBeDefined();
+    const image = sign?.generate();
+    if (!image) throw new Error('the sign texture did not generate');
+
+    let bright = 0;
+    let dark = 0;
+    for (let y = 0; y < image.height; y += 2) {
+      for (let x = 0; x < image.width; x += 2) {
+        const colour = getPixel(image, x, y);
+        const value = (colour.r + colour.g + colour.b) / 3;
+        if (value > 180) bright += 1;
+        if (value < 40) dark += 1;
+      }
+    }
+    expect(bright).toBeGreaterThan(0);
+    expect(dark).toBeGreaterThan(bright);
   });
 
   it('tile seamlessly: the wrapped edges continue the pattern', () => {
