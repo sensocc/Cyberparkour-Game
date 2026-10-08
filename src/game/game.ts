@@ -15,7 +15,9 @@
 
 import { DEFAULT_CONFIG, fixedStep, type GameConfig } from '../core/config.js';
 import { FixedStepAccumulator } from '../core/delta.js';
-import { type LogBuffer } from '../core/log.js';
+import { logger, type LogBuffer } from '../core/log.js';
+import { AudioDirector, type AudioCue } from '../audio/director.js';
+import { SilentAudio, type AudioOutput } from '../audio/engine.js';
 import { GameLoop, type FrameScheduler } from '../core/loop.js';
 import { vec3, type Vec3 } from '../core/vec3.js';
 import type { CrashReporter } from '../diagnostics/crashReporter.js';
@@ -27,7 +29,7 @@ import { buildLevel, type BuiltLevel } from './level/level.js';
 import { DEMO_ROOF, type LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
-  eyeHeight,
+  eyePosition,
   interpolatePlayerPosition,
   resetPlayerState,
   respawnPlayer,
@@ -62,6 +64,8 @@ export interface GameOptions {
   readonly createView: CreateView;
   /** Frame cadence source. Defaults to `requestAnimationFrame`. */
   readonly scheduler?: FrameScheduler;
+  /** Audio backend. Defaults to silence, so tests never touch Web Audio. */
+  readonly audio?: AudioOutput;
   readonly onStatusChange?: (status: GameStatus) => void;
 }
 
@@ -101,6 +105,12 @@ export class Game {
   private resizeObserver: ResizeObserver | null = null;
   /** Whether the sprint key is held, for the debug HUD only. */
   private sprinting = false;
+  /** Colliders tagged climbable, resolved once per level build. */
+  private climbables: ReadonlySet<string> = new Set();
+  /** Whether the player has muted the demo. */
+  private muted = false;
+  private readonly audioDirector: AudioDirector;
+  private readonly audioOutput: AudioOutput;
 
   // Reused per-frame scratch objects: the render path allocates nothing.
   private readonly scratchFeet: Vec3 = vec3();
@@ -124,13 +134,19 @@ export class Game {
       maxSubStep: this.config.world.maxCollisionSubStep,
       player: standingSize(this.config.player),
     });
-    this.player = createPlayerState(this.definition.spawn);
+    this.climbables = new Set(
+      this.level.colliders.filter((collider) => collider.kind === 'climbable').map((c) => c.id),
+    );
+    this.player = createPlayerState(this.definition.spawn, this.config);
 
     this.domInput = new DomInput({
       target: options.pointerLockTarget,
       input: options.input,
       onPointerLockChange: (locked) => this.handlePointerLockChange(locked),
     });
+
+    this.audioDirector = new AudioDirector(this.config);
+    this.audioOutput = options.audio ?? new SilentAudio();
 
     this.loop = new GameLoop({
       onFrame: (delta) => this.handleFrame(delta),
@@ -190,6 +206,8 @@ export class Game {
     this.options.ui.showGame();
     this.domInput.requestPointerLock();
     this.warnIfNoMouseLook();
+    this.audioOutput.resume();
+    this.audioOutput.setMusic(true);
     this.log?.info('game', 'started');
   }
 
@@ -220,6 +238,8 @@ export class Game {
     this.options.input.clear();
     this.domInput.exitPointerLock();
     this.options.ui.showPause();
+    this.audioDirector.reset();
+    this.audioOutput.silence();
     this.log?.info('game', 'paused', { reason });
   }
 
@@ -269,6 +289,8 @@ export class Game {
     this.domInput.exitPointerLock();
     this.domInput.detach();
     this.options.ui.showEnded();
+    this.audioOutput.silence();
+    this.audioOutput.setMusic(false);
     this.log?.info('game', 'quit');
 
     // Only permitted for windows opened by a script; the ended screen tells the
@@ -282,6 +304,7 @@ export class Game {
 
   /** Full teardown, including listeners. */
   dispose(): void {
+    this.audioOutput.dispose();
     this.loop.stop();
     this.disposeView();
     this.domInput.detach();
@@ -299,19 +322,39 @@ export class Game {
     return {
       world: this.level.world,
       config: this.config.player,
+      game: this.config,
+      climbableIds: this.climbables,
       killPlaneY: this.definition.killPlaneY,
       respawnDelaySeconds: this.config.respawn.delaySeconds,
       safetyFloorY: this.config.world.safetyFloorY,
     };
   }
 
-  /** Fall detection fired: the player has fallen off the level. */
+  /** Fall detection or fall damage killed the player. */
   private handleDeath(): void {
+    const cause = this.player.deathCause ?? 'fell';
     this.log?.info('game', 'player died', {
+      cause,
       y: this.player.position.y,
       deaths: this.player.deaths,
     });
-    this.options.ui.showDeath('YOU FELL', 'Respawning…');
+    this.options.ui.showDeath(
+      cause === 'impact' ? 'YOU DIED' : 'YOU FELL',
+      cause === 'impact' ? 'The landing was too hard. Respawning…' : 'Respawning…',
+    );
+  }
+
+  /** A landing, so the audio and the screen can react to how hard it was. */
+  private handleLanding(impact: number, damage: number): void {
+    this.audioDirector.landing(impact, damage);
+    if (damage > 0) {
+      this.options.ui.flashDamage(damage);
+      this.log?.info('game', 'took fall damage', {
+        impact: Math.round(impact * 10) / 10,
+        damage: Math.round(damage),
+        health: Math.round(this.player.health),
+      });
+    }
   }
 
   private handleRespawn(): void {
@@ -321,9 +364,11 @@ export class Game {
 
   /** Returns the player to the spawn point without going through death. */
   respawn(): void {
-    respawnPlayer(this.player);
+    respawnPlayer(this.player, this.config);
     this.accumulator.reset();
     this.options.ui.hideDeath();
+    this.audioDirector.reset();
+    this.audioOutput.silence();
     this.log?.info('game', 'respawned on request');
   }
 
@@ -332,7 +377,9 @@ export class Game {
       maxSubStep: this.config.world.maxCollisionSubStep,
       player: standingSize(this.config.player),
     });
-    resetPlayerState(this.player);
+    resetPlayerState(this.player, this.config);
+    this.audioDirector.reset();
+    this.audioOutput.silence();
     this.accumulator.reset();
     this.stats.reset();
     this.lastHudUpdate = 0;
@@ -466,25 +513,53 @@ export class Game {
     const moveInput = this.options.input.moveInput;
     this.sprinting = moveInput.sprint;
 
-    this.accumulator.run(delta, (step) => {
+    const steps = this.accumulator.run(delta, (step) => {
       const outcome = stepPlayer(this.player, moveInput, step, this.stepOptions());
       if (outcome.died) this.handleDeath();
       else if (outcome.respawned) this.handleRespawn();
+      if (outcome.landing) this.handleLanding(outcome.landing.impact, outcome.landing.damage);
+      if (outcome.started) this.audioDirector.maneuverStart(outcome.started);
+      if (outcome.ended) this.audioDirector.maneuverEnd(outcome.ended);
     });
 
+    this.updateAudio(steps * fixedStep(this.config));
     this.stats.push(delta);
     this.renderFrame();
     this.updateHud();
+  }
+
+  /** Plays the cues this frame produced and updates the continuous wind. */
+  private updateAudio(simulatedSeconds: number): void {
+    if (this.status !== 'playing') return;
+
+    let frame;
+    try {
+      frame = this.audioDirector.update(this.player, simulatedSeconds);
+    } catch (error) {
+      logger.warn('audio', 'the audio director failed', { error: String(error) });
+      return;
+    }
+
+    for (const cue of frame.cues) this.playCue(cue);
+    this.audioOutput.setWind(frame.windIntensity);
+  }
+
+  private playCue(cue: AudioCue): void {
+    try {
+      this.audioOutput.play(cue);
+    } catch (error) {
+      // Sound must never be able to stop the game.
+      logger.debug('audio', 'cue failed', { cue: cue.kind, error: String(error) });
+    }
   }
 
   private renderFrame(): void {
     if (!this.view) return;
 
     const feet = interpolatePlayerPosition(this.player, this.accumulator.alpha, this.scratchFeet);
-    this.scratchEye.x = feet.x;
-    // Eye height follows the stance, so crouching visibly lowers the camera.
-    this.scratchEye.y = feet.y + eyeHeight(this.player, this.config.player);
-    this.scratchEye.z = feet.z;
+    // Eye height follows the stance and the head bob, so crouching visibly drops
+    // the camera and running visibly rocks it.
+    eyePosition(this.player, this.config, this.scratchEye, feet);
 
     this.view.render(this.scratchEye, this.player);
   }
@@ -512,9 +587,12 @@ export class Game {
       grounded: player.grounded,
       groundId: player.groundId,
       stance: player.stance,
+      locomotion: player.locomotion,
       sprinting: this.sprinting,
       alive: player.alive,
       deaths: player.deaths,
+      health: player.health,
+      maxHealth: this.config.fallDamage.maxHealth,
       frameCount: stats.frames,
       elapsedSeconds: stats.elapsedSeconds,
       renderer: this.rendererInfo,
@@ -527,6 +605,12 @@ export class Game {
         case 'toggleDebug': {
           const visible = this.options.hud.toggle();
           this.log?.info('game', `debug hud ${visible ? 'shown' : 'hidden'}`);
+          break;
+        }
+        case 'mute': {
+          this.muted = !this.muted;
+          this.audioOutput.setMuted(this.muted);
+          this.options.ui.toast(this.muted ? 'Sound muted (M)' : 'Sound on (M)');
           break;
         }
         case 'pause':

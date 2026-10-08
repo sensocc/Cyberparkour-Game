@@ -77,8 +77,9 @@ export class GameView implements GameViewLike {
 
     logger.info('render', 'view created', {
       renderer: this.rendererInfo ?? 'unknown',
-      sky: this.built.sky !== null,
+      skybox: options.assets?.skybox != null,
       backdrop: this.built.backdrop !== null,
+      parts: [...this.built.meshes.values()].reduce((total, list) => total + list.length, 0),
     });
   }
 

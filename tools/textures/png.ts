@@ -13,6 +13,12 @@
 
 import zlib from 'node:zlib';
 
+// Re-exported so the texture generators keep importing their randomness from
+// this module, while the implementation stays in one place.
+import { createRandom } from '../../src/core/random.ts';
+
+export { createRandom };
+
 /** Raw RGBA pixels, row-major, top row first. */
 export interface RgbaImage {
   readonly width: number;
@@ -206,20 +212,77 @@ function createChunk(type: string, data: Buffer): Buffer {
 }
 
 /**
- * Small deterministic PRNG (mulberry32).
+ * Writes one pixel, wrapping both axes.
  *
- * The textures must be reproducible: a committed PNG that the generator cannot
- * reproduce would be a silent lie.
+ * Object textures tile, so every feature that lands on an edge has to reappear
+ * on the opposite one. Wrapping here is what makes that automatic.
  */
-export function createRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), 1 | t);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+export function setPixelWrapped(image: RgbaImage, x: number, y: number, color: RgbaColor): void {
+  const wrappedX = ((x % image.width) + image.width) % image.width;
+  const wrappedY = ((y % image.height) + image.height) % image.height;
+  setPixel(image, wrappedX, wrappedY, color);
+}
+
+/** Fills a rectangle, wrapping both axes. */
+export function fillRectWrapped(
+  image: RgbaImage,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  color: RgbaColor,
+): void {
+  for (let row = 0; row < height; row += 1) {
+    for (let column = 0; column < width; column += 1) {
+      setPixelWrapped(image, x + column, y + row, color);
+    }
+  }
+}
+
+/**
+ * Tileable value noise on a `gridSize` lattice.
+ *
+ * The lattice wraps, so the result is seamless in both axes - which is the
+ * whole point: a non-tiling mottle would show as a hard grid on a repeated
+ * surface.
+ */
+export function createValueNoise(seed: number, gridSize = 8): (u: number, v: number) => number {
+  const random = createRandom(seed);
+  const lattice = new Float64Array(gridSize * gridSize);
+  for (let index = 0; index < lattice.length; index += 1) lattice[index] = random();
+
+  const at = (x: number, y: number): number => {
+    const wrappedX = ((x % gridSize) + gridSize) % gridSize;
+    const wrappedY = ((y % gridSize) + gridSize) % gridSize;
+    return lattice[wrappedY * gridSize + wrappedX] as number;
   };
+
+  const smooth = (t: number): number => t * t * (3 - 2 * t);
+
+  return (u: number, v: number) => {
+    const x = (((u % 1) + 1) % 1) * gridSize;
+    const y = (((v % 1) + 1) % 1) * gridSize;
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const tx = smooth(x - x0);
+    const ty = smooth(y - y0);
+
+    const top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
+    const bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
+    return top + (bottom - top) * ty;
+  };
+}
+
+/** Multiplies a colour's channels, for cheap shading without a colour-space round trip. */
+export function scaleColor(color: RgbaColor, factor: number): RgbaColor {
+  const clamp = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+  return { r: clamp(color.r * factor), g: clamp(color.g * factor), b: clamp(color.b * factor), a: color.a };
+}
+
+/** Blends two colours by `t`, keeping the first colour's alpha. */
+export function tintToward(color: RgbaColor, target: RgbaColor, t: number): RgbaColor {
+  const mixed = mixColors(color, target, t);
+  return { ...mixed, a: color.a };
 }
 
 /** Inclusive integer in `[min, max]`. */

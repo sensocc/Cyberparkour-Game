@@ -291,6 +291,35 @@ body {
   font-size: 11px;
 }
 
+/* --------------------------------------------------------- damage flash --- */
+
+/* A brief red vignette on a hard landing. Fall damage has no other feedback
+   until V0.3's UI work. */
+.damage-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(255, 40, 60, 0) 35%,
+    rgba(255, 40, 60, calc(var(--damage-strength, 0.4) * 0.85)) 100%
+  );
+  animation: damage-in 260ms ease-out forwards;
+}
+
+.damage-flash[hidden] {
+  display: none;
+}
+
+@keyframes damage-in {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 /* -------------------------------------------------------- death overlay --- */
 
 /* Shown over the running game, so it is not one of the modal screens. */

@@ -10,6 +10,8 @@
 import { aabbFromCenterSize, minThickness, overlaps, type AABB } from '../physics/aabb.js';
 import { CollisionWorld, type Collider } from '../physics/collision.js';
 import type { LevelDefinition, PropDefinition } from './levelData.js';
+import { modelById, resolveModelParts, type ResolvedPart } from './models.js';
+import { surfaceById } from './surfaces.js';
 
 /** Player dimensions, used for spawn validation. */
 export interface PlayerSize {
@@ -60,10 +62,28 @@ export function spawnBounds(definition: LevelDefinition, player: PlayerSize): AA
   };
 }
 
+/**
+ * The prop's model parts, in world space.
+ *
+ * Collision uses the prop's own box; these are the meshes. Throws for an unknown
+ * model, which validation catches first.
+ */
+export function resolvePropParts(prop: PropDefinition): ResolvedPart[] {
+  const model = modelById(prop.model);
+  if (!model) throw new RangeError(`prop "${prop.id}" references unknown model "${prop.model}"`);
+  return resolveModelParts(model, propBounds(prop).min, prop.size);
+}
+
+/**
+ * Colliders for a level.
+ *
+ * One collider per prop, from the prop's box: the model parts are surface
+ * detail, and a box is the right approximation for all of them.
+ */
 export function toColliders(definition: LevelDefinition): Collider[] {
   return definition.props.map((prop) => ({
     id: prop.id,
-    kind: prop.kind,
+    kind: prop.climbable ? 'climbable' : prop.kind,
     box: propBounds(prop),
   }));
 }
@@ -117,6 +137,13 @@ export function validateLevel(
 
     for (const axis of ['x', 'y', 'z'] as const) {
       if (!(prop.size[axis] > 0)) add(`size.${axis} must be > 0`, prop.id);
+    }
+
+    if (!modelById(prop.model)) add(`unknown model "${prop.model}"`, prop.id);
+
+    for (const [surfaceId, tint] of Object.entries(prop.tints ?? {})) {
+      if (!surfaceById(surfaceId)) add(`tint references unknown surface "${surfaceId}"`, prop.id);
+      if (!/^#[0-9a-f]{6}$/i.test(tint)) add(`tint "${surfaceId}" must be a #rrggbb colour`, prop.id);
     }
 
     // The solver advances at most `maxSubStep` metres before re-testing; a
@@ -193,15 +220,10 @@ function validateEnvironment(
     add('environment.fogFar must be greater than fogNear');
   }
 
-  if (!(environment.skyRadius > 0)) add('environment.skyRadius must be > 0');
-
   const backdrop = environment.backdrop;
   if (!(backdrop.radius > 0)) add('environment.backdrop.radius must be > 0');
   if (!(backdrop.height > 0)) add('environment.backdrop.height must be > 0');
   if (!(backdrop.repeat > 0)) add('environment.backdrop.repeat must be > 0');
-  if (backdrop.radius >= environment.skyRadius) {
-    add('environment.backdrop.radius must be smaller than skyRadius, or it would be clipped');
-  }
   if (backdrop.radius <= environment.fogNear) {
     add('environment.backdrop.radius should be beyond fogNear, or the skyline is invisible');
   }

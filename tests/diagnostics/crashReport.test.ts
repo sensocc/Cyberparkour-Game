@@ -39,6 +39,9 @@ const GAME: CrashGameState = {
     stance: 'standing',
     alive: true,
     deaths: 0,
+    deathCause: null,
+    health: 74,
+    locomotion: 'grounded',
   },
 };
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Writes the demo's flat textures to disk.
+ * Writes the demo's textures to disk.
  *
  *   node tools/generate-textures.ts [--out <dir>]
  *
@@ -17,12 +17,9 @@ import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { encodePng } from './textures/png.ts';
-import { TEXTURES } from './textures/generate.ts';
+import { TEXTURES } from './textures/index.ts';
 
-const DEFAULT_OUT = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  '../src/assets/textures',
-);
+const DEFAULT_OUT = resolve(dirname(fileURLToPath(import.meta.url)), '../src/assets/textures');
 
 export interface WriteResult {
   readonly name: string;
@@ -64,11 +61,14 @@ function main(): void {
   const cwd = process.cwd();
 
   console.log(`generating textures into ${relative(cwd, outDir) || '.'}`);
+  let total = 0;
   for (const result of writeTextures(outDir)) {
+    total += result.bytes;
     console.log(
-      `  ${result.name.padEnd(20)} ${String(result.width).padStart(5)}x${String(result.height).padEnd(5)} ${(result.bytes / 1024).toFixed(1)} KiB`,
+      `  ${result.name.padEnd(24)} ${String(result.width).padStart(5)}x${String(result.height).padEnd(5)} ${(result.bytes / 1024).toFixed(1).padStart(7)} KiB`,
     );
   }
+  console.log(`  ${String(TEXTURES.length).padStart(2)} files, ${(total / 1024).toFixed(1)} KiB total`);
 }
 
 // Only run when invoked directly, so tests can import `writeTextures`.

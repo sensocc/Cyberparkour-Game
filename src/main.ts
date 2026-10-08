@@ -29,6 +29,7 @@ import {
   StorageCrashSink,
   resolveStore,
 } from './diagnostics/crashSinks.js';
+import { createAudio, type AudioOutput } from './audio/engine.js';
 import { Game } from './game/game.js';
 import { DEMO_ROOF } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
@@ -61,6 +62,16 @@ interface Shell {
   readonly reporter: CrashReporter;
   /** Assigned once the game exists; the UI callbacks read it lazily. */
   readonly holder: { game: Game | null };
+}
+
+/**
+ * Builds the audio backend.
+ *
+ * Browsers will not start an audio context until a user gesture, so this only
+ * creates it; `Game.start()` resumes it from the click that begins play.
+ */
+function createAudioBackend(): AudioOutput {
+  return createAudio({ config: DEFAULT_CONFIG });
 }
 
 function createShell(): Shell {
@@ -185,6 +196,7 @@ function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
     logBuffer: logger,
     config: DEFAULT_CONFIG,
     level: DEMO_ROOF,
+    audio: createAudioBackend(),
     createView: (canvas, definition, config) =>
       new GameView({ canvas, definition, config, assets }),
     onStatusChange: (status) => {

@@ -3,7 +3,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { formatNumber, formatVector } from '../../src/ui/dom.js';
-import { DebugHud, describeGait, formatHudRows, type HudSnapshot } from '../../src/ui/hud.js';
+import {
+  DebugHud,
+  describeGait,
+  describeHealth,
+  describeLocomotion,
+  formatHudRows,
+  type HudSnapshot,
+} from '../../src/ui/hud.js';
 
 const SNAPSHOT: HudSnapshot = {
   fps: 59.94,
@@ -17,9 +24,12 @@ const SNAPSHOT: HudSnapshot = {
   grounded: true,
   groundId: 'roof-deck',
   stance: 'standing',
+  locomotion: 'grounded',
   sprinting: false,
   alive: true,
   deaths: 0,
+  health: 74,
+  maxHealth: 100,
   frameCount: 1234,
   elapsedSeconds: 20.5,
   renderer: 'Test GPU',
@@ -46,11 +56,12 @@ describe('formatHudRows', () => {
     expect(rows.state).toBe('grounded (roof-deck)');
   });
 
-  it('reports airborne when not grounded, with no collider', () => {
-    const rows = Object.fromEntries(
-      formatHudRows({ ...SNAPSHOT, grounded: false, groundId: null }).map((row) => [row.label, row.value]),
-    );
-    expect(rows.state).toBe('airborne');
+  it('reports a fallen player distinctly from an airborne one', () => {
+    const rows = (snapshot: HudSnapshot): Record<string, string> =>
+      Object.fromEntries(formatHudRows(snapshot).map((row) => [row.label, row.value]));
+
+    expect(rows({ ...SNAPSHOT, grounded: false, locomotion: 'airborne' }).state).toBe('airborne');
+    expect(rows({ ...SNAPSHOT, alive: false, locomotion: 'dead' }).state).toBe('DEAD');
   });
 
   it('reports frame count and elapsed time', () => {
@@ -98,13 +109,34 @@ describe('formatHudRows', () => {
     ).toBe('idle');
   });
 
-  it('reports a fallen player distinctly from an airborne one', () => {
-    const rows = (snapshot: HudSnapshot): Record<string, string> =>
-      Object.fromEntries(formatHudRows(snapshot).map((row) => [row.label, row.value]));
+  it('names every locomotion mode', () => {
+    const state = (locomotion: HudSnapshot['locomotion']): string =>
+      describeLocomotion({ ...SNAPSHOT, locomotion });
 
-    expect(rows({ ...SNAPSHOT, alive: false, grounded: false }).state).toBe('FALLEN');
-    expect(rows({ ...SNAPSHOT, grounded: false }).state).toBe('airborne');
-    expect(rows({ ...SNAPSHOT, groundId: null }).state).toBe('grounded');
+    expect(state('grounded')).toBe('grounded (roof-deck)');
+    expect(state('airborne')).toBe('airborne');
+    expect(state('mantling')).toBe('MANTLING');
+    expect(state('pulling-up')).toBe('PULL-UP');
+    expect(state('hanging')).toBe('HANGING');
+    expect(state('climbing')).toBe('CLIMBING');
+    expect(state('sliding')).toBe('SLIDING');
+    expect(state('dead')).toBe('DEAD');
+    expect(describeLocomotion({ ...SNAPSHOT, alive: false })).toBe('DEAD');
+    expect(describeLocomotion({ ...SNAPSHOT, groundId: null })).toBe('grounded');
+  });
+
+  it('shows health as a bar, so fall damage is legible', () => {
+    expect(describeHealth(100, 100)).toBe('########## 100');
+    expect(describeHealth(0, 100)).toBe('.......... 0');
+    expect(describeHealth(50, 100)).toBe('#####..... 50');
+    expect(describeHealth(41, 100)).toBe('####...... 41');
+    // Guards against a divide-by-zero when health is not being tracked.
+    expect(describeHealth(10, 0)).toBe('n/a');
+  });
+
+  it('reports health in the rows', () => {
+    const rows = Object.fromEntries(formatHudRows(SNAPSHOT).map((row) => [row.label, row.value]));
+    expect(rows.health).toBe('#######... 74');
   });
 
   it('counts deaths', () => {

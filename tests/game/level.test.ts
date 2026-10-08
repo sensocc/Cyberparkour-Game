@@ -9,6 +9,7 @@ import {
   propBounds,
   spawnBounds,
   toColliders,
+  resolvePropParts,
   validateLevel,
   type BuildLevelOptions,
 } from '../../src/game/level/level.js';
@@ -18,6 +19,11 @@ import {
   type PropDefinition,
 } from '../../src/game/level/levelData.js';
 import { standingSize } from '../../src/game/player.js';
+import { modelById } from '../../src/game/level/models.js';
+import { surfaceById } from '../../src/game/level/surfaces.js';
+
+/** The manoeuvre bands, as the level design reasons about them. */
+const PLAYER_MANEUVER = DEFAULT_CONFIG.maneuver;
 
 const SUB_STEP = DEFAULT_CONFIG.world.maxCollisionSubStep;
 const PLAYER = DEFAULT_CONFIG.player;
@@ -28,10 +34,10 @@ const BUILD_OPTIONS: BuildLevelOptions = { maxSubStep: SUB_STEP, player: STANDIN
 
 function prop(overrides: Partial<PropDefinition> & { id: string }): PropDefinition {
   return {
+    model: 'slab',
     kind: 'prop',
     position: { x: 0, y: 0, z: 0 },
     size: { x: 1, y: 1, z: 1 },
-    color: '#ffffff',
     ...overrides,
   };
 }
@@ -161,9 +167,35 @@ describe('the shipped demo roof', () => {
     expect(unsupported).toEqual([]);
   });
 
-  it('colours every prop with a valid hex string', () => {
+  it('gives every prop a valid model and valid tints', () => {
     for (const entry of DEMO_ROOF.props) {
-      expect(entry.color, entry.id).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(modelById(entry.model), `${entry.id} references ${entry.model}`).toBeDefined();
+      for (const [surfaceId, tint] of Object.entries(entry.tints ?? {})) {
+        expect(surfaceById(surfaceId), `${entry.id} tint ${surfaceId}`).toBeDefined();
+        expect(tint, `${entry.id} tint ${surfaceId}`).toMatch(/^#[0-9a-f]{6}$/i);
+      }
+    }
+  });
+
+  it('resolves every prop into model parts', () => {
+    for (const entry of DEMO_ROOF.props) {
+      const parts = resolvePropParts(entry);
+      expect(parts.length, entry.id).toBeGreaterThan(0);
+      for (const part of parts) {
+        // Parts are normalised against the prop's box, so they must land inside
+        // it - or just outside it, for deliberate overhangs.
+        expect(part.max.x, entry.id).toBeGreaterThan(part.min.x);
+        expect(part.max.y, entry.id).toBeGreaterThan(part.min.y);
+        expect(part.max.z, entry.id).toBeGreaterThan(part.min.z);
+      }
+    }
+  });
+
+  it('uses a surface the surface table defines', () => {
+    for (const entry of DEMO_ROOF.props) {
+      for (const part of resolvePropParts(entry)) {
+        expect(surfaceById(part.surface), `${entry.id} -> ${part.surface}`).toBeDefined();
+      }
     }
   });
 
@@ -174,7 +206,6 @@ describe('the shipped demo roof', () => {
     expect(environment.ambientIntensity).toBeGreaterThan(0);
     expect(environment.backdrop.radius).toBeGreaterThan(0);
     expect(environment.backdrop.height).toBeGreaterThan(0);
-    expect(environment.backdrop.radius).toBeLessThan(environment.skyRadius);
     for (const color of [
       environment.skyColor,
       environment.fogColor,
@@ -203,15 +234,42 @@ describe('the demo roof supports the V0.1 abilities', () => {
     expect(ledgeLow.max.y, 'ledge-low must be jumpable from the deck').toBeLessThan(apex);
   });
 
-  it('has a second step reachable only from the first', () => {
-    const apex = (PLAYER.jumpSpeed * PLAYER.jumpSpeed) / (2 * PLAYER.gravity);
-    const ledgeLow = boundsOf('ledge-low');
-    const ledgeMid = boundsOf('ledge-mid');
+  it('keeps its low steps inside the mantle band, so they are walk-up-able', () => {
+    // A mantle engages between these two heights above the feet.
+    const { minHeight, maxHeight } = PLAYER_MANEUVER.mantle;
+    for (const id of ['ledge-low', 'ledge-mid']) {
+      const height = boundsOf(id).max.y;
+      expect(height, id).toBeGreaterThanOrEqual(minHeight);
+      expect(height, id).toBeLessThanOrEqual(maxHeight);
+    }
+  });
 
-    // Too high to jump from the deck...
-    expect(ledgeMid.max.y).toBeGreaterThan(apex);
-    // ...but an easy hop up from ledge-low.
-    expect(ledgeMid.max.y - ledgeLow.max.y).toBeLessThan(apex);
+  it('has a step that needs a jump and a grab', () => {
+    const mantle = PLAYER_MANEUVER.mantle;
+    const pullUp = PLAYER_MANEUVER.pullUp;
+    const height = boundsOf('ledge-high').max.y;
+
+    expect(height).toBeGreaterThan(mantle.maxHeight);
+    expect(height).toBeLessThanOrEqual(pullUp.maxHeight);
+  });
+
+  it('has a climbable route taller than any grab can reach', () => {
+    const pullUp = PLAYER_MANEUVER.pullUp;
+    const climbable = DEMO_ROOF.props.filter((entry) => entry.climbable === true);
+    expect(climbable.length).toBeGreaterThan(0);
+
+    // Climbing is what gets you somewhere a pull-up cannot.
+    const tallest = Math.max(...climbable.map((entry) => propBounds(entry).max.y));
+    expect(tallest).toBeGreaterThan(pullUp.maxHeight);
+  });
+
+  it('stacks terraces within reach of each other', () => {
+    const pullUp = PLAYER_MANEUVER.pullUp;
+    const l1 = boundsOf('terrace-l1');
+    const l2 = boundsOf('terrace-l2');
+
+    expect(l1.max.y).toBeGreaterThan(PLAYER_MANEUVER.mantle.maxHeight);
+    expect(l2.max.y - l1.max.y).toBeLessThanOrEqual(pullUp.maxHeight);
   });
 
   it('has a duct that can only be passed while crouched', () => {
@@ -398,20 +456,48 @@ describe('validateLevel', () => {
     );
   });
 
-  it('flags a backdrop that would be clipped by the sky dome', () => {
+  it('flags a backdrop that sits inside the fog, where it would be invisible', () => {
     const definitions = level();
     const problems = validateLevel(
       {
         ...definitions,
         environment: {
           ...definitions.environment,
-          backdrop: { ...definitions.environment.backdrop, radius: 900 },
+          backdrop: { ...definitions.environment.backdrop, radius: 10 },
         },
       },
       BUILD_OPTIONS,
     );
     expect(problems.map((problem) => problem.message)).toContain(
-      'environment.backdrop.radius must be smaller than skyRadius, or it would be clipped',
+      'environment.backdrop.radius should be beyond fogNear, or the skyline is invisible',
+    );
+  });
+
+  it('flags a prop that names a model which does not exist', () => {
+    const problems = validateLevel(
+      level({ props: [prop({ id: 'ghost', model: 'not-a-model', kind: 'floor', position: { x: 0, y: -0.5, z: 0 }, size: { x: 20, y: 1, z: 20 } })] }),
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message)).toContain('unknown model "not-a-model"');
+  });
+
+  it('flags a tint that names a surface which does not exist', () => {
+    const problems = validateLevel(
+      level({
+        props: [
+          prop({
+            id: 'decked',
+            kind: 'floor',
+            position: { x: 0, y: -0.5, z: 0 },
+            size: { x: 20, y: 1, z: 20 },
+            tints: { 'not-a-surface': '#ffffff' },
+          }),
+        ],
+      }),
+      BUILD_OPTIONS,
+    );
+    expect(problems.map((problem) => problem.message)).toContain(
+      'tint references unknown surface "not-a-surface"',
     );
   });
 

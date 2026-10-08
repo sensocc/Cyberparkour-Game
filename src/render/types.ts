@@ -7,27 +7,34 @@
  * without pulling WebGL in.
  */
 
-import type { Texture } from 'three';
+import type { CubeTexture, Texture } from 'three';
 
 import type { GameConfig } from '../core/config.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
+import type { SurfaceTextureId } from '../game/level/surfaces.js';
 
 /**
- * Flat textures the scene needs.
+ * Textures the scene needs.
  *
- * Each is optional: a texture that failed to load degrades to a flat colour
- * rather than stopping the demo.
+ * Every one is optional: a texture that failed to load degrades to a flat
+ * colour rather than stopping the demo.
  */
 export interface SceneAssets {
   /** Night skyline painted around the level. */
   readonly cityBackdrop: Texture | null;
-  /** Vertical gradient for the sky dome. */
-  readonly skyGradient: Texture | null;
+  /** Six-face cube skybox. */
+  readonly skybox: CubeTexture | null;
+  /** Tileable object surfaces, keyed by texture id. */
+  readonly surfaces: ReadonlyMap<SurfaceTextureId, Texture>;
 }
 
-export const NO_ASSETS: SceneAssets = { cityBackdrop: null, skyGradient: null };
+export const NO_ASSETS: SceneAssets = {
+  cityBackdrop: null,
+  skybox: null,
+  surfaces: new Map(),
+};
 
 /** Everything the game needs from a renderer. */
 export interface GameViewLike {

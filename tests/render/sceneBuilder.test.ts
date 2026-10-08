@@ -12,57 +12,151 @@ import * as THREE from 'three';
 import { buildScene } from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
 import { DEMO_ROOF } from '../../src/game/level/levelData.js';
+import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
+import { modelById } from '../../src/game/level/models.js';
+import { propBounds } from '../../src/game/level/level.js';
+import type { PropDefinition } from '../../src/game/level/levelData.js';
 
 function assetTextures(): SceneAssets {
   return {
     cityBackdrop: new THREE.Texture(),
-    skyGradient: new THREE.Texture(),
+    skybox: new THREE.CubeTexture(),
+    surfaces: new Map(surfaceTextureIds().map((id) => [id, new THREE.Texture()])),
   };
 }
 
+/** All the meshes a prop was resolved into. */
+function partsOf(built: ReturnType<typeof buildScene>, id: string): readonly THREE.Mesh[] {
+  const meshes = built.meshes.get(id);
+  expect(meshes, `expected meshes for ${id}`).toBeDefined();
+  return meshes ?? [];
+}
+
+/** The first part's mesh, which is the prop's main mass in every model. */
+function meshOf(built: ReturnType<typeof buildScene>, id: string): THREE.Mesh {
+  const [first] = partsOf(built, id);
+  expect(first, `expected a mesh for ${id}`).toBeDefined();
+  return first as THREE.Mesh;
+}
+
 describe('buildScene geometry', () => {
-  it('creates one mesh per prop, named after it', () => {
+  it('creates one mesh per model part, per prop', () => {
     const built = buildScene(DEMO_ROOF);
     try {
       expect(built.meshes.size).toBe(DEMO_ROOF.props.length);
+
+      // V0.2's whole point: props are models, so most of them are several meshes.
+      const multiPart = DEMO_ROOF.props.filter((prop) => partsOf(built, prop.id).length > 1);
+      expect(multiPart.length).toBeGreaterThan(DEMO_ROOF.props.length / 2);
+
       for (const prop of DEMO_ROOF.props) {
-        const mesh = built.meshes.get(prop.id);
-        expect(mesh, prop.id).toBeDefined();
-        expect(mesh?.name).toBe(prop.id);
-        expect(built.scene.getObjectByName(prop.id)).toBe(mesh);
+        for (const mesh of partsOf(built, prop.id)) {
+          expect(mesh.name.startsWith(`${prop.id}#`), mesh.name).toBe(true);
+          expect(built.scene.getObjectByName(mesh.name)).toBe(mesh);
+        }
       }
     } finally {
       built.dispose();
     }
   });
 
-  it('positions and scales each mesh from the level data', () => {
+  it('bakes each part into its own geometry, sized and positioned in world space', () => {
     const built = buildScene(DEMO_ROOF);
     try {
-      const duct = built.meshes.get('duct');
-      expect(duct?.position.x).toBeCloseTo(18, 9);
-      expect(duct?.position.y).toBeCloseTo(2, 9);
-      expect(duct?.scale.x).toBeCloseTo(1.2, 9);
-      expect(duct?.scale.y).toBeCloseTo(1.2, 9);
-      expect(duct?.scale.z).toBeCloseTo(8, 9);
+      // Parts are normalised against the prop's box, so a part's world size is
+      // its normalised extent times the prop's size.
+      const prop = DEMO_ROOF.props.find((entry) => entry.id === 'duct');
+      expect(prop).toBeDefined();
+      const model = modelById(prop?.model ?? '');
+      const first = model?.parts[0];
+      expect(first).toBeDefined();
+
+      const size = prop?.size ?? { x: 0, y: 0, z: 0 };
+      const trunk = meshOf(built, 'duct');
+      const parameters = (trunk.geometry as THREE.BoxGeometry).parameters;
+
+      expect(parameters.width).toBeCloseTo(((first?.max.x ?? 0) - (first?.min.x ?? 0)) * size.x, 6);
+      expect(parameters.height).toBeCloseTo(((first?.max.y ?? 0) - (first?.min.y ?? 0)) * size.y, 6);
+      expect(parameters.depth).toBeCloseTo(((first?.max.z ?? 0) - (first?.min.z ?? 0)) * size.z, 6);
+
+      // ...and the mesh is centred where that part lands in the world.
+      const origin = propBounds(prop as PropDefinition).min;
+      expect(trunk.position.x).toBeCloseTo(origin.x + (((first?.min.x ?? 0) + (first?.max.x ?? 0)) / 2) * size.x, 6);
+      expect(trunk.position.y).toBeCloseTo(origin.y + (((first?.min.y ?? 0) + (first?.max.y ?? 0)) / 2) * size.y, 6);
     } finally {
       built.dispose();
     }
   });
 
-  it('shares one geometry and caches materials by colour', () => {
+  it('gives each part its own geometry rather than sharing one unit cube', () => {
     const built = buildScene(DEMO_ROOF);
     try {
-      const geometries = new Set([...built.meshes.values()].map((mesh) => mesh.geometry));
-      expect(geometries.size).toBe(1);
+      const geometries = new Set(
+        [...built.meshes.values()].flatMap((list) => list.map((mesh) => mesh.geometry)),
+      );
+      const meshCount = [...built.meshes.values()].reduce((total, list) => total + list.length, 0);
+      expect(geometries.size).toBe(meshCount);
+    } finally {
+      built.dispose();
+    }
+  });
 
-      // The three AC units in the plant row share a colour, so they share a
-      // material; the differently-coloured ones do not.
-      const acA = built.meshes.get('ac-unit-a')?.material;
-      const acB = built.meshes.get('ac-unit-b')?.material;
-      const acC = built.meshes.get('ac-unit-c')?.material;
-      expect(acA).toBe(acC);
-      expect(acA).not.toBe(acB);
+  it('scales texture repeats in world space, so density does not depend on size', () => {
+    const built = buildScene(DEMO_ROOF, assetTextures());
+    try {
+      // The deck is far bigger than the pipe run, but both should show the same
+      // texels per metre, which means very different UV ranges.
+      const span = (mesh: THREE.Mesh): number => {
+        const uv = mesh.geometry.getAttribute('uv');
+        let min = Infinity;
+        let max = -Infinity;
+        for (let index = 0; index < uv.count; index += 1) {
+          min = Math.min(min, uv.getX(index));
+          max = Math.max(max, uv.getX(index));
+        }
+        return max - min;
+      };
+
+      const deck = span(meshOf(built, 'deck'));
+      const pipe = span(meshOf(built, 'pipe-run'));
+      expect(deck).toBeGreaterThan(pipe * 1.5);
+      expect(pipe).toBeGreaterThan(0);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('caches materials by surface and tint', () => {
+    const built = buildScene(DEMO_ROOF);
+    try {
+      // The three AC units in the plant row are identical, so they share all
+      // their materials; the recoloured fourth one does not.
+      const first = partsOf(built, 'ac-unit-a').map((mesh) => mesh.material);
+      const second = partsOf(built, 'ac-unit-c').map((mesh) => mesh.material);
+      const recoloured = partsOf(built, 'ac-unit-d').map((mesh) => mesh.material);
+
+      expect(first).toEqual(second);
+      expect(first[0]).not.toBe(recoloured[0]);
+
+      // Far fewer materials than meshes.
+      const materials = new Set(
+        [...built.meshes.values()].flatMap((list) => list.map((mesh) => mesh.material)),
+      );
+      const meshCount = [...built.meshes.values()].reduce((total, list) => total + list.length, 0);
+      expect(materials.size).toBeLessThan(meshCount / 4);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('applies the prop tints to the material colours', () => {
+    const built = buildScene(DEMO_ROOF);
+    try {
+      const tower = meshOf(built, 'tower-a');
+      const material = tower.material as THREE.MeshLambertMaterial;
+      const tint = DEMO_ROOF.props.find((entry) => entry.id === 'tower-a')?.tints?.concrete;
+      expect(tint).toBeDefined();
+      expect(material.color.getHexString()).toBe((tint ?? '').replace('#', ''));
     } finally {
       built.dispose();
     }
@@ -71,9 +165,9 @@ describe('buildScene geometry', () => {
   it('honours the per-prop shadow flags', () => {
     const built = buildScene(DEMO_ROOF);
     try {
-      expect(built.meshes.get('deck')?.receiveShadow).toBe(true);
+      expect(meshOf(built, 'deck').receiveShadow).toBe(true);
       // The background towers opt out of receiving shadows.
-      expect(built.meshes.get('tower-a')?.receiveShadow).toBe(false);
+      expect(meshOf(built, 'tower-a').receiveShadow).toBe(false);
     } finally {
       built.dispose();
     }
@@ -149,55 +243,25 @@ describe('buildScene lighting', () => {
 });
 
 describe('buildScene sky dome', () => {
-  it('builds an opaque gradient dome when a sky texture is available', () => {
+  it('uses the cube skybox as the scene background', () => {
     const assets = assetTextures();
     const built = buildScene(DEMO_ROOF, assets);
     try {
-      expect(built.sky).not.toBeNull();
-      const material = built.sky?.material as THREE.MeshBasicMaterial;
-
-      expect(material.map).toBe(assets.skyGradient);
-      expect(material.side).toBe(THREE.BackSide);
-      // The dome must ignore fog: it sits beyond the fog's far plane.
-      expect(material.fog).toBe(false);
-      expect(material.depthWrite).toBe(false);
-      // Drawn first, so everything else lands on top of it.
-      expect(built.sky?.renderOrder).toBe(-1);
-      expect(built.sky?.frustumCulled).toBe(false);
+      // A cube skybox needs no geometry at all, which is the upgrade from V0.1's
+      // gradient dome.
+      expect(built.scene.background).toBe(assets.skybox);
+      expect(built.scene.getObjectByName('sky')).toBeUndefined();
     } finally {
       built.dispose();
     }
   });
 
-  it('falls back to a flat colour when the gradient is missing', () => {
-    const built = buildScene(DEMO_ROOF, { cityBackdrop: null, skyGradient: null });
+  it('falls back to a flat colour when the skybox is missing', () => {
+    const built = buildScene(DEMO_ROOF, { cityBackdrop: null, skybox: null, surfaces: new Map() });
     try {
-      const material = built.sky?.material as THREE.MeshBasicMaterial;
-      expect(material.map).toBeNull();
-      expect(material.color.getHexString()).toBe(DEMO_ROOF.environment.skyColor.replace('#', ''));
-    } finally {
-      built.dispose();
-    }
-  });
-
-  it('sizes the dome to the environment radius', () => {
-    const built = buildScene(DEMO_ROOF);
-    try {
-      const geometry = built.sky?.geometry as THREE.SphereGeometry;
-      expect(geometry.parameters.radius).toBeCloseTo(DEMO_ROOF.environment.skyRadius, 9);
-    } finally {
-      built.dispose();
-    }
-  });
-
-  it('does not build a dome for a degenerate radius', () => {
-    const definitions = {
-      ...DEMO_ROOF,
-      environment: { ...DEMO_ROOF.environment, skyRadius: 0 },
-    };
-    const built = buildScene(definitions);
-    try {
-      expect(built.sky).toBeNull();
+      const background = built.scene.background as THREE.Color;
+      expect(background).toBeInstanceOf(THREE.Color);
+      expect(background.getHexString()).toBe(DEMO_ROOF.environment.skyColor.replace('#', ''));
     } finally {
       built.dispose();
     }
@@ -307,28 +371,25 @@ describe('buildScene disposal', () => {
 
   it('does not dispose the textures it borrowed', () => {
     // The view is rebuilt on every restart, so a texture disposed here would
-    // leave the next session with a black sky and no skyline. three.js signals
-    // disposal with an event, which is what the renderer listens for.
+    // leave the next session with a bare sky and untextured props. three.js
+    // signals disposal with an event, which is what the renderer listens for.
     const assets = assetTextures();
-    let backdropDisposed = false;
-    let skyDisposed = false;
-    assets.cityBackdrop?.addEventListener('dispose', () => {
-      backdropDisposed = true;
-    });
-    assets.skyGradient?.addEventListener('dispose', () => {
-      skyDisposed = true;
-    });
+    const disposed: string[] = [];
+    assets.cityBackdrop?.addEventListener('dispose', () => disposed.push('city'));
+    assets.skybox?.addEventListener('dispose', () => disposed.push('skybox'));
+    for (const [id, texture] of assets.surfaces) {
+      texture.addEventListener('dispose', () => disposed.push(id));
+    }
 
     const built = buildScene(DEMO_ROOF, assets);
     built.dispose();
 
-    expect(backdropDisposed).toBe(false);
-    expect(skyDisposed).toBe(false);
+    expect(disposed).toEqual([]);
   });
 
-  it('disposes the shared geometry and materials it created', () => {
+  it('disposes the geometry and materials it created', () => {
     const built = buildScene(DEMO_ROOF, assetTextures());
-    const mesh = built.meshes.get('deck') as THREE.Mesh;
+    const mesh = meshOf(built, 'deck');
     const geometryDispose = mesh.geometry.dispose.bind(mesh.geometry);
     const materialDispose = (mesh.material as THREE.Material).dispose.bind(mesh.material);
 

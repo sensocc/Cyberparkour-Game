@@ -23,8 +23,13 @@ import {
 /** Small separation left between the player and any surface it touches. */
 export const COLLISION_SKIN = 1e-3;
 
-/** Semantic tag for a collider, so later versions can react to surfaces. */
-export type ColliderKind = 'floor' | 'wall' | 'prop' | 'boundary';
+/**
+ * Semantic tag for a collider.
+ *
+ * `climbable` is what the climbing ability looks for: a face the player can
+ * ascend by holding forward into it.
+ */
+export type ColliderKind = 'floor' | 'wall' | 'prop' | 'boundary' | 'climbable';
 
 export interface Collider {
   readonly id: string;

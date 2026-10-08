@@ -34,9 +34,11 @@ const CONTROLS: readonly [string, string][] = [
   ['W A S D', 'Move'],
   ['Mouse', 'Look'],
   ['Shift', 'Sprint'],
-  ['Space', 'Jump'],
-  ['Ctrl / C', 'Crouch'],
+  ['Space', 'Jump / pull up'],
+  ['Ctrl / C', 'Crouch / slide'],
+  ['W into a ledge', 'Mantle'],
   ['F3', 'Toggle debug info'],
+  ['M', 'Mute'],
   ['Esc', 'Pause'],
   ['R', 'Restart'],
 ];
@@ -50,6 +52,8 @@ export class GameUi {
   private readonly crashScreen: HTMLElement;
   private readonly crosshair: HTMLElement;
   private readonly deathOverlay: HTMLElement;
+  private readonly damageFlash: HTMLElement;
+  private flashHandle: number | null = null;
   private readonly deathTitle: HTMLElement;
   private readonly deathDetail: HTMLElement;
   private readonly crashTitle: HTMLElement;
@@ -167,8 +171,14 @@ export class GameUi {
     this.deathOverlay.append(deathPanel);
     setHidden(this.deathOverlay, true);
 
+    // A brief red vignette on impact: without it fall damage is invisible, and
+    // the health bar proper is V0.3's UI work.
+    this.damageFlash = el('div', { className: 'damage-flash', attrs: { 'aria-hidden': 'true' } });
+    setHidden(this.damageFlash, true);
+
     this.root.append(
       this.crosshair,
+      this.damageFlash,
       this.deathOverlay,
       this.startScreen,
       this.pauseScreen,
@@ -224,6 +234,28 @@ export class GameUi {
 
   get isDeathVisible(): boolean {
     return !this.deathOverlay.hasAttribute('hidden');
+  }
+
+  /**
+   * Flashes the screen for a hard landing.
+   *
+   * The opacity scales with the damage, so a scrape and a near-fatal drop do not
+   * look the same.
+   */
+  flashDamage(damage: number, peak = 0.55): void {
+    const strength = Math.max(0.12, Math.min(1, damage / 60)) * peak;
+    this.damageFlash.style.setProperty('--damage-strength', String(strength));
+    setHidden(this.damageFlash, false);
+
+    if (this.flashHandle !== null) window.clearTimeout(this.flashHandle);
+    this.flashHandle = window.setTimeout(() => {
+      setHidden(this.damageFlash, true);
+      this.flashHandle = null;
+    }, 260);
+  }
+
+  get isDamageFlashVisible(): boolean {
+    return !this.damageFlash.hasAttribute('hidden');
   }
 
   showCrash(report: CrashReport): void {
@@ -292,6 +324,8 @@ export class GameUi {
   destroy(): void {
     if (this.toastHandle !== null) window.clearTimeout(this.toastHandle);
     this.toastHandle = null;
+    if (this.flashHandle !== null) window.clearTimeout(this.flashHandle);
+    this.flashHandle = null;
     this.root.replaceChildren();
   }
 

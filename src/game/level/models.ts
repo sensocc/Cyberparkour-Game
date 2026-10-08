@@ -1,0 +1,370 @@
+/**
+ * Simplistic roof models.
+ *
+ * V0.1's props were single boxes. V0.2 gives them *shape*: a model is a handful of
+ * axis-aligned parts, and the scene builder emits one mesh per part.
+ *
+ * Parts are expressed in **normalised** coordinates: `[0, 1]` across the prop's
+ * own bounding box, with `y` running from the prop's underside to its top. That
+ * one decision means any model can be fitted to any prop size, so the same
+ * `ac-unit` model works at 3 x 1.7 x 2.4 m and at any other size, and a `slab`
+ * works for a 48 m deck and a 0.6 m kerb. A part may exceed `[0, 1]`, which is
+ * how detail is added that deliberately sticks out past the collider (a duct's
+ * stiffener, a pipe's brackets).
+ *
+ * Collision stays the prop's box. The parts are surface detail - inset grilles,
+ * flush trim, overhanging lips - and a box collider is the right approximation
+ * for all of them; V0.6 is where collision gets better.
+ */
+
+import type { ReadonlyVec3 } from '../../core/vec3.js';
+
+export interface ModelPart {
+  /** Lower corner in normalised prop space, per axis. */
+  readonly min: ReadonlyVec3;
+  /** Upper corner in normalised prop space, per axis. */
+  readonly max: ReadonlyVec3;
+  /** Which surface material to texture this part with. */
+  readonly surface: string;
+  readonly castShadow?: boolean;
+  readonly receiveShadow?: boolean;
+}
+
+export interface ModelDefinition {
+  readonly id: string;
+  /** Human-facing note about which way the model is oriented. */
+  readonly note?: string;
+  readonly parts: readonly ModelPart[];
+}
+
+function part(
+  min: readonly [number, number, number],
+  max: readonly [number, number, number],
+  surface: string,
+  flags: { castShadow?: boolean; receiveShadow?: boolean } = {},
+): ModelPart {
+  return {
+    min: { x: min[0], y: min[1], z: min[2] },
+    max: { x: max[0], y: max[1], z: max[2] },
+    surface,
+    ...flags,
+  };
+}
+
+/** A band across the whole footprint, for trims and flanges. */
+function band(from: number, to: number, surface: string, overhang = 0): ModelPart {
+  return part([-overhang, from, -overhang], [1 + overhang, to, 1 + overhang], surface);
+}
+
+/** Four corner posts, for legs and frames. */
+function corners(surface: string, thickness: number, from: number, to: number): ModelPart[] {
+  const t = thickness;
+  return [
+    part([0, from, 0], [t, to, t], surface),
+    part([1 - t, from, 0], [1, to, t], surface),
+    part([0, from, 1 - t], [t, to, 1], surface),
+    part([1 - t, from, 1 - t], [1, to, 1], surface),
+  ];
+}
+
+// --------------------------------------------------------------- structural
+
+const slab: ModelDefinition = {
+  id: 'slab',
+  note: 'A plain Platform: catches everything from a roof deck to a kerb.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'concrete'),
+    band(0.9, 0.98, 'concrete-dark', 0.01),
+    band(0, 0.04, 'concrete-dark'),
+  ],
+};
+
+const deck: ModelDefinition = {
+  id: 'deck',
+  note: 'A walkable deck: tread plate with a hazard-striped lip.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'deck'),
+    band(0.86, 0.98, 'deck-dark', 0.006),
+    band(0, 0.03, 'deck-dark'),
+  ],
+};
+
+const crate: ModelDefinition = {
+  id: 'crate',
+  note: 'A shipping crate, banded and rusted.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'rust'),
+    band(0.84, 0.96, 'metal-dark', 0.012),
+    band(0.02, 0.1, 'metal-dark', 0.012),
+    part([0.46, 0.02, -0.006], [0.54, 0.84, 1.006], 'metal-dark'),
+    part([-0.006, 0.02, 0.46], [1.006, 0.84, 0.54], 'metal-dark'),
+  ],
+};
+
+const ledge: ModelDefinition = {
+  id: 'ledge',
+  note: 'A step or block, with a hazard-marked nosing so its edge reads.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'concrete'),
+    band(0.84, 1, 'hazard', 0.008),
+    band(0, 0.06, 'concrete-dark'),
+  ],
+};
+
+const supportPost: ModelDefinition = {
+  id: 'support-post',
+  note: 'A pair of legs with a cross beam, for carrying a duct or pipe.',
+  parts: [
+    part([0, 0, 0], [0.22, 1, 1], 'metal-dark'),
+    part([0.78, 0, 0], [1, 1, 1], 'metal-dark'),
+    band(0.82, 1, 'metal'),
+    part([0, 0.42, -0.02], [1, 0.52, 1.02], 'metal'),
+  ],
+};
+
+const block: ModelDefinition = {
+  id: 'block',
+  note: 'A low plinth or bulkhead.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'concrete-dark'),
+    band(0.88, 1, 'metal-dark', 0.01),
+    part([0.1, 0.3, 0.98], [0.9, 0.7, 1.01], 'metal'),
+  ],
+};
+
+// ------------------------------------------------------------------- plant
+
+const acUnit: ModelDefinition = {
+  id: 'ac-unit',
+  note: 'Faces +Z: the grille and fan are on that side.',
+  parts: [
+    part([0, 0.05, 0], [1, 0.95, 1], 'metal'),
+    band(0, 0.05, 'metal-dark'),
+    band(0.95, 1, 'metal-light', 0.008),
+    // Grille panel across the +Z face.
+    part([0.03, 0.14, 0.985], [0.97, 0.86, 1.01], 'grille'),
+    // Fan housing and hub inside it.
+    part([0.3, 0.24, 1.005], [0.7, 0.76, 1.02], 'metal-dark'),
+    part([0.45, 0.45, 1.015], [0.55, 0.55, 1.03], 'metal-light'),
+    // Service pipes rising from the top.
+    part([0.12, 0.95, 0.16], [0.22, 1.16, 0.26], 'rust'),
+    part([0.12, 0.95, 0.42], [0.22, 1.08, 0.52], 'rust'),
+  ],
+};
+
+const ventStack: ModelDefinition = {
+  id: 'vent-stack',
+  parts: [
+    band(0, 0.08, 'metal-dark', 0.1),
+    part([0.06, 0.06, 0.06], [0.94, 0.84, 0.94], 'metal'),
+    band(0.84, 0.94, 'metal-light', 0.05),
+    part([0.2, 0.94, 0.2], [0.8, 1, 0.8], 'metal-dark'),
+    band(0.28, 0.33, 'metal-light', 0.02),
+    band(0.6, 0.65, 'metal-light', 0.02),
+    part([0.4, 0.65, 0.4], [0.6, 0.84, 0.6], 'rust'),
+  ],
+};
+
+const duct: ModelDefinition = {
+  id: 'duct',
+  note: 'A raised trunk: passable underneath if the prop box clears the player.',
+  parts: [
+    band(0.02, 0.98, 'metal-light'),
+    part([-0.05, -0.05, 0.22], [1.05, 1.05, 0.28], 'metal'),
+    part([-0.05, -0.05, 0.68], [1.05, 1.05, 0.74], 'metal'),
+    band(0.98, 1.04, 'metal-dark'),
+  ],
+};
+
+const pipeRun: ModelDefinition = {
+  id: 'pipe-run',
+  note: 'Runs along Z: the prop should be longest on that axis.',
+  parts: [
+    part([0.26, 0.26, 0], [0.74, 0.74, 1], 'rust'),
+    part([0.2, 0.2, 0.24], [0.8, 0.8, 0.3], 'metal-dark'),
+    part([0.2, 0.2, 0.62], [0.8, 0.8, 0.68], 'metal-dark'),
+    part([0.2, 0.2, 0.94], [0.8, 0.8, 0.99], 'metal-dark'),
+    part([0, 0, 0.12], [1, 0.3, 0.2], 'metal-dark'),
+    part([0, 0, 0.74], [1, 0.3, 0.82], 'metal-dark'),
+  ],
+};
+
+const pipeVertical: ModelDefinition = {
+  id: 'pipe-vertical',
+  note: 'A climbable riser: brackets all the way up.',
+  parts: [
+    part([0.3, 0.04, 0.3], [0.7, 1, 0.7], 'rust'),
+    part([0.24, 0, 0.24], [0.76, 0.06, 0.76], 'metal-dark'),
+    part([0.22, 0.3, 0.22], [0.78, 0.36, 0.78], 'metal-dark'),
+    part([0.22, 0.63, 0.22], [0.78, 0.69, 0.78], 'metal-dark'),
+    part([0.22, 0.96, 0.22], [0.78, 1, 0.78], 'metal-dark'),
+    // A single rung ladder on the -X face, to read as climbable.
+    part([-0.03, 0.08, 0.36], [-0.01, 0.98, 0.44], 'metal-light'),
+    part([-0.03, 0.08, 0.56], [-0.01, 0.98, 0.64], 'metal-light'),
+    part([-0.03, 0.2, 0.34], [-0.01, 0.26, 0.66], 'metal-light'),
+    part([-0.03, 0.5, 0.34], [-0.01, 0.56, 0.66], 'metal-light'),
+    part([-0.03, 0.8, 0.34], [-0.01, 0.86, 0.66], 'metal-light'),
+  ],
+};
+
+const stairBulkhead: ModelDefinition = {
+  id: 'stair-bulkhead',
+  note: 'Roof access: walls with a door on the +Z face and vents on the roof.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'concrete'),
+    band(0.93, 1, 'concrete-dark', 0.02),
+    band(0, 0.07, 'concrete-dark', 0.01),
+    part([0.36, 0.02, 0.985], [0.64, 0.68, 1.005], 'metal-dark'),
+    part([0.33, 0.02, 0.99], [0.67, 0.72, 1.012], 'metal'),
+    part([0.34, 0.3, 1.006], [0.66, 0.34, 1.016], 'metal-light'),
+    part([-0.04, 0, 0.93], [1.04, 0.09, 1.06], 'concrete-dark'),
+    part([0.12, 1, 0.16], [0.3, 1.1, 0.34], 'metal'),
+    part([0.66, 1, 0.62], [0.84, 1.1, 0.8], 'metal'),
+  ],
+};
+
+const antennaMast: ModelDefinition = {
+  id: 'antenna-mast',
+  note: 'A climbable mast with cross-arms and a dish.',
+  parts: [
+    band(0, 0.04, 'metal-dark', 0.25),
+    band(0, 0.1, 'concrete-dark', 0.2),
+    part([0.4, 0.1, 0.4], [0.6, 1, 0.6], 'metal-light'),
+    part([-0.5, 0.62, 0.44], [1.5, 0.66, 0.56], 'metal-dark'),
+    part([-0.3, 0.8, 0.44], [1.3, 0.84, 0.56], 'metal-dark'),
+    part([-0.15, 0.86, 0.3], [0.4, 0.96, 0.7], 'metal'),
+    part([0.42, 1, 0.42], [0.58, 1.05, 0.58], 'hazard'),
+  ],
+};
+
+const satelliteDish: ModelDefinition = {
+  id: 'satellite-dish',
+  parts: [
+    band(0, 0.06, 'metal-dark', 0.3),
+    part([0.44, 0.06, 0.44], [0.56, 0.55, 0.56], 'metal-light'),
+    part([-0.2, 0.5, 0.16], [1.2, 1, 0.66], 'metal'),
+    part([0.36, 0.62, 0.1], [0.64, 0.74, 0.22], 'metal-dark'),
+    part([-0.2, 0.5, 0.58], [1.2, 0.56, 0.62], 'metal-dark'),
+  ],
+};
+
+const junctionBox: ModelDefinition = {
+  id: 'junction-box',
+  parts: [
+    part([0, 0, 0], [1, 0.74, 1], 'metal-dark'),
+    band(0.74, 0.82, 'metal', 0.02),
+    part([0.28, 0.82, 0.32], [0.72, 1, 0.68], 'rust'),
+    part([0.1, 0.2, 0.985], [0.9, 0.6, 1.01], 'hazard'),
+  ],
+};
+
+const waterTank: ModelDefinition = {
+  id: 'water-tank',
+  parts: [
+    ...corners('metal-dark', 0.14, 0, 0.3),
+    part([0.02, 0.28, 0.02], [0.98, 0.88, 0.98], 'metal-warm'),
+    band(0.88, 0.96, 'metal-light', 0.03),
+    part([0.36, 0.96, 0.36], [0.64, 1, 0.64], 'metal-dark'),
+    band(0.42, 0.47, 'metal-light', 0.015),
+    band(0.62, 0.67, 'metal-light', 0.015),
+  ],
+};
+
+const cableSpool: ModelDefinition = {
+  id: 'cable-spool',
+  parts: [
+    band(0.02, 0.12, 'metal-warm', 0.04),
+    band(0.86, 0.96, 'metal-warm', 0.04),
+    part([0.26, 0.12, 0.26], [0.74, 0.86, 0.74], 'rust'),
+    part([0.44, 0.02, 0.44], [0.56, 0.12, 0.56], 'metal-dark'),
+  ],
+};
+
+const skylight: ModelDefinition = {
+  id: 'skylight',
+  parts: [
+    band(0, 0.34, 'concrete-dark'),
+    part([0.06, 0.34, 0.06], [0.94, 0.96, 0.94], 'glass'),
+    part([0.44, 0.34, 0.44], [0.56, 1, 0.56], 'metal-dark'),
+    part([0.06, 0.96, 0.06], [0.94, 1, 0.94], 'metal'),
+    part([0.02, 0.34, 0.02], [0.06, 0.44, 0.06], 'metal'),
+    part([0.94, 0.34, 0.94], [0.98, 0.44, 0.98], 'metal'),
+  ],
+};
+
+const barrier: ModelDefinition = {
+  id: 'barrier',
+  parts: [
+    part([0, 0, 0.34], [1, 0.2, 0.66], 'concrete-dark'),
+    part([0.04, 0.2, 0.02], [1, 1, 0.98], 'hazard'),
+    band(0.86, 0.94, 'metal-dark', 0.02),
+  ],
+};
+
+const MODELS: readonly ModelDefinition[] = [
+  slab,
+  deck,
+  crate,
+  ledge,
+  block,
+  supportPost,
+  acUnit,
+  ventStack,
+  duct,
+  pipeRun,
+  pipeVertical,
+  stairBulkhead,
+  antennaMast,
+  satelliteDish,
+  junctionBox,
+  waterTank,
+  cableSpool,
+  skylight,
+  barrier,
+];
+
+const BY_ID = new Map(MODELS.map((model) => [model.id, model]));
+
+export function modelById(id: string): ModelDefinition | undefined {
+  return BY_ID.get(id);
+}
+
+export function modelIds(): string[] {
+  return MODELS.map((model) => model.id).sort();
+}
+
+export interface ResolvedPart {
+  readonly min: ReadonlyVec3;
+  readonly max: ReadonlyVec3;
+  readonly surface: string;
+  readonly castShadow: boolean;
+  readonly receiveShadow: boolean;
+}
+
+/**
+ * Fits a model into a prop's world-space box.
+ *
+ * Every part coordinate is normalised against the prop's bounds, so the same
+ * model works at any scale.
+ */
+export function resolveModelParts(
+  model: ModelDefinition,
+  origin: ReadonlyVec3,
+  size: ReadonlyVec3,
+): ResolvedPart[] {
+  return model.parts.map((entry) => ({
+    min: {
+      x: origin.x + entry.min.x * size.x,
+      y: origin.y + entry.min.y * size.y,
+      z: origin.z + entry.min.z * size.z,
+    },
+    max: {
+      x: origin.x + entry.max.x * size.x,
+      y: origin.y + entry.max.y * size.y,
+      z: origin.z + entry.max.z * size.z,
+    },
+    surface: entry.surface,
+    castShadow: entry.castShadow ?? true,
+    receiveShadow: entry.receiveShadow ?? true,
+  }));
+}

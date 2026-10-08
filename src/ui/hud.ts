@@ -9,7 +9,7 @@
  */
 
 import type { ReadonlyVec3 } from '../core/vec3.js';
-import type { Stance } from '../game/player.js';
+import type { Locomotion, Stance } from '../game/player.js';
 import { el, formatNumber, formatVector } from './dom.js';
 
 export interface HudSnapshot {
@@ -24,10 +24,15 @@ export interface HudSnapshot {
   readonly grounded: boolean;
   readonly groundId: string | null;
   readonly stance: Stance;
+  /** What the player is doing: grounded, hanging, sliding, ... */
+  readonly locomotion: Locomotion;
   /** Whether the sprint key is held right now. */
   readonly sprinting: boolean;
   readonly alive: boolean;
   readonly deaths: number;
+  /** Remaining health, or `null` when it is irrelevant (dead, or not tracking). */
+  readonly health: number;
+  readonly maxHealth: number;
   readonly frameCount: number;
   readonly elapsedSeconds: number;
   readonly renderer: string | null;
@@ -41,8 +46,8 @@ export interface HudRow {
 /**
  * Names the current way of moving.
  *
- * `crouch` and `sprint` are the V0.1 additions, and being able to read them off
- * the HUD is how you confirm they are doing anything.
+ * Being able to read the gait and the locomotion off the HUD is how you confirm
+ * the movement abilities are doing anything at all.
  */
 export function describeGait(stance: Stance, sprinting: boolean, horizontalSpeed: number): string {
   if (stance === 'crouched') return 'crouch';
@@ -50,10 +55,39 @@ export function describeGait(stance: Stance, sprinting: boolean, horizontalSpeed
   return sprinting ? 'sprint' : 'walk';
 }
 
-function describeState(snapshot: HudSnapshot): string {
-  if (!snapshot.alive) return 'FALLEN';
-  if (!snapshot.grounded) return 'airborne';
-  return snapshot.groundId ? `grounded (${snapshot.groundId})` : 'grounded';
+/** The locomotion mode, spelled out for the HUD. */
+export function describeLocomotion(snapshot: HudSnapshot): string {
+  if (!snapshot.alive) return 'DEAD';
+  switch (snapshot.locomotion) {
+    case 'mantling':
+      return 'MANTLING';
+    case 'pulling-up':
+      return 'PULL-UP';
+    case 'hanging':
+      return 'HANGING';
+    case 'climbing':
+      return 'CLIMBING';
+    case 'sliding':
+      return 'SLIDING';
+    case 'airborne':
+      return 'airborne';
+    case 'grounded':
+      return snapshot.groundId ? `grounded (${snapshot.groundId})` : 'grounded';
+    case 'dead':
+      return 'DEAD';
+  }
+}
+
+/**
+ * Health as a bar, so fall damage is legible at a glance.
+ *
+ * The health *bar* is V0.3's UI work; this is the minimum needed to make fall
+ * damage observable.
+ */
+export function describeHealth(health: number, maxHealth: number): string {
+  if (!(maxHealth > 0)) return 'n/a';
+  const filled = Math.round(Math.max(0, Math.min(1, health / maxHealth)) * 10);
+  return `${'#'.repeat(filled)}${'.'.repeat(10 - filled)} ${Math.round(health)}`;
 }
 
 /** Builds the HUD's display rows. Pure and unit-tested. */
@@ -69,8 +103,9 @@ export function formatHudRows(snapshot: HudSnapshot): HudRow[] {
     { label: 'vel', value: formatVector(snapshot.velocity) },
     { label: 'speed', value: `${formatNumber(snapshot.speed, 2)} m/s` },
     { label: 'gait', value: describeGait(snapshot.stance, snapshot.sprinting, horizontalSpeed) },
+    { label: 'health', value: describeHealth(snapshot.health, snapshot.maxHealth) },
     { label: 'look', value: `yaw ${yawDegrees}\u00b0  pitch ${pitchDegrees}\u00b0` },
-    { label: 'state', value: describeState(snapshot) },
+    { label: 'state', value: describeLocomotion(snapshot) },
     { label: 'deaths', value: String(snapshot.deaths) },
     { label: 'frames', value: `${snapshot.frameCount} in ${formatNumber(snapshot.elapsedSeconds, 1)} s` },
     { label: 'gpu', value: snapshot.renderer ?? 'unknown' },
@@ -144,9 +179,12 @@ const EMPTY_SNAPSHOT: HudSnapshot = {
   grounded: false,
   groundId: null,
   stance: 'standing',
+  locomotion: 'grounded',
   sprinting: false,
   alive: true,
   deaths: 0,
+  health: 100,
+  maxHealth: 100,
   frameCount: 0,
   elapsedSeconds: 0,
   renderer: null,
