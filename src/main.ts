@@ -28,6 +28,7 @@ import {
   MemoryCrashSink,
   StorageCrashSink,
   resolveStore,
+  type KeyValueStore,
 } from './diagnostics/crashSinks.js';
 import { createAudio, type AudioOutput } from './audio/engine.js';
 import { Game } from './game/game.js';
@@ -62,6 +63,8 @@ interface Shell {
   readonly gameHud: GameHud;
   readonly ui: GameUi;
   readonly reporter: CrashReporter;
+  /** Where the best time is kept. Shared with the crash reporter's storage. */
+  readonly store: KeyValueStore;
   /** Assigned once the game exists; the UI callbacks read it lazily. */
   readonly holder: { game: Game | null };
 }
@@ -176,7 +179,7 @@ function createShell(): Shell {
 
   ui.showStart();
 
-  return { app, canvasHost, input, hud, gameHud, ui, reporter, holder };
+  return { app, canvasHost, input, hud, gameHud, ui, reporter, store, holder };
 }
 
 /** Loads the flat textures, degrading to flat colours rather than failing. */
@@ -204,6 +207,7 @@ function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
     logBuffer: logger,
     config: DEFAULT_CONFIG,
     level: DEMO_DISTRICT,
+    store: shell.store,
     audio: createAudioBackend(),
     createView: (canvas, definition, config) =>
       new GameView({ canvas, definition, config, assets }),

@@ -333,6 +333,43 @@ const doorPanel: ModelDefinition = {
   ],
 };
 
+// --------------------------------------------------- V0.5: lighting and lifts
+
+const neonStrip: ModelDefinition = {
+  id: 'neon-strip',
+  note: 'A neon tube on a slim housing: lit all round, so it works flat or on a wall.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'neon'),
+    // A dark base, so the tube reads as mounted on something rather than floating.
+    part([0, 0, 0], [1, 0.18, 1], 'metal-dark'),
+  ],
+};
+
+const liftPlatform: ModelDefinition = {
+  id: 'lift-platform',
+  note: 'A lift car: a hazard-edged deck over a machinery box.',
+  parts: [
+    part([0, 0, 0], [1, 0.34, 1], 'metal-dark'),
+    band(0, 0.05, 'hazard', 0.008),
+    // The walking surface, inset so the hazard lip frames it.
+    part([0.035, 0.34, 0.035], [0.965, 0.88, 0.965], 'deck'),
+    band(0.88, 1, 'hazard', 0.02),
+    // Under-slung rails, so the car reads as hanging in its shaft.
+    part([0.1, -0.06, 0.42], [0.9, 0.04, 0.58], 'metal'),
+    part([0.42, -0.06, 0.1], [0.58, 0.04, 0.9], 'metal'),
+  ],
+};
+
+const dataShard: ModelDefinition = {
+  id: 'data-shard',
+  note: 'A pickup: a lit core between two dark caps. Spins in the scene.',
+  parts: [
+    part([0.24, 0.24, 0.24], [0.76, 0.76, 0.76], 'neon'),
+    part([0.36, 0.06, 0.36], [0.64, 0.3, 0.64], 'metal-dark'),
+    part([0.36, 0.7, 0.36], [0.64, 0.94, 0.64], 'metal-dark'),
+  ],
+};
+
 const MODELS: readonly ModelDefinition[] = [
   slab,
   deck,
@@ -355,6 +392,9 @@ const MODELS: readonly ModelDefinition[] = [
   barrier,
   neonSign,
   doorPanel,
+  neonStrip,
+  liftPlatform,
+  dataShard,
 ];
 
 const BY_ID = new Map(MODELS.map((model) => [model.id, model]));

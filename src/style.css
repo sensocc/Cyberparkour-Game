@@ -228,6 +228,72 @@ body {
   word-break: break-word;
 }
 
+.screen__heading--good {
+  color: #7dffd7;
+  text-shadow: 0 0 14px rgba(79, 240, 200, 0.45);
+}
+
+/* ------------------------------------------------- results of a finished run */
+
+.complete__time {
+  margin: 4px 0 0;
+  font-size: 44px;
+  line-height: 1.1;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  color: #eaf6ff;
+  text-shadow: 0 0 22px rgba(88, 222, 255, 0.35);
+}
+
+.complete__best {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.complete__best[data-improved='true'] {
+  color: #ffd479;
+  text-shadow: 0 0 12px rgba(255, 212, 121, 0.45);
+}
+
+.complete__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.complete__metaRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  min-width: 220px;
+}
+
+.complete__metaLabel {
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.complete__metaValue {
+  font-variant-numeric: tabular-nums;
+}
+
+.complete__splits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
 /* --------------------------------------------------------------- buttons --- */
 
 .btn {
@@ -557,4 +623,40 @@ body {
 .vitals__pip--reached {
   background: var(--accent);
   box-shadow: 0 0 6px rgba(88, 222, 255, 0.6);
+}
+
+/* ------------------------------------------------- play HUD: the time trial */
+
+/*
+ * The clock and the pickup count. The clock is stopped until the run starts and
+ * goes gold once the finish is armed, so "which of these two numbers matters
+ * right now" is legible without reading either of them.
+ */
+.vitals__trial {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.vitals__time {
+  min-width: 82px;
+  font-variant-numeric: tabular-nums;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  color: rgba(207, 230, 245, 0.45);
+  transition: color 160ms linear;
+}
+
+.vitals[data-running='true'] .vitals__time {
+  color: #eaf6ff;
+}
+
+.vitals[data-armed='true'] .vitals__time {
+  color: #7dffd7;
+  text-shadow: 0 0 10px rgba(79, 240, 200, 0.55);
+}
+
+.vitals__pickups {
+  color: #cfe6f5;
+  font-variant-numeric: tabular-nums;
 }

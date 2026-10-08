@@ -108,6 +108,73 @@ export interface DoorDefinition {
   readonly open?: boolean;
 }
 
+/**
+ * A lift: a platform that travels between two heights, carrying whoever is
+ * standing on it.
+ *
+ * Defined by the two *top surface* heights rather than by a position, because
+ * that is what matters: a lift's job is to arrive flush with the floor at each
+ * end, so the numbers a level author cares about are the two floors.
+ */
+export interface ElevatorDefinition {
+  readonly id: string;
+  /** Centre of the platform on X/Z. */
+  readonly at: readonly [number, number];
+  /** Footprint of the platform (X by Z). */
+  readonly size: readonly [number, number];
+  /** Thickness of the platform (m). The mesh and the collider must agree. */
+  readonly thickness: number;
+  /** Y of the platform's top surface at the bottom of its travel. */
+  readonly lowTop: number;
+  /** Y of the platform's top surface at the top of its travel. */
+  readonly highTop: number;
+  /** Where it starts, and therefore where the phase is measured from. */
+  readonly start?: 'low' | 'high';
+  /** Seconds of offset into its cycle, so a bank of lifts is not in lockstep. */
+  readonly phase?: number;
+}
+
+/** A pickup: a thing to collect on the way, and part of the run's score. */
+export interface CollectibleDefinition {
+  readonly id: string;
+  readonly position: ReadonlyVec3;
+}
+
+/**
+ * The finishing line.
+ *
+ * It is only *armed* once the route has been completed - see `RunState` - so a
+ * level cannot be finished by standing on the goal at the start.
+ */
+export interface GoalDefinition {
+  readonly id: string;
+  readonly position: ReadonlyVec3;
+}
+
+/**
+ * A drifting plume of smoke, drawn as camera-facing sprites.
+ *
+ * Purely visual, so it lives entirely in the renderer; the level only says where
+ * the plumes are and how they behave.
+ */
+export interface SmokeDefinition {
+  readonly id: string;
+  /** Centre of the plume's base. */
+  readonly position: ReadonlyVec3;
+  /** Radius of the plume (m). */
+  readonly radius: number;
+  /** How high the plume climbs before it fades (m). */
+  readonly rise: number;
+  /** How far it wanders sideways (m). */
+  readonly drift: number;
+  /** Seconds for one puff to complete its climb. */
+  readonly period: number;
+  /** How opaque the plume is at its thickest, 0 to 1. */
+  readonly opacity: number;
+  /** How many sprites make up the plume. */
+  readonly count: number;
+}
+
 export interface BackdropDefinition {
   /** Radius of the cylinder the city skyline is painted on. */
   readonly radius: number;
@@ -152,6 +219,14 @@ export interface LevelDefinition {
   readonly doors?: readonly DoorDefinition[];
   /** Point lights placed in the level. Absent means none. */
   readonly lights?: readonly LightDefinition[];
+  /** Lifts. Absent means a level with none. */
+  readonly elevators?: readonly ElevatorDefinition[];
+  /** Pickups along the route. */
+  readonly collectibles?: readonly CollectibleDefinition[];
+  /** The finishing line. Absent means the level cannot be completed. */
+  readonly goal?: GoalDefinition;
+  /** Smoke plumes. Visual only. */
+  readonly smoke?: readonly SmokeDefinition[];
 }
 
 // ---------------------------------------------------------------- authoring
@@ -228,6 +303,25 @@ function steps(
 /** A checkpoint, with its id derived from its name. */
 function checkpoint(id: string, at: readonly [number, number, number], yaw?: number): CheckpointDefinition {
   return { id: `checkpoint-${id}`, position: { x: at[0], y: at[1], z: at[2] }, ...(yaw === undefined ? {} : { yaw }) };
+}
+
+/**
+ * A lift, as a level author thinks of one: two floors and a footprint.
+ *
+ * The thickness is the one number that is not about the *idea* of the lift - it
+ * is how deep the platform is - so it is filled in here rather than repeated at
+ * every call site, and the mesh and the collider are guaranteed to agree.
+ */
+function lift(spec: {
+  readonly id: string;
+  readonly at: readonly [number, number];
+  readonly size: readonly [number, number];
+  readonly lowTop: number;
+  readonly highTop: number;
+  readonly start?: 'low' | 'high';
+  readonly phase?: number;
+}): ElevatorDefinition {
+  return { ...spec, thickness: 0.6 };
 }
 
 /**
@@ -444,9 +538,13 @@ export const DEMO_DISTRICT: LevelDefinition = {
   killPlaneY: -12,
   environment: {
     skyColor: '#0b1020',
-    fogColor: '#2b2a4a',
-    fogNear: 110,
-    fogFar: 620,
+    // The fog colour is picked to match the sky's horizon glow rather than to be a
+    // neutral grey: the skyline is painted on a cylinder 240 m out, and it has to
+    // dissolve into the haze rather than into a line. V0.5 pulls the far plane in
+    // and warms the colour, so the district has depth instead of just distance.
+    fogColor: '#3d3355',
+    fogNear: 90,
+    fogFar: 480,
     ambientSkyColor: '#8399c9',
     ambientGroundColor: '#131a26',
     ambientIntensity: 0.95,
@@ -462,11 +560,13 @@ export const DEMO_DISTRICT: LevelDefinition = {
   },
   checkpoints: [
     // In route order, which is the order a player naturally meets them: the annex
-    // is the first gap to cross, then the chain runs east.
+    // is the first gap to cross, then the chain runs east, then down into the
+    // works and back along it. The last one arms the finish.
     checkpoint('annex', [6, 2, -21]),
     checkpoint('east', [24, 1.2, 0]),
     checkpoint('high', [53, 3.6, 0]),
     checkpoint('far', [87, 1.2, -6]),
+    checkpoint('works', [22, -4.8, 24]),
   ],
   props: [
     // -------------------------------------------------------------- structure
@@ -593,6 +693,67 @@ export const DEMO_DISTRICT: LevelDefinition = {
     box('crate-far-inner', { at: [95.6, -1.4], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
     sign({ id: 'sign-far-room', at: [94, 2.8, -5.35], size: [3, 1], tint: '#ffc247' }),
 
+    // ---------------------------------------------------- V0.5: the works
+    // A second level of the district: the service side, six metres below the
+    // roofs and south of them. It is what the rooftop route *came from* - the
+    // plant, the ducts, the stuff that keeps the buildings alive - and it is
+    // reached by a lift down from `far` and left by a lift back up to `home`, so
+    // the district closes into a loop rather than running out at one end.
+    //
+    // The four roofs are the same 4 m apart as the east-west spine, but their
+    // heights wander by a metre or so: not enough to be an obstacle, enough that
+    // the run has a rhythm.
+    ...roof({ id: 'works-1', at: [95, 24], size: [20, 16], top: -5, bodyTint: '#3a4454', bodyTintDark: '#2e3642' }),
+    ...roof({ id: 'works-2', at: [71, 24], size: [20, 16], top: -4.2, bodyTint: '#3d4756', bodyTintDark: '#303845' }),
+    ...roof({ id: 'works-3', at: [47, 24], size: [20, 16], top: -5.6, bodyTint: '#37414f', bodyTintDark: '#2b323d' }),
+    ...roof({ id: 'works-4', at: [22, 24], size: [22, 16], top: -4.8, bodyTint: '#3b4553', bodyTintDark: '#2f3743' }),
+
+    // Plant on works-1, so the roof you land on is clearly a working one.
+    box('duct-works-1', { at: [95, 22.5], bottom: -3.6, size: [1.4, 1.4, 12], model: 'duct' }),
+    box('duct-works-1-support-n', { at: [95, 16.8], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5 }),
+    box('duct-works-1-support-s', { at: [95, 28.2], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5 }),
+    box('vent-stack-works-1', { at: [89, 30], size: [1.8, 3, 1.8], model: 'vent-stack', bottom: -5, climbable: true }),
+    box('pipe-works-1', { at: [102, 28], bottom: -5, size: [0.5, 4.2, 0.5], model: 'pipe-vertical', pipe: true }),
+    box('barrier-works-1', { at: [90, 18], size: [0.5, 1.1, 5], model: 'barrier', bottom: -5 }),
+    box('crate-works-1-a', { at: [100, 30], size: [1.4, 1.4, 1.4], model: 'crate', bottom: -5 }),
+    box('crate-works-1-b', { at: [101.7, 30.8], size: [1.4, 1.4, 1.4], model: 'crate', bottom: -5 }),
+
+    // Works-2 carries the big plant: a water tank, a cable run and a rail.
+    box('tank-works-2', { at: [66, 29], size: [3.2, 3.4, 3.2], model: 'water-tank', bottom: -4.2 }),
+    box('pipe-run-works-2', { at: [78, 27], bottom: -4.2, size: [0.6, 0.6, 10], model: 'pipe-run' }),
+    box('vent-stack-works-2', { at: [78, 29], size: [1.8, 3.2, 1.8], model: 'vent-stack', bottom: -4.2, climbable: true }),
+    box('barrier-works-2', { at: [66, 18], size: [0.5, 1.1, 5], model: 'barrier', bottom: -4.2 }),
+    box('cable-spool-works-2', { at: [63, 22], size: [2, 2, 2], model: 'cable-spool', bottom: -4.2 }),
+
+    // Works-3 is the low point, with a gantry duct and a climbable riser.
+    box('duct-works-3', { at: [47, 24], bottom: -4.2, size: [1.4, 1.4, 12], model: 'duct' }),
+    box('duct-works-3-support-n', { at: [47, 18.3], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5.6 }),
+    box('duct-works-3-support-s', { at: [47, 29.7], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5.6 }),
+    box('riser-works-3', { at: [55, 30], bottom: -5.6, size: [0.7, 5, 0.7], model: 'pipe-vertical', pipe: true }),
+    box('junction-works-3', { at: [42, 19], size: [1.6, 1.8, 1.6], model: 'junction-box', bottom: -5.6 }),
+    box('crate-works-3', { at: [49, 19], size: [1.4, 1.4, 1.4], model: 'crate', bottom: -5.6 }),
+
+    // Works-4 is the way out: the lift up to `home` is at its north edge.
+    box('tank-works-4', { at: [28, 29], size: [3.2, 3.4, 3.2], model: 'water-tank', bottom: -4.8 }),
+    box('ac-unit-works-4', { at: [14, 20], size: [3.2, 1.7, 2.4], model: 'ac-unit', bottom: -4.8 }),
+    box('barrier-works-4', { at: [20, 19], size: [0.5, 1.1, 5], model: 'barrier', bottom: -4.8 }),
+    box('crate-works-4', { at: [25, 20], size: [1.4, 1.4, 1.4], model: 'crate', bottom: -4.8 }),
+
+    // ---------------------------------------------------- V0.5: neon signage
+    // Lit bands across the canyon facade, read from both roofs on either side of
+    // the gap, and along the machine rooms. `neon-strip` glows on +Z, so each is
+    // mounted on a wall that faces the district rather than lying flat.
+    box('strip-canyon-low', { at: [78, -11.07], bottom: 3.2, size: [11, 0.4, 0.25], model: 'neon-strip', tints: { neon: '#57e0ff' } }),
+    box('strip-canyon-mid', { at: [78, -11.07], bottom: 6.4, size: [11, 0.4, 0.25], model: 'neon-strip', tints: { neon: '#ff4fd8' } }),
+    box('strip-canyon-high', { at: [78, -11.07], bottom: 9.6, size: [11, 0.4, 0.25], model: 'neon-strip', tints: { neon: '#ffc247' } }),
+    box('strip-east-room', { at: [36, 1.83], bottom: 3.9, size: [6.6, 0.35, 0.25], model: 'neon-strip', tints: { neon: '#ff4fd8' } }),
+    box('strip-works-1', { at: [95, 31.4], bottom: -5, size: [18, 0.4, 0.5], model: 'neon-strip', tints: { neon: '#57e0ff' } }),
+    // Big signs on the towers *north* of the district, because a sign glows out of
+    // its front face: only a facade facing back towards the roofs will read.
+    sign({ id: 'sign-tower-a', at: [-58, 8, -41.87], size: [6, 2.2], tint: '#ff4fd8' }),
+    sign({ id: 'sign-tower-b', at: [124, 6, -47.87], size: [5.5, 2], tint: '#57e0ff' }),
+    sign({ id: 'sign-tower-e', at: [40, 5, -70.87], size: [6, 2.2], tint: '#ffc247' }),
+
     // ---------------------------------------------------- background massing
     box('tower-a', {
       at: [-58, -52],
@@ -636,6 +797,37 @@ export const DEMO_DISTRICT: LevelDefinition = {
     }),
   ],
   doors: [EAST_ROOM.door, FAR_ROOM.door],
+  elevators: [
+    // The two lifts are what turn the district into a loop. One drops you from the
+    // roof route into the works, the other brings you back up to `home`; both
+    // arrive flush with the floor at each end, and both start at the end the
+    // player meets first.
+    lift({ id: 'lift-down', at: [95, 13.5], size: [8, 5], lowTop: -5, highTop: 1.2, start: 'high' }),
+    lift({ id: 'lift-up', at: [14, 14], size: [8, 4], lowTop: -4.8, highTop: 0, start: 'low' }),
+  ],
+  collectibles: [
+    // Eight shards, spread so that taking them all means using the district
+    // rather than just crossing it: two need the climbable routes, one needs the
+    // pipe, one sits over the canyon beam, and three are out on the works.
+    { id: 'shard-penthouse', position: { x: -6.5, y: 4.6, z: -8 } },
+    { id: 'shard-room-east', position: { x: 36, y: 5.5, z: -1 } },
+    { id: 'shard-tank-high', position: { x: 56, y: 7.6, z: 4 } },
+    { id: 'shard-canyon', position: { x: 78, y: 3.6, z: 4 } },
+    { id: 'shard-room-far', position: { x: 94, y: 5.2, z: -3 } },
+    { id: 'shard-works-1', position: { x: 95, y: -4.2, z: 24 } },
+    { id: 'shard-works-2', position: { x: 71, y: -3.4, z: 24 } },
+    { id: 'shard-works-3', position: { x: 47, y: -4.8, z: 24 } },
+  ],
+  goal: { id: 'goal', position: { x: -8, y: 0, z: -2 } },
+  smoke: [
+    // Plumes rising off the plant, and one in the canyon where the towers' vent
+    // stack is. Drifting, never still: a still plume reads as a texture.
+    { id: 'smoke-home', position: { x: 10, y: 0, z: 9 }, radius: 2.6, rise: 7, drift: 2, period: 7, opacity: 0.34, count: 6 },
+    { id: 'smoke-high', position: { x: 61, y: 3.6, z: -6 }, radius: 3, rise: 9, drift: 2.6, period: 8.5, opacity: 0.4, count: 8 },
+    { id: 'smoke-works-2', position: { x: 66, y: -4.2, z: 29 }, radius: 4, rise: 13, drift: 3.4, period: 10, opacity: 0.5, count: 10 },
+    { id: 'smoke-works-4', position: { x: 28, y: -4.8, z: 29 }, radius: 3.4, rise: 11, drift: 3, period: 9, opacity: 0.45, count: 8 },
+    { id: 'smoke-canyon', position: { x: 78, y: -6, z: 6 }, radius: 5, rise: 17, drift: 4, period: 12, opacity: 0.38, count: 12 },
+  ],
   lights: [
     // An interior lamp in each room: the sun cannot reach inside a building, and
     // without one a room is a black hole you can hear your footsteps in.
@@ -646,5 +838,16 @@ export const DEMO_DISTRICT: LevelDefinition = {
     { id: 'glow-canyon', position: { x: 78, y: 5.6, z: -10.1 }, color: '#57e0ff', intensity: 11, distance: 20 },
     { id: 'glow-east-sign', position: { x: 36, y: 3.1, z: -2.7 }, color: '#ff4fd8', intensity: 5, distance: 10 },
     { id: 'glow-far-sign', position: { x: 94, y: 3, z: -4.5 }, color: '#ffc247', intensity: 4, distance: 9 },
+    // V0.5: the works are lit like a plant rather than like a roof - worklamps
+    // under the ducts, cold light on the machinery, and the lift wells lit so they
+    // read as somewhere to go.
+    { id: 'lamp-works-1', position: { x: 95, y: -3.8, z: 24 }, color: '#cfe6ff', intensity: 7, distance: 16 },
+    { id: 'lamp-works-2', position: { x: 71, y: -3, z: 24 }, color: '#cfe6ff', intensity: 7, distance: 16 },
+    { id: 'lamp-works-3', position: { x: 47, y: -4.4, z: 24 }, color: '#cfe6ff', intensity: 7, distance: 16 },
+    { id: 'lamp-works-4', position: { x: 22, y: -3.6, z: 24 }, color: '#cfe6ff', intensity: 7, distance: 16 },
+    { id: 'lamp-lift-down', position: { x: 95, y: -1.8, z: 13.5 }, color: '#7dffd7', intensity: 6, distance: 12 },
+    { id: 'lamp-lift-up', position: { x: 14, y: -2, z: 14 }, color: '#7dffd7', intensity: 6, distance: 12 },
+    // And a glow around the finish, so the pad is not the only thing marking it.
+    { id: 'glow-goal', position: { x: -8, y: 1.6, z: -2 }, color: '#4ff0c8', intensity: 8, distance: 14 },
   ],
 };

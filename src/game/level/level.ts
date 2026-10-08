@@ -109,6 +109,20 @@ export function toColliders(definition: LevelDefinition): Collider[] {
     });
   }
 
+  // A lift is a floor that moves. It starts at the bottom of its travel; the
+  // elevator system rewrites the box from there.
+  for (const elevator of definition.elevators ?? []) {
+    colliders.push({
+      id: elevator.id,
+      kind: 'floor',
+      box: aabbFromCenterSize(
+        { x: elevator.at[0], y: elevator.lowTop - elevator.thickness / 2, z: elevator.at[1] },
+        { x: elevator.size[0], y: elevator.thickness, z: elevator.size[1] },
+      ),
+      surface: 'metal',
+    });
+  }
+
   return colliders;
 }
 
@@ -202,6 +216,8 @@ export function validateLevel(
 
   validateDoors(definition, add, maxSubStep, seen);
   validateLights(definition, add);
+  validateElevators(definition, add, maxSubStep, seen);
+  validateTriggers(definition, add);
 
   // Spawn sanity: the player must not start inside geometry.
   const box = spawnBounds(definition, player);
@@ -213,6 +229,22 @@ export function validateLevel(
   for (const door of definition.doors ?? []) {
     if (overlaps(box, aabbFromCenterSize(door.position, door.size))) {
       add(`spawn point intersects door "${door.id}"`, door.id);
+    }
+  }
+  for (const elevator of definition.elevators ?? []) {
+    // The whole shaft, not just where the car happens to be: a spawn inside a
+    // lift well is a spawn that will be run over by one.
+    const span = elevator.highTop - elevator.lowTop + elevator.thickness;
+    const shaft = aabbFromCenterSize(
+      {
+        x: elevator.at[0],
+        y: (elevator.lowTop - elevator.thickness + elevator.highTop) / 2,
+        z: elevator.at[1],
+      },
+      { x: elevator.size[0], y: span, z: elevator.size[1] },
+    );
+    if (overlaps(box, shaft)) {
+      add(`spawn point is inside lift "${elevator.id}"'s shaft`, elevator.id);
     }
   }
 
@@ -298,6 +330,58 @@ function validateLights(
     if (!(light.intensity > 0)) add('light intensity must be > 0', light.id);
     if (!(light.distance > 0)) add('light distance must be > 0', light.id);
   }
+}
+
+/**
+ * Lifts share the id namespace and the thinness rule, and have one of their own:
+ * the two ends of the travel must actually be apart, or a lift is a floor with
+ * delusions of grandeur.
+ */
+function validateElevators(
+  definition: LevelDefinition,
+  add: (message: string, id?: string) => void,
+  maxSubStep: number,
+  seenIds: Set<string>,
+): void {
+  for (const elevator of definition.elevators ?? []) {
+    if (seenIds.has(elevator.id)) {
+      add(`duplicate id "${elevator.id}" (shared with a prop, door or lift)`, elevator.id);
+    }
+    seenIds.add(elevator.id);
+
+    if (!(elevator.size[0] > 0) || !(elevator.size[1] > 0)) {
+      add('lift size must be > 0 on both axes', elevator.id);
+    }
+    if (!(elevator.thickness >= maxSubStep)) {
+      add(`lift thickness must be at least the ${maxSubStep}m collision sub-step`, elevator.id);
+    }
+    if (!(elevator.highTop > elevator.lowTop)) add('lift highTop must be above its lowTop', elevator.id);
+    if (elevator.phase !== undefined && !Number.isFinite(elevator.phase)) {
+      add('lift phase must be finite', elevator.id);
+    }
+  }
+}
+
+/**
+ * Pickups and the finish line: unique ids and finite positions, and nothing
+ * else. They are not colliders and not props, so there is nothing more to be
+ * wrong with them.
+ */
+function validateTriggers(
+  definition: LevelDefinition,
+  add: (message: string, id?: string) => void,
+): void {
+  const seen = new Set<string>();
+  const check = (id: string, at: { readonly x: number; readonly y: number; readonly z: number }, what: string): void => {
+    if (seen.has(id)) add(`duplicate id "${id}" (shared by two ${what}s)`, id);
+    seen.add(id);
+    if (!Number.isFinite(at.x) || !Number.isFinite(at.y) || !Number.isFinite(at.z)) {
+      add(`${what} position must be finite`, id);
+    }
+  };
+
+  for (const pickup of definition.collectibles ?? []) check(pickup.id, pickup.position, 'pickup');
+  if (definition.goal) check(definition.goal.id, definition.goal.position, 'goal');
 }
 
 function validateEnvironment(

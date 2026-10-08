@@ -8,7 +8,9 @@
 
 import type { CrashReport } from '../diagnostics/crashReport.js';
 import { summarizeReport } from '../diagnostics/crashReport.js';
+import { formatRunTime, type RunResult } from '../game/run.js';
 import { button, el, formatNumber, setHidden } from './dom.js';
+import { describePickups } from './gameHud.js';
 
 export interface UiCallbacks {
   /** Begin playing (also the pointer-lock request, so it must be a gesture). */
@@ -35,9 +37,9 @@ export interface GameUiOptions {
 /** What the demo is, in one sentence per entry, for the About panel. */
 export const ABOUT_LINES: readonly string[] = [
   'A low-poly first-person parkour run across a cyberpunk rooftop district.',
-  'Five furnished roofs, six metres apart horizontally and up to four apart vertically, crossed by mantling, pull-ups, climbing, vaulting, wall running and well-timed landings.',
+  'Nine roofs on two levels, crossed by mantling, pull-ups, climbing, vaulting, wall running, pipe climbing and well-timed landings — and joined by two lifts, so the district is a loop rather than a line.',
   'Two of the roofs have machine rooms you can walk into, lit from the inside and behind a door you open yourself, and the signage across them glows.',
-  'Fall and you go back to the last checkpoint you reached — not to the start.',
+  'Eight pickups are scattered along the route, including a few that need the abilities rather than a straight line. Reach the finish with every checkpoint behind you to complete the run — the clock is on the screen, and the record is kept.',
 ];
 
 const CONTROLS: readonly [string, string][] = [
@@ -57,6 +59,14 @@ const CONTROLS: readonly [string, string][] = [
   ['R', 'Restart'],
 ];
 
+/** One labelled figure on the results screen. */
+function completeRow(label: string, value: string): HTMLElement {
+  const row = el('div', { className: 'complete__metaRow' });
+  row.append(el('span', { className: 'complete__metaLabel', text: label }));
+  row.append(el('span', { className: 'complete__metaValue', text: value }));
+  return row;
+}
+
 export class GameUi {
   readonly root: HTMLElement;
   private readonly callbacks: UiCallbacks;
@@ -65,6 +75,12 @@ export class GameUi {
   private readonly aboutScreen: HTMLElement;
   private readonly pauseScreen: HTMLElement;
   private readonly endedScreen: HTMLElement;
+  private readonly completeScreen: HTMLElement;
+  private readonly completeHeading: HTMLElement;
+  private readonly completeTime: HTMLElement;
+  private readonly completeBest: HTMLElement;
+  private readonly completeMeta: HTMLElement;
+  private readonly completeSplits: HTMLElement;
   private readonly crashScreen: HTMLElement;
   private readonly crosshair: HTMLElement;
   private readonly deathOverlay: HTMLElement;
@@ -96,7 +112,7 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.4 technical demo: walk-in interiors, doors, neon signage and pipes to climb, on top of the rooftops and the moves that cross them.',
+        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.5 technical demo: a complete district on two levels, joined by lifts, with pickups, a finish line and a clock on the wall.',
       }),
       this.menu([
         button('Play', {
@@ -165,6 +181,30 @@ export class GameUi {
       }),
     ]);
 
+    // --------------------------------------------------------------- complete
+    // The results screen. Its numbers are filled in by `showComplete`, because a
+    // finished run is the only thing that can produce them.
+    this.completeHeading = el('h2', { className: 'screen__heading screen__heading--good', text: 'RUN COMPLETE' });
+    this.completeTime = el('p', { className: 'complete__time', text: '-:--.--' });
+    this.completeBest = el('p', { className: 'complete__best' });
+    this.completeMeta = el('div', { className: 'complete__meta' });
+    this.completeSplits = el('ol', { className: 'complete__splits' });
+
+    this.completeScreen = this.buildScreen('screen--complete', [
+      this.completeHeading,
+      this.completeTime,
+      this.completeBest,
+      this.completeMeta,
+      this.completeSplits,
+      this.menu([
+        button('Run it again', {
+          className: 'btn btn--primary',
+          onClick: () => this.callbacks.onRestart(),
+        }),
+        button('Main menu', { onClick: () => this.callbacks.onMainMenu() }),
+      ]),
+    ]);
+
     // ------------------------------------------------------------------ crash
     this.crashTitle = el('h2', { className: 'screen__heading screen__heading--error' });
     this.crashMeta = el('dl', { className: 'crash__meta' });
@@ -229,6 +269,7 @@ export class GameUi {
       this.aboutScreen,
       this.pauseScreen,
       this.endedScreen,
+      this.completeScreen,
       this.crashScreen,
       this.noticeBox,
     );
@@ -281,6 +322,38 @@ export class GameUi {
   showEnded(): void {
     this.playMode = false;
     this.setActive(this.endedScreen);
+    this.setCrosshair(false);
+  }
+
+  /**
+   * Shows the results of a finished run.
+   *
+   * Everything on the screen comes from the one summary, and the copy changes
+   * with it: a run that beat the record says so, and a run that did not still
+   * says what the record is.
+   */
+  showComplete(summary: RunResult): void {
+    this.playMode = false;
+
+    this.completeHeading.textContent = 'RUN COMPLETE';
+    this.completeTime.textContent = formatRunTime(summary.seconds);
+    this.completeBest.textContent = summary.improved
+      ? 'NEW BEST'
+      : `BEST ${formatRunTime(summary.bestSeconds)}`;
+    this.completeBest.dataset.improved = String(summary.improved);
+
+    this.completeMeta.replaceChildren(
+      completeRow('Pickups', describePickups(summary.collected, summary.collectibleCount)),
+      completeRow('Checkpoints', `${summary.splits.length}`),
+    );
+
+    this.completeSplits.replaceChildren(
+      ...summary.splits.map((seconds, index) =>
+        el('li', { className: 'complete__split', text: `CP${index + 1}  ${formatRunTime(seconds)}` }),
+      ),
+    );
+
+    this.setActive(this.completeScreen);
     this.setCrosshair(false);
   }
 
@@ -412,6 +485,7 @@ export class GameUi {
       this.aboutScreen,
       this.pauseScreen,
       this.endedScreen,
+      this.completeScreen,
       this.crashScreen,
     ]) {
       setHidden(candidate, candidate !== screen);

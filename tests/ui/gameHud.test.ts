@@ -9,9 +9,11 @@ import { describe, expect, it } from 'vitest';
 import {
   GameHud,
   describeCheckpoints,
+  describePickups,
   healthBand,
   healthFraction,
   healthPercent,
+  type GameHudSnapshot,
 } from '../../src/ui/gameHud.js';
 
 describe('health readouts', () => {
@@ -65,6 +67,22 @@ describe('checkpoint progress', () => {
   });
 });
 
+describe('pickup counts', () => {
+  it('counts up towards the total', () => {
+    expect(describePickups(0, 6)).toBe('0 / 6');
+    expect(describePickups(2, 6)).toBe('2 / 6');
+    expect(describePickups(6, 6)).toBe('6 / 6');
+  });
+
+  it('says so when the level has none', () => {
+    expect(describePickups(0, 0)).toBe('no pickups');
+  });
+
+  it('never reports more than there is', () => {
+    expect(describePickups(9, 4)).toBe('4 / 4');
+  });
+});
+
 describe('GameHud', () => {
   function mount(): GameHud {
     const hud = new GameHud();
@@ -72,9 +90,25 @@ describe('GameHud', () => {
     return hud;
   }
 
+  /** A complete HUD snapshot, so each test only states the fields it cares about. */
+  function snapshot(overrides: Partial<GameHudSnapshot> = {}): GameHudSnapshot {
+    return {
+      health: 100,
+      maxHealth: 100,
+      checkpoint: -1,
+      checkpointCount: 4,
+      elapsedSeconds: 0,
+      running: false,
+      collected: 0,
+      collectibleCount: 0,
+      goalArmed: false,
+      ...overrides,
+    };
+  }
+
   it('shows the health as a bar and a percentage', () => {
     const hud = mount();
-    hud.update({ health: 75, maxHealth: 100, checkpoint: -1, checkpointCount: 3 });
+    hud.update(snapshot({ health: 75, maxHealth: 100, checkpoint: -1, checkpointCount: 3 }));
 
     expect(hud.element.querySelector('.vitals__label')?.textContent).toBe('75%');
     const fill = hud.element.querySelector('.vitals__fill') as HTMLElement;
@@ -84,16 +118,16 @@ describe('GameHud', () => {
 
   it('colours the bar by how much is left', () => {
     const hud = mount();
-    hud.update({ health: 20, maxHealth: 100, checkpoint: -1, checkpointCount: 3 });
+    hud.update(snapshot({ health: 20, maxHealth: 100, checkpoint: -1, checkpointCount: 3 }));
     expect(hud.element.dataset.health).toBe('critical');
-    hud.update({ health: 90, maxHealth: 100, checkpoint: -1, checkpointCount: 3 });
+    hud.update(snapshot({ health: 90, maxHealth: 100, checkpoint: -1, checkpointCount: 3 }));
     expect(hud.element.dataset.health).toBe('ok');
     hud.destroy();
   });
 
   it('shows one pip per checkpoint, filling them in as they are reached', () => {
     const hud = mount();
-    hud.update({ health: 100, maxHealth: 100, checkpoint: 1, checkpointCount: 4 });
+    hud.update(snapshot({ health: 100, maxHealth: 100, checkpoint: 1, checkpointCount: 4 }));
 
     const pips = hud.element.querySelectorAll('.vitals__pip');
     expect(pips).toHaveLength(4);
@@ -105,9 +139,9 @@ describe('GameHud', () => {
 
   it('does not rebuild the pips when the count has not changed', () => {
     const hud = mount();
-    hud.update({ health: 100, maxHealth: 100, checkpoint: 0, checkpointCount: 4 });
+    hud.update(snapshot({ health: 100, maxHealth: 100, checkpoint: 0, checkpointCount: 4 }));
     const first = hud.element.querySelector('.vitals__pip');
-    hud.update({ health: 50, maxHealth: 100, checkpoint: 2, checkpointCount: 4 });
+    hud.update(snapshot({ health: 50, maxHealth: 100, checkpoint: 2, checkpointCount: 4 }));
     const again = hud.element.querySelector('.vitals__pip');
     expect(again).toBe(first);
     hud.destroy();
@@ -115,8 +149,8 @@ describe('GameHud', () => {
 
   it('rebuilds them when the level changes', () => {
     const hud = mount();
-    hud.update({ health: 100, maxHealth: 100, checkpoint: -1, checkpointCount: 2 });
-    hud.update({ health: 100, maxHealth: 100, checkpoint: -1, checkpointCount: 5 });
+    hud.update(snapshot({ health: 100, maxHealth: 100, checkpoint: -1, checkpointCount: 2 }));
+    hud.update(snapshot({ health: 100, maxHealth: 100, checkpoint: -1, checkpointCount: 5 }));
     expect(hud.element.querySelectorAll('.vitals__pip')).toHaveLength(5);
     hud.destroy();
   });
@@ -125,5 +159,27 @@ describe('GameHud', () => {
     const hud = mount();
     hud.destroy();
     expect(document.querySelector('.vitals')).toBeNull();
+  });
+
+  it('shows the clock and the pickups', () => {
+    const hud = mount();
+    hud.update(snapshot({ elapsedSeconds: 62.5, collected: 3, collectibleCount: 8 }));
+
+    expect(hud.element.querySelector('.vitals__time')?.textContent).toBe('1:02.50');
+    expect(hud.element.querySelector('.vitals__pickups')?.textContent).toBe('3 / 8');
+    hud.destroy();
+  });
+
+  it('says when the clock is running and when the finish is armed', () => {
+    const hud = mount();
+
+    hud.update(snapshot({ running: false, goalArmed: false }));
+    expect(hud.element.dataset.running).toBe('false');
+    expect(hud.element.dataset.armed).toBe('false');
+
+    hud.update(snapshot({ running: true, goalArmed: true }));
+    expect(hud.element.dataset.running).toBe('true');
+    expect(hud.element.dataset.armed).toBe('true');
+    hud.destroy();
   });
 });

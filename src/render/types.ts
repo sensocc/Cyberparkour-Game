@@ -28,12 +28,15 @@ export interface SceneAssets {
   readonly skybox: CubeTexture | null;
   /** Tileable object surfaces, keyed by texture id. */
   readonly surfaces: ReadonlyMap<SurfaceTextureId, Texture>;
+  /** The soft puff the smoke plumes are built from. */
+  readonly smoke: Texture | null;
 }
 
 export const NO_ASSETS: SceneAssets = {
   cityBackdrop: null,
   skybox: null,
   surfaces: new Map(),
+  smoke: null,
 };
 
 /** Everything the game needs from a renderer. */
@@ -51,6 +54,17 @@ export interface GameViewLike {
    * the renderer knows about them.
    */
   setDoorOpen(id: string, open: number): void;
+  /** Moves a lift so its walking surface sits at `topY` (m). */
+  setLift(id: string, topY: number): void;
+  /** Shows or hides a pickup, which is gone once it has been taken. */
+  setCollectibleVisible(id: string, visible: boolean): void;
+  /**
+   * Advances purely visual animation - drifting smoke, spinning pickups.
+   *
+   * `elapsedSeconds` rather than a delta, so the effect is a function of the
+   * clock and a dropped frame cannot accumulate drift.
+   */
+  animate(elapsedSeconds: number): void;
   /** Releases every GPU resource. */
   dispose(): void;
 }

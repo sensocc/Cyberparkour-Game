@@ -22,6 +22,7 @@ import {
   normalise,
   peakOf,
   renderClimbTick,
+  renderComplete,
   renderDeath,
   renderFootstep,
   renderGrab,
@@ -29,6 +30,7 @@ import {
   renderHurt,
   renderLanding,
   renderMusic,
+  renderPickup,
   renderScrape,
   renderWhoosh,
   rmsOf,
@@ -43,6 +45,21 @@ function peakOfPlain(samples: Float32Array): number {
   let peak = 0;
   for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
   return peak;
+}
+
+/**
+ * How often a waveform crosses zero.
+ *
+ * A crude but honest proxy for pitch: a brighter, higher sound crosses more
+ * often, which is enough to say "this is a different material" or "this pickup is
+ * a step higher" without a spectrum analyser.
+ */
+function zeroCrossings(samples: Float32Array): number {
+  let count = 0;
+  for (let index = 1; index < samples.length; index += 1) {
+    if (((samples[index] as number) >= 0) !== ((samples[index - 1] as number) >= 0)) count += 1;
+  }
+  return count;
 }
 
 describe('buffer helpers', () => {
@@ -254,13 +271,7 @@ describe('the individual sounds', () => {
 
     // A grated walkway is brighter (more scuff, higher up) than bare concrete:
     // the simplest numeric proxy is how often the waveform crosses zero.
-    const crossings = (samples: Float32Array): number => {
-      let count = 0;
-      for (let index = 1; index < samples.length; index += 1) {
-        if (((samples[index] as number) >= 0) !== ((samples[index - 1] as number) >= 0)) count += 1;
-      }
-      return count;
-    };
+    const crossings = (samples: Float32Array): number => zeroCrossings(samples);
     expect(crossings(steps[2] as Float32Array)).toBeGreaterThan(crossings(steps[1] as Float32Array));
   });
 
@@ -272,6 +283,33 @@ describe('the individual sounds', () => {
       const fallback = renderFootstep({ variant: 2, gait });
       expect(Array.from(explicit), gait).toEqual(Array.from(fallback));
     }
+  });
+
+  it('renders a pickup bell that rises with each one taken', () => {
+    const first = renderPickup(1);
+    const later = renderPickup(6);
+
+    // Same shape, same level - a different pitch, which is the whole point: the
+    // sound tells the player how many they have without the HUD saying so.
+    expect(later.length).toBe(first.length);
+    expect(peakOf(first)).toBeLessThanOrEqual(0.65);
+    expect(peakOf(first)).toBeGreaterThan(0.2);
+    expect(zeroCrossings(later)).toBeGreaterThan(zeroCrossings(first));
+  });
+
+  it('caps the pickup pitch rather than rising for ever', () => {
+    // A level could have thirty pickups; a bell thirty steps up is a dog whistle.
+    expect(Array.from(renderPickup(40))).toEqual(Array.from(renderPickup(11)));
+    expect(Array.from(renderPickup(0))).toEqual(Array.from(renderPickup(1)));
+  });
+
+  it('renders the finish as a chord that blooms rather than strikes', () => {
+    const complete = renderComplete();
+    expect(complete.length / SAMPLE_RATE).toBeGreaterThan(0.5);
+    expect(peakOf(complete)).toBeLessThanOrEqual(0.8);
+    expect(rmsOf(complete)).toBeGreaterThan(0);
+    // It swells: the very first sample is nearly silent, unlike a hit.
+    expect(Math.abs(complete[0] as number)).toBeLessThan(0.05);
   });
 
   it('renders a whoosh for the airborne moves', () => {

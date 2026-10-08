@@ -17,6 +17,7 @@
  */
 
 import { clamp } from '../core/math.js';
+import { formatRunTime } from '../game/run.js';
 
 export interface GameHudSnapshot {
   readonly health: number;
@@ -25,6 +26,16 @@ export interface GameHudSnapshot {
   readonly checkpoint: number;
   /** How many checkpoints the level has. */
   readonly checkpointCount: number;
+  /** Seconds on the clock. */
+  readonly elapsedSeconds: number;
+  /** Whether the clock is actually running. */
+  readonly running: boolean;
+  /** How many pickups have been taken. */
+  readonly collected: number;
+  /** How many pickups the level has. */
+  readonly collectibleCount: number;
+  /** Whether crossing the finish would count. */
+  readonly goalArmed: boolean;
 }
 
 /** Health as 0..1, guarding against a missing or absurd maximum. */
@@ -58,12 +69,25 @@ export function healthBand(health: number, maxHealth: number): 'ok' | 'hurt' | '
   return 'ok';
 }
 
+/**
+ * The pickup counter.
+ *
+ * `taken` counts up rather than the remainder counting down: a run's score is
+ * what you have, and a level with no pickups says so rather than showing `0 / 0`.
+ */
+export function describePickups(taken: number, total: number): string {
+  if (total <= 0) return 'no pickups';
+  return `${clamp(taken, 0, total)} / ${total}`;
+}
+
 export class GameHud {
   readonly element: HTMLElement;
   private readonly healthFill: HTMLElement;
   private readonly healthLabel: HTMLElement;
   private readonly checkpointLabel: HTMLElement;
   private readonly checkpointPips: HTMLElement;
+  private readonly timeLabel: HTMLElement;
+  private readonly pickupLabel: HTMLElement;
   private pips = 0;
 
   constructor() {
@@ -92,6 +116,16 @@ export class GameHud {
     this.checkpointPips = document.createElement('span');
     this.checkpointPips.className = 'vitals__pips';
     this.element.append(this.checkpointLabel, this.checkpointPips);
+
+    // The trial row: the clock on the left, the pickups on the right.
+    this.timeLabel = document.createElement('span');
+    this.timeLabel.className = 'vitals__time';
+    this.pickupLabel = document.createElement('span');
+    this.pickupLabel.className = 'vitals__pickups';
+    const trial = document.createElement('div');
+    trial.className = 'vitals__trial';
+    trial.append(this.timeLabel, this.pickupLabel);
+    this.element.append(trial);
   }
 
   update(snapshot: GameHudSnapshot): void {
@@ -102,6 +136,13 @@ export class GameHud {
     this.element.dataset.health = healthBand(snapshot.health, snapshot.maxHealth);
     this.healthLabel.textContent = `${healthPercent(snapshot.health, snapshot.maxHealth)}%`;
     this.checkpointLabel.textContent = describeCheckpoints(snapshot.checkpoint, snapshot.checkpointCount);
+
+    this.timeLabel.textContent = formatRunTime(snapshot.elapsedSeconds);
+    this.pickupLabel.textContent = describePickups(snapshot.collected, snapshot.collectibleCount);
+    // Attributes rather than class juggling, so the styling can say "the clock is
+    // stopped" and "the finish is live" without the DOM being rearranged.
+    this.element.dataset.running = String(snapshot.running);
+    this.element.dataset.armed = String(snapshot.goalArmed);
 
     if (snapshot.checkpointCount !== this.pips) {
       this.pips = snapshot.checkpointCount;

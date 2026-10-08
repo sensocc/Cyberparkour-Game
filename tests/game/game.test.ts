@@ -19,6 +19,7 @@ import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '..
 import { GameHud } from '../../src/ui/gameHud.js';
 import { DebugHud } from '../../src/ui/hud.js';
 import { GameUi } from '../../src/ui/screens.js';
+import type { TimeStore } from '../../src/game/run.js';
 import { FakeScheduler } from '../helpers/fakeScheduler.js';
 
 interface RenderedFrame {
@@ -31,6 +32,9 @@ class FakeView implements GameViewLike {
   readonly frames: RenderedFrame[] = [];
   readonly sizes: { width: number; height: number }[] = [];
   readonly doors: { id: string; open: number }[] = [];
+  readonly lifts: { id: string; topY: number }[] = [];
+  readonly pickups: { id: string; visible: boolean }[] = [];
+  readonly animations: number[] = [];
   disposed = false;
 
   setSize(width: number, height: number): void {
@@ -43,6 +47,18 @@ class FakeView implements GameViewLike {
 
   setDoorOpen(id: string, open: number): void {
     this.doors.push({ id, open });
+  }
+
+  setLift(id: string, topY: number): void {
+    this.lifts.push({ id, topY });
+  }
+
+  setCollectibleVisible(id: string, visible: boolean): void {
+    this.pickups.push({ id, visible });
+  }
+
+  animate(elapsedSeconds: number): void {
+    this.animations.push(elapsedSeconds);
   }
 
   dispose(): void {
@@ -68,6 +84,7 @@ interface Harness {
 interface HarnessOptions {
   readonly createView?: CreateView;
   readonly level?: typeof DEMO_DISTRICT;
+  readonly store?: TimeStore;
 }
 
 function createHarness(options: HarnessOptions = {}): Harness {
@@ -137,6 +154,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     logBuffer: new LogBuffer({ mirrorToConsole: false }),
     config: DEFAULT_CONFIG,
     level: options.level ?? DEMO_DISTRICT,
+    ...(options.store ? { store: options.store } : {}),
     createView,
     scheduler,
     onStatusChange: (status) => statuses.push(status),
@@ -908,7 +926,7 @@ describe('Game fall detection and respawn', () => {
 });
 
 describe('the V0.3 play HUD and checkpoints', () => {
-  it('shows the play HUD with health and checkpoint progress', () => {
+  it('shows the play HUD with health, checkpoint progress, the clock and the pickups', () => {
     const harness = createHarness();
     harness.game.start();
     // The HUD refreshes at 10 Hz, so it takes a few frames to appear.
@@ -917,8 +935,12 @@ describe('the V0.3 play HUD and checkpoints', () => {
     const vitals = document.querySelector('.vitals');
     expect(vitals).not.toBeNull();
     expect(vitals?.textContent).toContain('100%');
-    expect(vitals?.textContent).toContain('CP 0 / 4');
-    expect(vitals?.querySelectorAll('.vitals__pip')).toHaveLength(4);
+    expect(vitals?.textContent).toContain('CP 0 / 5');
+    expect(vitals?.querySelectorAll('.vitals__pip')).toHaveLength(5);
+    // V0.5: the clock starts stopped, and the pickups are counted.
+    expect(vitals?.querySelector('.vitals__time')?.textContent).toBe('0:00.00');
+    expect(vitals?.querySelector('.vitals__pickups')?.textContent).toBe('0 / 8');
+    expect((vitals as HTMLElement).dataset.running).toBe('false');
   });
 
   /**
@@ -965,7 +987,7 @@ describe('the V0.3 play HUD and checkpoints', () => {
     reachFirstCheckpoint(harness);
 
     expect(harness.game.snapshot().player.checkpoint).toBe(0);
-    expect(document.querySelector('.notice--toast')?.textContent).toBe('CHECKPOINT 1 / 4');
+    expect(document.querySelector('.notice--toast')?.textContent).toBe('CHECKPOINT 1 / 5');
     expect(document.querySelector('.vitals__pip--reached')).not.toBeNull();
   });
 
@@ -1057,5 +1079,133 @@ describe('the V0.4 doors', () => {
     const view = harness.views[0];
     const latest = view?.doors.filter((entry) => entry.id === 'test-door').at(-1);
     expect(latest?.open).toBe(0);
+  });
+});
+
+describe('the V0.5 run: pickups, the finish and the clock', () => {
+  /** The demo district, with a pickup and a finish sitting on the spawn. */
+  const nearSpawn = (overrides: Record<string, unknown>) => ({ ...DEMO_DISTRICT, ...overrides });
+
+  const PICKUP_LEVEL = nearSpawn({
+    collectibles: [{ id: 'test-shard', position: { x: 0, y: 1.4, z: 3 } }],
+    goal: undefined,
+  });
+
+  const UNARMED_GOAL_LEVEL = nearSpawn({
+    collectibles: [],
+    goal: { id: 'test-goal', position: { x: 0, y: 0.5, z: 3 } },
+  });
+
+  const ARMED_GOAL_LEVEL = nearSpawn({
+    collectibles: [],
+    checkpoints: [],
+    // Five metres north of the spawn, so the player has to run to it - and a run
+    // that has not started yet is not a time worth recording.
+    goal: { id: 'test-goal', position: { x: 0, y: 0.5, z: -2 } },
+  });
+
+  /** A tiny in-memory `localStorage`. */
+  function fakeStore(initial: Record<string, string> = {}) {
+    const data: Record<string, string> = { ...initial };
+    return {
+      data,
+      getItem: (key: string) => data[key] ?? null,
+      setItem: (key: string, value: string) => {
+        data[key] = value;
+      },
+    };
+  }
+
+  it('takes a pickup the player walks into, and hides it', () => {
+    const harness = createHarness({ level: PICKUP_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+
+    expect(harness.game.runSnapshot.collected).toBe(1);
+    // The view was told, so the shard is gone rather than ghosted.
+    expect(harness.views[0]?.pickups).toContainEqual({ id: 'test-shard', visible: false });
+  });
+
+  it('does not finish a level whose checkpoints are still ahead', () => {
+    const harness = createHarness({ level: UNARMED_GOAL_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 8);
+
+    expect(harness.game.currentStatus).toBe('playing');
+    expect(harness.game.runSnapshot.finished).toBe(false);
+    expect(harness.game.runSnapshot.goalArmed).toBe(false);
+  });
+
+  it('finishes the run at the goal once it is armed, and shows the results', () => {
+    const harness = createHarness({ level: ARMED_GOAL_LEVEL });
+    harness.game.start();
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 60);
+
+    expect(harness.game.currentStatus).toBe('completed');
+    expect(harness.game.runSnapshot.finished).toBe(true);
+
+    const screen = document.querySelector('.screen--complete');
+    expect(screen?.hasAttribute('hidden')).toBe(false);
+    expect(screen?.textContent).toContain('RUN COMPLETE');
+    expect(document.querySelector('.complete__time')?.textContent).not.toBe('-:--.--');
+  });
+
+  it('freezes the world behind the results', () => {
+    const harness = createHarness({ level: ARMED_GOAL_LEVEL });
+    harness.game.start();
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 60);
+    expect(harness.game.currentStatus).toBe('completed');
+
+    const frozen = harness.game.snapshot().player.position.z;
+    stepFrames(harness, 30);
+    expect(harness.game.snapshot().player.position.z).toBe(frozen);
+  });
+
+  it('starts the clock when the player moves, not when the game does', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 10);
+
+    expect(harness.game.runSnapshot.started).toBe(false);
+    expect(harness.game.runSnapshot.elapsedSeconds).toBe(0);
+
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 10);
+
+    expect(harness.game.runSnapshot.started).toBe(true);
+    expect(harness.game.runSnapshot.elapsedSeconds).toBeGreaterThan(0);
+  });
+
+  it('writes a new record, and keeps a better one', () => {
+    const first = fakeStore();
+    const quick = createHarness({ level: ARMED_GOAL_LEVEL, store: first });
+    quick.game.start();
+    quick.input.keyDown('KeyW');
+    stepFrames(quick, 60);
+    expect(quick.game.currentStatus).toBe('completed');
+    expect(first.data['cyberparkour.best-time.v1']).toBeDefined();
+
+    // A run that already has a very good record does not overwrite it.
+    const second = fakeStore({ 'cyberparkour.best-time.v1': '0.001' });
+    const slow = createHarness({ level: ARMED_GOAL_LEVEL, store: second });
+    slow.game.start();
+    slow.input.keyDown('KeyW');
+    stepFrames(slow, 60);
+    expect(slow.game.currentStatus).toBe('completed');
+    expect(second.data['cyberparkour.best-time.v1']).toBe('0.001');
+  });
+
+  it('resets the clock and the pickups when the run restarts', () => {
+    const harness = createHarness({ level: PICKUP_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 4);
+    expect(harness.game.runSnapshot.collected).toBe(1);
+
+    harness.game.restart();
+    // The pickup is back: a restart is the route from the beginning.
+    expect(harness.game.runSnapshot.collected).toBe(0);
+    expect(harness.views[1]?.pickups).toContainEqual({ id: 'test-shard', visible: true });
   });
 });

@@ -108,6 +108,8 @@ const EVERY_CUE: AudioCue[] = [
   { kind: 'gust' },
   { kind: 'hurt', damage: 20 },
   { kind: 'death' },
+  { kind: 'pickup', index: 3 },
+  { kind: 'complete' },
 ];
 
 describe('SilentAudio', () => {

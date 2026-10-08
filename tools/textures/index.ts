@@ -7,6 +7,7 @@
  */
 
 import { generateCityBackdrop } from './city.ts';
+import { generateSmoke } from './fx.ts';
 import type { RgbaImage } from './png.ts';
 import { SKYBOX_FACES, generateSkyboxFace } from './skybox.ts';
 import { SURFACE_TEXTURES } from './surfaces.ts';
@@ -19,8 +20,13 @@ export interface AssetDefinition {
   readonly generate: () => RgbaImage;
 }
 
-/** Edge length of a skybox face, in pixels. */
-export const SKYBOX_FACE_SIZE = 256;
+/**
+ * Edge length of a skybox face, in pixels.
+ *
+ * V0.5 doubled it: the sky now carries a star field and two cloud layers, and at
+ * 256 the stars were a pixel or two wide and mostly aliased away.
+ */
+export const SKYBOX_FACE_SIZE = 512;
 
 /** The two flat backdrop textures from V0.1. */
 export const BACKDROP_TEXTURES: readonly AssetDefinition[] = [
@@ -40,9 +46,15 @@ export const OBJECT_TEXTURES: readonly AssetDefinition[] = SURFACE_TEXTURES.map(
   generate: () => surface.generate(),
 }));
 
+/** The sprite textures used by effects. */
+export const EFFECT_TEXTURES: readonly AssetDefinition[] = [
+  { name: 'fx-smoke.png', generate: () => generateSmoke() },
+];
+
 /** Everything the demo ships, in a stable order. */
 export const TEXTURES: readonly AssetDefinition[] = [
   ...BACKDROP_TEXTURES,
   ...SKYBOX_TEXTURES,
   ...OBJECT_TEXTURES,
+  ...EFFECT_TEXTURES,
 ];

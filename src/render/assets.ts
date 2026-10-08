@@ -14,6 +14,7 @@ import { logger } from '../core/log.js';
 import type { SurfaceTextureId } from '../game/level/surfaces.js';
 import { METRES_PER_TILE } from '../game/level/surfaces.js';
 import cityBackdropUrl from '../assets/textures/city-backdrop.png';
+import smokeUrl from '../assets/textures/fx-smoke.png';
 import skyNx from '../assets/textures/sky-nx.png';
 import skyNy from '../assets/textures/sky-ny.png';
 import skyNz from '../assets/textures/sky-nz.png';
@@ -55,6 +56,7 @@ export interface CubeTextureLoaderLike {
 /** Where the scene textures live in the bundle. */
 export const TEXTURE_URLS = {
   cityBackdrop: cityBackdropUrl,
+  smoke: smokeUrl,
   /** Six faces, in three.js `CubeTexture` order. */
   skybox: [skyPx, skyNx, skyPy, skyNy, skyPz, skyNz] as const,
   surfaces: {
@@ -157,23 +159,29 @@ export async function loadSceneAssets(
   loader: TextureLoaderLike = new THREE.TextureLoader(),
   cubeLoader: CubeTextureLoaderLike = new THREE.CubeTextureLoader(),
 ): Promise<SceneAssets> {
-  const [cityBackdrop, skybox, surfaces] = await Promise.all([
+  const [cityBackdrop, skybox, surfaces, smoke] = await Promise.all([
     loadTexture(loader, TEXTURE_URLS.cityBackdrop, 'city-backdrop'),
     loadSkybox(cubeLoader),
     loadSurfaceTextures(loader),
+    loadTexture(loader, TEXTURE_URLS.smoke, 'fx-smoke'),
   ]);
 
-  const missing = (cityBackdrop ? 0 : 1) + (skybox ? 0 : 1) + (Object.keys(TEXTURE_URLS.surfaces).length - surfaces.size);
+  const missing =
+    (cityBackdrop ? 0 : 1) +
+    (skybox ? 0 : 1) +
+    (smoke ? 0 : 1) +
+    (Object.keys(TEXTURE_URLS.surfaces).length - surfaces.size);
   if (missing > 0) {
     logger.warn('render', `${missing} scene texture(s) unavailable - using flat colours`);
   }
 
-  return { cityBackdrop, skybox, surfaces };
+  return { cityBackdrop, skybox, surfaces, smoke };
 }
 
 /** Releases the loaded textures. */
 export function disposeSceneAssets(assets: SceneAssets): void {
   assets.cityBackdrop?.dispose();
   assets.skybox?.dispose();
+  assets.smoke?.dispose();
   for (const texture of assets.surfaces.values()) texture.dispose();
 }

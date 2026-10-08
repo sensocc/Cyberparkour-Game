@@ -45,6 +45,7 @@ const okLoader = (): TextureLoaderLike =>
   immediateLoader(
     new Map<string, Outcome>([
       [TEXTURE_URLS.cityBackdrop, new THREE.Texture()],
+      [TEXTURE_URLS.smoke, new THREE.Texture()],
       ...surfaceEntries(),
     ]),
   );
@@ -215,6 +216,7 @@ describe('disposeSceneAssets', () => {
       cityBackdrop: new THREE.Texture(),
       skybox: new THREE.CubeTexture(),
       surfaces: new Map([['hazard' as const, new THREE.Texture()]]),
+      smoke: new THREE.Texture(),
     };
 
     let disposed = 0;
@@ -224,6 +226,9 @@ describe('disposeSceneAssets', () => {
     assets.skybox.addEventListener('dispose', () => {
       disposed += 1;
     });
+    assets.smoke.addEventListener('dispose', () => {
+      disposed += 1;
+    });
     for (const texture of assets.surfaces.values()) {
       texture.addEventListener('dispose', () => {
         disposed += 1;
@@ -231,7 +236,7 @@ describe('disposeSceneAssets', () => {
     }
 
     disposeSceneAssets(assets);
-    expect(disposed).toBe(3);
+    expect(disposed).toBe(4);
   });
 
   it('copes with nothing loaded', () => {
@@ -239,7 +244,7 @@ describe('disposeSceneAssets', () => {
   });
 
   it('is safe to call twice', () => {
-    const assets = { cityBackdrop: new THREE.Texture(), skybox: null, surfaces: new Map() };
+    const assets = { cityBackdrop: new THREE.Texture(), skybox: null, surfaces: new Map(), smoke: null };
     disposeSceneAssets(assets);
     expect(() => disposeSceneAssets(assets)).not.toThrow();
   });

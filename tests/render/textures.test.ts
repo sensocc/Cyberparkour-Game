@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { decodePng } from '../helpers/pngDecode.js';
 import { generateCityBackdrop } from '../../tools/textures/city.js';
 import {
+  EFFECT_TEXTURES,
   OBJECT_TEXTURES,
   SKYBOX_TEXTURES,
   TEXTURES,
@@ -77,8 +78,10 @@ describe('the committed texture set', () => {
     }
   });
 
-  it('declares a backdrop, six skybox faces and the object surfaces', () => {
-    expect(TEXTURES.length).toBe(1 + FACE_ORDER.length + SURFACE_TEXTURES.length);
+  it('declares a backdrop, six skybox faces, the object surfaces and the effects', () => {
+    expect(TEXTURES.length).toBe(
+      1 + FACE_ORDER.length + SURFACE_TEXTURES.length + EFFECT_TEXTURES.length,
+    );
     expect(SKYBOX_TEXTURES.map((entry) => entry.name).sort()).toEqual([
       'sky-nx.png',
       'sky-ny.png',
@@ -88,6 +91,7 @@ describe('the committed texture set', () => {
       'sky-pz.png',
     ]);
     expect(OBJECT_TEXTURES.length).toBe(SURFACE_TEXTURES.length);
+    expect(EFFECT_TEXTURES.map((entry) => entry.name)).toEqual(['fx-smoke.png']);
   });
 
   it('is deterministic', () => {
@@ -265,25 +269,53 @@ describe('the skybox', () => {
   });
 
   it('agrees across a shared face edge', () => {
-    // The +X and +Z faces meet along a vertical edge; sample either side of it.
+    // Seamlessness is a property of the *direction* function: on the shared edge
+    // `s` is -1 on one face and +1 on the other, and both look exactly the same
+    // way, so they get exactly the same colour. The faces need no special-casing
+    // for this - it falls out of sampling one function of direction.
     const size = 32;
-    const px = generateSkyboxFace('px', size);
-    const pz = generateSkyboxFace('pz', size);
+    for (let row = 0; row < size; row += 1) {
+      const t = pixelToFaceCoordinates(row, size);
+      expect(skyColorAt(skyboxFaceDirection('px', -1, t))).toEqual(
+        skyColorAt(skyboxFaceDirection('pz', 1, t)),
+      );
+    }
+  });
 
-    const leftEdge = pixelToFaceCoordinates(0, size);
-    const rightEdge = pixelToFaceCoordinates(size - 1, size);
+  it('has no step either side of the seam', () => {
+    // The outermost *texels* either side of the seam are one texel apart, so they
+    // must not jump. Stars are switched off for this: a single star is a
+    // legitimate discontinuity, and it is not what this is checking.
+    const size = 64;
+    const quiet = { starDensity: 0 };
+    const left = pixelToFaceCoordinates(0, size);
+    const right = pixelToFaceCoordinates(size - 1, size);
 
     for (let row = 0; row < size; row += 1) {
       const t = pixelToFaceCoordinates(row, size);
+      const onPx = skyColorAt(skyboxFaceDirection('px', left, t), quiet);
+      const onPz = skyColorAt(skyboxFaceDirection('pz', right, t), quiet);
+      const distance =
+        Math.abs(onPx.r - onPz.r) + Math.abs(onPx.g - onPz.g) + Math.abs(onPx.b - onPz.b);
+      expect(distance, `row ${row}`).toBeLessThanOrEqual(20);
+    }
+  });
 
-      // The +X face's left edge and the +Z face's right edge look at the same
-      // directions, so they must be the same colour.
-      const onPx = skyboxFaceDirection('px', leftEdge, t);
-      const onPz = skyboxFaceDirection('pz', rightEdge, t);
-      expect(skyColorAt(onPx)).toEqual(skyColorAt(onPz));
-
-      expect(getPixel(px, 0, row)).toEqual(skyColorAt(onPx));
-      expect(getPixel(pz, size - 1, row)).toEqual(skyColorAt(onPz));
+  it('has no hard line at the horizon', () => {
+    // The below-horizon gradient carries the horizon colour *down* rather than
+    // restarting at a darker one. Sampled a hair either side of elevation zero,
+    // the sky must not jump - which it did, once.
+    for (const azimuth of [-2.1, -0.4, 0.9, 2.6]) {
+      const direction = (elevation: number): { x: number; y: number; z: number } => ({
+        x: Math.sin(azimuth) * Math.cos(elevation),
+        y: Math.sin(elevation),
+        z: Math.cos(azimuth) * Math.cos(elevation),
+      });
+      const above = skyColorAt(direction(0.002));
+      const below = skyColorAt(direction(-0.002));
+      const distance =
+        Math.abs(above.r - below.r) + Math.abs(above.g - below.g) + Math.abs(above.b - below.b);
+      expect(distance, `azimuth ${azimuth}`).toBeLessThanOrEqual(4);
     }
   });
 

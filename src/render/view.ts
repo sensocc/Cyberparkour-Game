@@ -15,6 +15,7 @@ import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
 import { buildScene, type BuiltScene } from './sceneBuilder.js';
+import { pickupPose, smokePose } from './effects.js';
 import { GraphicsUnavailableError, NO_ASSETS, type GameViewLike, type SceneAssets } from './types.js';
 
 export { GraphicsUnavailableError };
@@ -37,6 +38,8 @@ export class GameView implements GameViewLike {
   private readonly built: BuiltScene;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly doorAngles: ReadonlyMap<string, number>;
+  private readonly liftThickness: ReadonlyMap<string, number>;
+  private readonly pickupHome: ReadonlyMap<string, ReadonlyVec3>;
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -78,6 +81,12 @@ export class GameView implements GameViewLike {
     this.built = buildScene(options.definition, options.assets ?? NO_ASSETS);
     this.doorAngles = new Map(
       (options.definition.doors ?? []).map((door) => [door.id, door.openAngle] as const),
+    );
+    this.liftThickness = new Map(
+      (options.definition.elevators ?? []).map((lift) => [lift.id, lift.thickness] as const),
+    );
+    this.pickupHome = new Map(
+      (options.definition.collectibles ?? []).map((pickup) => [pickup.id, pickup.position] as const),
     );
 
     logger.info('render', 'view created', {
@@ -147,6 +156,48 @@ export class GameView implements GameViewLike {
     const angle = this.doorAngles.get(id);
     if (!group || angle === undefined) return;
     group.rotation.y = clamp01(open) * angle;
+  }
+
+  /** Moves a lift's car so its walking surface sits at `topY`. */
+  setLift(id: string, topY: number): void {
+    if (this.disposed) return;
+    const group = this.built.lifts.get(id);
+    const thickness = this.liftThickness.get(id);
+    if (!group || thickness === undefined) return;
+    group.position.y = topY - thickness;
+  }
+
+  /** Hides a pickup that has been taken. */
+  setCollectibleVisible(id: string, visible: boolean): void {
+    if (this.disposed) return;
+    const group = this.built.collectibles.get(id);
+    if (group) group.visible = visible;
+  }
+
+  /**
+   * Advances the purely visual animation.
+   *
+   * `elapsedSeconds` rather than a delta: smoke drifts and pickups bob, and both
+   * are functions of the clock, so a frame that takes twice as long moves them
+   * exactly twice as far without anything having to be integrated.
+   */
+  animate(elapsedSeconds: number): void {
+    if (this.disposed) return;
+
+    for (const { sprite, emitter } of this.built.smoke) {
+      const pose = smokePose(emitter, elapsedSeconds);
+      sprite.position.set(pose.x, pose.y, pose.z);
+      sprite.scale.set(pose.scale, pose.scale, 1);
+      (sprite.material as THREE.SpriteMaterial).opacity = pose.opacity;
+    }
+
+    for (const [id, group] of this.built.collectibles) {
+      const home = this.pickupHome.get(id);
+      if (!home) continue;
+      const pose = pickupPose(home, elapsedSeconds);
+      group.position.y = pose.y;
+      group.rotation.y = pose.spin;
+    }
   }
 
   /** Releases the GPU context and all scene resources. */

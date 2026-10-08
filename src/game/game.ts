@@ -5,12 +5,15 @@
  *
  *   idle ──start──▶ playing ⇄ paused
  *                     │  ╲
+ *                     │   ╲ finish ──▶ completed ──restart──▶ playing
  *                     │   ╲ quit ──▶ ended ──restart──▶ playing
  *                     └── error ──▶ crashed ──restart──▶ playing
  *
  * The frame loop keeps ticking while paused so that the menus stay responsive
  * and key handling lives in exactly one place; simulation, statistics and
- * rendering are all skipped, so a paused frame costs nothing measurable.
+ * rendering are all skipped, so a paused frame costs nothing measurable. A
+ * *completed* run is paused in the same sense: the results screen is up, the
+ * world is frozen behind it, and the loop is still there to be restarted.
  */
 
 import { DEFAULT_CONFIG, fixedStep, type GameConfig } from '../core/config.js';
@@ -27,8 +30,10 @@ import type { InputState } from '../input/inputState.js';
 import { applyLook } from './look.js';
 import { buildLevel, climbableIds as collectClimbableIds, pipeIds as collectPipeIds, type BuiltLevel } from './level/level.js';
 import { DoorSystem } from './level/doors.js';
+import { ElevatorSystem, carryRider } from './level/elevators.js';
 import { MotionTracker } from './movement.js';
-import { DEMO_DISTRICT, type LevelDefinition } from './level/levelData.js';
+import { readBestTime, writeBestTime, withinTrigger, RunState, type RunSnapshot, type TimeStore } from './run.js';
+import { DEMO_DISTRICT, type CollectibleDefinition, type LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
   eyePosition,
@@ -46,7 +51,7 @@ import type { GameHud } from '../ui/gameHud.js';
 import type { DebugHud, HudSnapshot } from '../ui/hud.js';
 import type { GameUi } from '../ui/screens.js';
 
-export type GameStatus = 'idle' | 'playing' | 'paused' | 'ended' | 'crashed';
+export type GameStatus = 'idle' | 'playing' | 'paused' | 'completed' | 'ended' | 'crashed';
 
 export interface GameOptions {
   /** Element the canvas is created in. Replaced on every restart. */
@@ -70,6 +75,13 @@ export interface GameOptions {
   readonly scheduler?: FrameScheduler;
   /** Audio backend. Defaults to silence, so tests never touch Web Audio. */
   readonly audio?: AudioOutput;
+  /**
+   * Where the best time is kept between sessions.
+   *
+   * Injected rather than reached for, so a test can supply a fake - and so the
+   * game never touches `localStorage` itself.
+   */
+  readonly store?: TimeStore;
   readonly onStatusChange?: (status: GameStatus) => void;
 }
 
@@ -104,6 +116,19 @@ export class Game {
   private player: PlayerState;
   /** Doors, and which are open. Rebuilt with the level. */
   private doors: DoorSystem;
+  /** Lifts, and where they are. Rebuilt with the level. */
+  private elevators: ElevatorSystem;
+  /** The clock, the pickups and the record. */
+  private run: RunState;
+  /** The level's pickups, in the order they were declared. */
+  private readonly collectibles: readonly CollectibleDefinition[];
+  /**
+   * Seconds of *playing* time, for purely visual animation.
+   *
+   * Separate from the run clock on purpose: smoke should drift while the player
+   * stands still at the spawn with the timer stopped.
+   */
+  private effectsSeconds = 0;
   private view: GameViewLike | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private status: GameStatus = 'idle';
@@ -153,6 +178,16 @@ export class Game {
     this.climbables = collectClimbableIds(this.level.colliders);
     this.pipes = collectPipeIds(this.level.colliders);
     this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
+    this.elevators = new ElevatorSystem(this.definition.elevators ?? [], this.level.world, {
+      dwellSeconds: this.config.elevator.dwellSeconds,
+      speed: this.config.elevator.speed,
+    });
+    this.collectibles = this.definition.collectibles ?? [];
+    this.run = new RunState({
+      checkpointCount: this.definition.checkpoints.length,
+      collectibleCount: this.collectibles.length,
+      bestSeconds: readBestTime(options.store),
+    });
     this.player = createPlayerState(this.definition.spawn, this.config);
 
     this.domInput = new DomInput({
@@ -409,15 +444,58 @@ export class Game {
     const total = this.definition.checkpoints.length;
     this.log?.info('game', 'checkpoint reached', { checkpoint: index, total });
     this.options.ui.toast(`CHECKPOINT ${index + 1} / ${total}`);
+    this.run.reachCheckpoint(index);
     this.updateGameHud();
   }
 
+  /**
+   * Checks the pickups and the finish line.
+   *
+   * Run once per simulation step rather than once per frame, for the same reason
+   * checkpoints are: a player at sprint speed covers a third of a metre per step,
+   * and a trigger that is only tested per frame is a trigger that can be run past.
+   */
+  private updateTriggers(): void {
+    const { radius, heightTolerance } = this.config.collectible;
+    for (const pickup of this.collectibles) {
+      if (this.run.hasCollected(pickup.id)) continue;
+      if (!withinTrigger(this.player.position, pickup.position, radius, heightTolerance)) continue;
+
+      this.run.collect(pickup.id);
+      this.view?.setCollectibleVisible(pickup.id, false);
+      this.audioDirector.push({ kind: 'pickup', index: this.run.snapshot().collected });
+      if (this.run.allCollected) this.options.ui.toast('ALL PICKUPS COLLECTED');
+      this.log?.info('game', 'pickup collected', { id: pickup.id, collected: this.run.snapshot().collected });
+    }
+
+    const goal = this.definition.goal;
+    if (!goal || this.run.isFinished) return;
+    // The finish only counts once the route is behind you, so a goal near the
+    // spawn is not a way to skip the district.
+    if (!this.run.armed) return;
+    const reach = this.config.goal;
+    if (withinTrigger(this.player.position, goal.position, reach.radius, reach.heightTolerance)) {
+      this.completeRun();
+    }
+  }
+
+  /** The run in progress: the clock, the pickups and the record. */
+  get runSnapshot(): RunSnapshot {
+    return this.run.snapshot();
+  }
+
   private updateGameHud(): void {
+    const run = this.run.snapshot();
     this.options.gameHud.update({
       health: this.player.health,
       maxHealth: this.config.fallDamage.maxHealth,
       checkpoint: this.player.checkpoint,
       checkpointCount: this.definition.checkpoints.length,
+      elapsedSeconds: run.elapsedSeconds,
+      running: run.started && !run.finished,
+      collected: run.collected,
+      collectibleCount: run.collectibleCount,
+      goalArmed: run.goalArmed,
     });
   }
 
@@ -436,6 +514,38 @@ export class Game {
     this.log?.info('game', 'respawned on request');
   }
 
+  /**
+   * Crosses the finish line.
+   *
+   * The clock stops, the record is weighed and written, and the world freezes
+   * behind the results screen - the same shape as pausing, because a finished run
+   * is a paused run with a story to tell.
+   */
+  private completeRun(): void {
+    const result = this.run.finish();
+    if (!result) return;
+
+    writeBestTime(this.options.store, result.bestSeconds);
+    this.log?.info('game', 'run complete', {
+      seconds: Math.round(result.seconds * 100) / 100,
+      collected: result.collected,
+      of: result.collectibleCount,
+      improved: result.improved,
+    });
+
+    // The completion chord is queued before the status changes, because the
+    // audio path only runs while the game is playing.
+    this.audioDirector.push({ kind: 'complete' });
+    this.updateAudio(0);
+    this.renderFrame();
+
+    this.setStatus('completed');
+    this.options.input.clear();
+    this.domInput.exitPointerLock();
+    this.options.ui.showComplete(result);
+    this.updateGameHud();
+  }
+
   private resetSimulation(): void {
     this.level = buildLevel(this.definition, {
       maxSubStep: this.config.world.maxCollisionSubStep,
@@ -444,6 +554,12 @@ export class Game {
     this.climbables = collectClimbableIds(this.level.colliders);
     this.pipes = collectPipeIds(this.level.colliders);
     this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
+    this.elevators = new ElevatorSystem(this.definition.elevators ?? [], this.level.world, {
+      dwellSeconds: this.config.elevator.dwellSeconds,
+      speed: this.config.elevator.speed,
+    });
+    this.run.begin();
+    this.effectsSeconds = 0;
     resetPlayerState(this.player, this.config);
     this.audioDirector.reset();
     this.audioOutput.silence();
@@ -453,13 +569,23 @@ export class Game {
     this.sprinting = false;
     this.options.input.clear();
     this.motion.reset();
-    this.applyDoorState();
+    this.applyWorldState();
   }
 
-  /** Pushes every door's current opening to a freshly created view. */
-  private applyDoorState(): void {
+  /**
+   * Pushes the world's movable state to a freshly created view.
+   *
+   * A view is rebuilt on every restart, so everything the game has changed since
+   * the level was authored - which door is open, where the lifts are, which
+   * pickups are gone - has to be told to it again.
+   */
+  private applyWorldState(): void {
     if (!this.view) return;
     for (const door of this.doors.snapshot()) this.view.setDoorOpen(door.id, door.open);
+    for (const lift of this.elevators.snapshot()) this.view.setLift(lift.id, lift.topY);
+    for (const pickup of this.collectibles) {
+      this.view.setCollectibleVisible(pickup.id, !this.run.hasCollected(pickup.id));
+    }
   }
 
   private ensureView(): void {
@@ -588,23 +714,60 @@ export class Game {
     const moveInput = this.options.input.moveInput;
     this.sprinting = moveInput.sprint;
 
-    const steps = this.accumulator.run(delta, (step) => {
-      const outcome = stepPlayer(this.player, moveInput, step, this.stepOptions());
+    const moving =
+      Math.hypot(this.player.velocity.x, this.player.velocity.z) > 0.25 ||
+      moveInput.forward !== 0 ||
+      moveInput.right !== 0;
+
+    // The simulated time this frame actually covered. Not `steps * step`: a run
+    // that finishes part-way through a frame stops simulating, and the remaining
+    // sub-steps are not part of it.
+    let simulated = 0;
+
+    this.accumulator.run(delta, (dt) => {
+      if (this.status !== 'playing') return;
+      simulated += dt;
+
+      // Lifts move first, so a rider is carried *before* the step that decides
+      // what they are standing on - otherwise the floor would slide out from
+      // under them for a frame every time one started.
+      this.updateElevators(dt);
+
+      const outcome = stepPlayer(this.player, moveInput, dt, this.stepOptions());
       if (outcome.died) this.handleDeath();
       else if (outcome.respawned) this.handleRespawn();
       if (outcome.landing) this.handleLanding(outcome.landing.impact, outcome.landing.damage);
       if (outcome.started) this.audioDirector.maneuverStart(outcome.started);
       if (outcome.ended) this.audioDirector.maneuverEnd(outcome.ended);
       if (outcome.checkpoint !== null) this.handleCheckpoint(outcome.checkpoint);
+
+      this.run.tick(dt, moving);
+      this.updateTriggers();
     });
 
-    this.updateAudio(steps * fixedStep(this.config));
+    this.effectsSeconds += simulated;
+    this.updateAudio(simulated);
     this.trackMotion();
-    const swing = this.doors.update(steps * fixedStep(this.config));
+    const swing = this.doors.update(simulated);
     for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
+    this.view?.animate(this.effectsSeconds);
     this.stats.push(delta);
     this.renderFrame();
     this.updateHud();
+  }
+
+  /**
+   * Moves the lifts, and takes their passengers with them.
+   *
+   * The carry is a plain translation of the player by however far the platform
+   * moved, and it only happens for the lift the player is *standing on*: a player
+   * in the air above a rising lift should be caught by it, not dragged up by it.
+   */
+  private updateElevators(dt: number): void {
+    for (const ride of this.elevators.update(dt)) {
+      if (this.player.groundId === ride.id) carryRider(this.player, ride.deltaY);
+      this.view?.setLift(ride.id, ride.topY);
+    }
   }
 
   /**
@@ -625,7 +788,8 @@ export class Game {
   }
 
   /** Plays the cues this frame produced and updates the continuous wind. */
-  private updateAudio(simulatedSeconds: number): void {    if (this.status !== 'playing') return;
+  private updateAudio(simulatedSeconds: number): void {
+    if (this.status !== 'playing') return;
 
     let frame;
     try {

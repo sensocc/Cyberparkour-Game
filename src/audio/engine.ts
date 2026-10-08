@@ -17,6 +17,7 @@ import {
   MUSIC_SECONDS,
   SAMPLE_RATE,
   renderClimbTick,
+  renderComplete,
   renderDeath,
   renderFootstep,
   renderGrab,
@@ -24,6 +25,7 @@ import {
   renderHurt,
   renderLanding,
   renderMusic,
+  renderPickup,
   renderScrape,
   renderWhoosh,
   type FootstepVariant,
@@ -178,6 +180,16 @@ export class WebAudio implements AudioOutput {
           break;
         case 'whoosh':
           this.oneShot('whoosh', renderWhoosh);
+          break;
+        case 'pickup':
+          // One buffer per pitch step, so a pickup does not have to be
+          // re-synthesised every time one is taken.
+          this.oneShot(`pickup-${Math.min(10, Math.max(0, Math.round(cue.index)))}`, () =>
+            renderPickup(cue.index),
+          );
+          break;
+        case 'complete':
+          this.oneShot('complete', renderComplete);
           break;
       }
     } catch (error) {

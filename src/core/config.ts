@@ -246,6 +246,32 @@ export interface CheckpointConfig {
   readonly heightTolerance: number;
 }
 
+/**
+ * Lifts.
+ *
+ * A lift is the one piece of geometry that moves under its own power, so its
+ * numbers are about *patience* rather than speed: a slow lift with a long dwell
+ * is a place to stand and look around, and a fast one is a ride.
+ */
+export interface ElevatorConfig {
+  /** Seconds a lift waits at each end before it starts back (s). */
+  readonly dwellSeconds: number;
+  /** Travel speed while moving (m/s). */
+  readonly speed: number;
+}
+
+/** Pickups: how close the player has to pass to take one. */
+export interface CollectibleConfig {
+  readonly radius: number;
+  readonly heightTolerance: number;
+}
+
+/** The finishing line, and how close counts as crossing it. */
+export interface GoalConfig {
+  readonly radius: number;
+  readonly heightTolerance: number;
+}
+
 export interface HeadBobConfig {
   /** Metres of travel per full bob cycle, by gait. */
   readonly strideLength: Readonly<{ walk: number; sprint: number; crouch: number }>;
@@ -312,6 +338,9 @@ export interface GameConfig {
     readonly vault: VaultConfig;
   };
   readonly checkpoint: CheckpointConfig;
+  readonly elevator: ElevatorConfig;
+  readonly collectible: CollectibleConfig;
+  readonly goal: GoalConfig;
   readonly headBob: HeadBobConfig;
   readonly fallDamage: FallDamageConfig;
   readonly respawn: RespawnConfig;
@@ -456,6 +485,24 @@ export const DEFAULT_CONFIG: GameConfig = {
     // Generous, because a checkpoint is a kindness rather than a challenge, and
     // a route should not be lost to a near miss.
     radius: 3,
+    heightTolerance: 2.5,
+  },
+  elevator: {
+    // Slow, with a real pause at each end: a lift is where the route stops being
+    // about momentum for a moment, and a rider should be able to look around.
+    dwellSeconds: 2.4,
+    speed: 3.2,
+  },
+  collectible: {
+    // Tighter than a checkpoint: a pickup is a *thing to get*, so it should feel
+    // taken rather than merely passed.
+    radius: 1.3,
+    heightTolerance: 1.6,
+  },
+  goal: {
+    // Forgiving: crossing the line is the point, and a near miss at the end of a
+    // run would be cruel.
+    radius: 2.6,
     heightTolerance: 2.5,
   },
   headBob: {

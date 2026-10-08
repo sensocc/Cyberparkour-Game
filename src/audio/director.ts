@@ -35,7 +35,11 @@ export type AudioCue =
   | { readonly kind: 'whoosh' }
   | { readonly kind: 'hurt'; readonly damage: number }
   | { readonly kind: 'death' }
-  | { readonly kind: 'gust' };
+  | { readonly kind: 'gust' }
+  /** A pickup, with how many have been taken, which sets its pitch. */
+  | { readonly kind: 'pickup'; readonly index: number }
+  /** The finish line. */
+  | { readonly kind: 'complete' };
 
 export interface AudioFrame {
   readonly cues: readonly AudioCue[];

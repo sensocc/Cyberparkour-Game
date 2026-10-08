@@ -493,3 +493,53 @@ describe('GameUi death overlay', () => {
     expect(overlay?.getAttribute('aria-live')).toBe('polite');
   });
 });
+
+describe('the results screen', () => {
+  const RESULT = {
+    seconds: 62.5,
+    collected: 6,
+    collectibleCount: 8,
+    splits: [10, 25.5],
+    improved: true,
+    bestSeconds: 62.5,
+  };
+
+  it('shows the time, the record and the splits', () => {
+    const { root, ui } = createUi();
+    ui.showComplete(RESULT);
+
+    const screen = root.querySelector('.screen--complete');
+    expect(screen?.hasAttribute('hidden')).toBe(false);
+    expect(root.querySelector('.complete__time')?.textContent).toBe('1:02.50');
+    expect(root.querySelector('.complete__best')?.textContent).toBe('NEW BEST');
+    expect(screen?.textContent).toContain('6 / 8');
+    expect(root.querySelectorAll('.complete__split')).toHaveLength(2);
+    expect(root.querySelectorAll('.complete__split')[0]?.textContent).toContain('CP1');
+    expect(root.querySelectorAll('.complete__split')[0]?.textContent).toContain('0:10.00');
+  });
+
+  it('says what the record is when the run did not beat it', () => {
+    const { root, ui } = createUi();
+    ui.showComplete({ ...RESULT, seconds: 90, improved: false });
+    expect(root.querySelector('.complete__best')?.textContent).toBe('BEST 1:02.50');
+  });
+
+  it('offers another run and the main menu', () => {
+    const { root, ui, calls } = createUi();
+    ui.showComplete(RESULT);
+
+    click(root.querySelector('.screen--complete') as HTMLElement, /run it again/i);
+    expect(calls.onRestart).toHaveBeenCalledOnce();
+
+    ui.showComplete(RESULT);
+    click(root.querySelector('.screen--complete') as HTMLElement, /main menu/i);
+    expect(calls.onMainMenu).toHaveBeenCalledOnce();
+  });
+
+  it('hides the crosshair while it is up', () => {
+    const { root, ui } = createUi();
+    ui.showGame();
+    ui.showComplete(RESULT);
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+  });
+});

@@ -17,6 +17,7 @@ import { copyVec3, lengthVec3, vec3, type Vec3 } from '../../src/core/vec3.js';
 import { aabbFromCenterSize, overlaps } from '../../src/game/physics/aabb.js';
 import { buildLevel, groundHeightAt, propBounds, type BuiltLevel } from '../../src/game/level/level.js';
 import { DEMO_DISTRICT, type PropDefinition } from '../../src/game/level/levelData.js';
+import { ElevatorSystem, carryRider } from '../../src/game/level/elevators.js';
 import {
   createPlayerState,
   eyeHeight,
@@ -367,6 +368,40 @@ describe('the V0.3 abilities, on the district that ships', () => {
     expect(trace.maxY).toBeGreaterThan(CONFIG.maneuver.pullUp.maxHeight);
     expect(trace.maxY).toBeGreaterThan(pipeTop - 0.5);
     expect(trace.worstPenetration).toBe(0);
+  });
+
+  it('rides the lift from the works back up to the home roof', () => {
+    const { level, player, climbables } = createSimulation();
+    const lifts = new ElevatorSystem(DEMO_DISTRICT.elevators ?? [], level.world, {
+      dwellSeconds: CONFIG.elevator.dwellSeconds,
+      speed: CONFIG.elevator.speed,
+    });
+    const options = stepOptions(level, climbables);
+
+    // Stand on `lift-up` at the bottom of its travel. It sits in the gap between
+    // the works roof and `home`, so the platform is the only thing underfoot.
+    placeAt(player, 14, 14);
+    player.position.y = -4.79;
+    player.previousPosition = { ...player.position };
+
+    let highest = player.position.y;
+    let lowest = player.position.y;
+
+    for (let tick = 0; tick < 600; tick += 1) {
+      // Exactly the order the game uses: the lift moves, the rider is carried,
+      // then the physics steps onto the new surface.
+      for (const ride of lifts.update(STEP)) {
+        if (player.groundId === ride.id) carryRider(player, ride.deltaY);
+      }
+      stepPlayer(player, STILL, STEP, options);
+      highest = Math.max(highest, player.position.y);
+      lowest = Math.min(lowest, player.position.y);
+    }
+
+    // It arrives at the home roof - flush, at y = 0 - and took the player with it.
+    expect(highest).toBeGreaterThan(-0.05);
+    // ...and the floor never slid out from under them on the way.
+    expect(lowest).toBeGreaterThan(-5.1);
   });
 
   it('climbs the machine room pipe up to its roof', () => {

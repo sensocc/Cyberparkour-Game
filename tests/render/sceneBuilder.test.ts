@@ -22,6 +22,7 @@ function assetTextures(): SceneAssets {
     cityBackdrop: new THREE.Texture(),
     skybox: new THREE.CubeTexture(),
     surfaces: new Map(surfaceTextureIds().map((id) => [id, new THREE.Texture()])),
+    smoke: new THREE.Texture(),
   };
 }
 
@@ -330,6 +331,74 @@ describe('buildScene V0.4 content', () => {
   });
 });
 
+describe('buildScene V0.5 content', () => {
+  it('builds a car for every lift and a mesh for every pickup', () => {
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      expect([...built.lifts.keys()].sort()).toEqual(
+        (DEMO_DISTRICT.elevators ?? []).map((lift) => lift.id).sort(),
+      );
+      expect([...built.collectibles.keys()].sort()).toEqual(
+        (DEMO_DISTRICT.collectibles ?? []).map((pickup) => pickup.id).sort(),
+      );
+      for (const group of built.lifts.values()) expect(group.children.length).toBeGreaterThan(0);
+      for (const group of built.collectibles.values()) expect(group.visible).toBe(true);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('parks every lift at the bottom of its travel, ready to be told where it is', () => {
+    // The scene is built before the game exists, so it can only place a lift where
+    // the *level* says it starts. The game moves it into position before the first
+    // frame - see `Game.applyWorldState`.
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      for (const lift of DEMO_DISTRICT.elevators ?? []) {
+        const group = built.lifts.get(lift.id);
+        expect(group?.position.y, lift.id).toBeCloseTo(lift.lowTop - lift.thickness, 6);
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('spreads the smoke into sprites, and skips it without the puff texture', () => {
+    const assets = assetTextures();
+    const built = buildScene(DEMO_DISTRICT, assets);
+    const withoutPuff = buildScene(DEMO_DISTRICT, { ...assets, smoke: null });
+    try {
+      const expected = (DEMO_DISTRICT.smoke ?? []).reduce((total, plume) => total + plume.count, 0);
+      expect(expected).toBeGreaterThan(0);
+      expect(built.smoke).toHaveLength(expected);
+      for (const { sprite } of built.smoke) expect(sprite).toBeInstanceOf(THREE.Sprite);
+
+      // No texture, no smoke: a sprite without a map is a white square.
+      expect(withoutPuff.smoke).toEqual([]);
+    } finally {
+      built.dispose();
+      withoutPuff.dispose();
+    }
+  });
+
+  it('builds the finish as a pad and a beam of light', () => {
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      const goal = built.scene.getObjectByName(`goal:${DEMO_DISTRICT.goal?.id ?? ''}`);
+      expect(goal).toBeDefined();
+      expect(goal?.children).toHaveLength(2);
+
+      const beam = goal?.children[1] as THREE.Mesh;
+      const material = beam.material as THREE.MeshLambertMaterial;
+      expect(material.emissive.getHex()).not.toBe(0);
+      // Transparent *and* emissive: a column of light, not a block of paint.
+      expect(material.transparent).toBe(true);
+    } finally {
+      built.dispose();
+    }
+  });
+});
+
 describe('buildScene sky dome', () => {
   it('uses the cube skybox as the scene background', () => {
     const assets = assetTextures();
@@ -345,7 +414,7 @@ describe('buildScene sky dome', () => {
   });
 
   it('falls back to a flat colour when the skybox is missing', () => {
-    const built = buildScene(DEMO_DISTRICT, { cityBackdrop: null, skybox: null, surfaces: new Map() });
+    const built = buildScene(DEMO_DISTRICT, { cityBackdrop: null, skybox: null, surfaces: new Map(), smoke: null });
     try {
       const background = built.scene.background as THREE.Color;
       expect(background).toBeInstanceOf(THREE.Color);

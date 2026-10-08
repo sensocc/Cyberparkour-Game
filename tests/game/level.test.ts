@@ -64,10 +64,12 @@ describe('the shipped demo roof', () => {
 
   it('builds into a collision world', () => {
     const built = buildLevel(DEMO_DISTRICT, BUILD_OPTIONS);
-    // One collider per prop, plus one per door: a door is a collider that is not
-    // a prop.
+    // One collider per prop, plus one per door and one per lift: a door and a
+    // lift are colliders that are not props.
     expect(built.colliders).toHaveLength(
-      DEMO_DISTRICT.props.length + (DEMO_DISTRICT.doors?.length ?? 0),
+      DEMO_DISTRICT.props.length +
+        (DEMO_DISTRICT.doors?.length ?? 0) +
+        (DEMO_DISTRICT.elevators?.length ?? 0),
     );
     expect(built.world.colliders).toHaveLength(built.colliders.length);
     expect(built.definition).toBe(DEMO_DISTRICT);
@@ -177,11 +179,13 @@ describe('the shipped demo roof', () => {
     // Structures that deliberately span a gap have nothing under them by design,
     // and are checked separately below.
     const spanning = new Set(['canyon-beam', 'facade-canyon']);
-    // Signage is bolted to a wall face rather than stacked on a surface, so its
-    // underside rests on nothing. The flush-underside rule cannot see a wall - a
-    // sign shares no *top* face with what holds it up.
+    // Signage is bolted to a wall face and neon tube is laid along an edge, so
+    // neither is stacked on anything. The flush-underside rule cannot see a wall:
+    // a sign shares no *top* face with what holds it up.
     const mounted = new Set(
-      DEMO_DISTRICT.props.filter((entry) => entry.model === 'neon-sign').map((entry) => entry.id),
+      DEMO_DISTRICT.props
+        .filter((entry) => entry.model === 'neon-sign' || entry.model === 'neon-strip')
+        .map((entry) => entry.id),
     );
 
     const unsupported: string[] = [];
@@ -775,5 +779,146 @@ describe('the V0.4 interiors, doors, signage and pipes', () => {
     const beside = groundHeightAt(DEMO_DISTRICT, { x: pipe.position.x - 0.6, z: pipe.position.z }, top + 1);
     expect(beside).not.toBeNull();
     expect(Math.abs((beside ?? 0) - top)).toBeLessThan(0.05);
+  });
+});
+
+describe('the V0.5 works level, lifts and the run', () => {
+  const decks = (): readonly PropDefinition[] =>
+    DEMO_DISTRICT.props.filter((entry) => entry.id.endsWith('-deck') || entry.id === 'deck');
+
+  const topOf = (id: string): number => {
+    const prop = DEMO_DISTRICT.props.find((entry) => entry.id === id);
+    expect(prop, `expected a prop named ${id}`).toBeDefined();
+    return propBounds(prop as PropDefinition).max.y;
+  };
+
+  const liftById = (id: string) => {
+    const found = (DEMO_DISTRICT.elevators ?? []).find((entry) => entry.id === id);
+    expect(found, `expected a lift named ${id}`).toBeDefined();
+    return found as NonNullable<(typeof DEMO_DISTRICT.elevators)>[number];
+  };
+
+  it('adds a lower level of four roofs, reached by lift', () => {
+    const works = DEMO_DISTRICT.props.filter(
+      (entry) => entry.id.startsWith('works-') && entry.id.endsWith('-deck'),
+    );
+    expect(works).toHaveLength(4);
+    // Every one of them is below the roof line, so the district has a basement
+    // rather than being one flat plane.
+    for (const deck of works) {
+      expect(propBounds(deck).max.y, deck.id).toBeLessThan(0);
+    }
+  });
+
+  it('keeps the works roofs within a jump of each other', () => {
+    const runs = DEMO_DISTRICT.props
+      .filter((entry) => entry.id.startsWith('works-') && entry.id.endsWith('-deck'))
+      .map((entry) => propBounds(entry))
+      .sort((a, b) => a.min.x - b.min.x);
+
+    for (let index = 1; index < runs.length; index += 1) {
+      const left = runs[index - 1] as ReturnType<typeof propBounds>;
+      const right = runs[index] as ReturnType<typeof propBounds>;
+      expect(right.min.x - left.max.x, `${index}`).toBeLessThanOrEqual(5);
+      expect(Math.abs(right.max.y - left.max.y), `${index}`).toBeLessThan(1.5);
+    }
+  });
+
+  it('keeps every walkable deck well above the kill plane', () => {
+    const lowest = Math.min(...decks().map((deck) => propBounds(deck).max.y));
+    expect(lowest).toBeGreaterThan(DEMO_DISTRICT.killPlaneY + 5);
+  });
+
+  it('connects the route with lifts that arrive exactly at the floors they serve', () => {
+    // This is the whole contract of a lift: it starts and ends *flush*, so getting
+    // on and off is a step and not a climb - and a fraction out either way would
+    // be an invisible lip the mantle band will not take.
+    const down = liftById('lift-down');
+    expect(down.highTop).toBeCloseTo(topOf('far-deck'), 9);
+    expect(down.lowTop).toBeCloseTo(topOf('works-1-deck'), 9);
+
+    const up = liftById('lift-up');
+    expect(up.lowTop).toBeCloseTo(topOf('works-4-deck'), 9);
+    expect(up.highTop).toBeCloseTo(topOf('deck'), 9);
+  });
+
+  it('gives a lift enough travel to be worth riding', () => {
+    for (const lift of DEMO_DISTRICT.elevators ?? []) {
+      expect(lift.highTop - lift.lowTop, lift.id).toBeGreaterThan(1);
+      // Thin platforms are what the sub-step exists to catch.
+      expect(lift.thickness, lift.id).toBeGreaterThanOrEqual(SUB_STEP);
+    }
+  });
+
+  it('hangs every pickup within reach of something you can stand on', () => {
+    const pickups = DEMO_DISTRICT.collectibles ?? [];
+    expect(pickups.length).toBeGreaterThanOrEqual(6);
+
+    for (const pickup of pickups) {
+      const surface = groundHeightAt(
+        DEMO_DISTRICT,
+        { x: pickup.position.x, z: pickup.position.z },
+        pickup.position.y,
+      );
+      expect(surface, pickup.id).not.toBeNull();
+      // Close enough to be taken by walking under it or standing on the thing it
+      // is above, rather than only by a perfectly-timed jump.
+      expect(pickup.position.y - (surface ?? 0), pickup.id).toBeLessThan(1.6);
+    }
+  });
+
+  it('puts the finish on a roof', () => {
+    const goal = DEMO_DISTRICT.goal;
+    expect(goal).toBeDefined();
+    if (!goal) throw new Error('expected a goal');
+
+    const surface = groundHeightAt(
+      DEMO_DISTRICT,
+      { x: goal.position.x, z: goal.position.z },
+      goal.position.y + 0.01,
+    );
+    expect(surface).not.toBeNull();
+    expect(surface ?? 0).toBeCloseTo(goal.position.y, 6);
+  });
+
+  it('ends the route in the works, which is what arms the finish', () => {
+    const checkpoints = DEMO_DISTRICT.checkpoints;
+    const last = checkpoints[checkpoints.length - 1];
+    expect(last).toBeDefined();
+    expect((last?.position.y ?? 0) < 0, 'the last checkpoint is on the lower level').toBe(true);
+  });
+
+  it('anchors every smoke plume above ground, with sane numbers', () => {
+    const plumes = DEMO_DISTRICT.smoke ?? [];
+    expect(plumes.length).toBeGreaterThanOrEqual(4);
+
+    for (const plume of plumes) {
+      expect(groundHeightAt(DEMO_DISTRICT, { x: plume.position.x, z: plume.position.z }), plume.id).not.toBeNull();
+      expect(plume.count, plume.id).toBeGreaterThan(0);
+      expect(plume.period, plume.id).toBeGreaterThan(0);
+      expect(plume.opacity, plume.id).toBeGreaterThan(0);
+      expect(plume.opacity, plume.id).toBeLessThanOrEqual(1);
+      expect(plume.rise, plume.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('lights the district with bands and signs, not only the rooms', () => {
+    const lit = DEMO_DISTRICT.props.filter(
+      (entry) => entry.model === 'neon-sign' || entry.model === 'neon-strip',
+    );
+    expect(lit.length).toBeGreaterThanOrEqual(8);
+
+    for (const entry of lit) {
+      const model = modelById(entry.model);
+      const emissive = (model?.parts ?? []).filter((part) => surfaceById(part.surface)?.emissive === true);
+      expect(emissive.length, entry.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('lights the lifts and the finish, so they read as somewhere to go', () => {
+    const ids = new Set((DEMO_DISTRICT.lights ?? []).map((light) => light.id));
+    expect(ids.has('lamp-lift-down')).toBe(true);
+    expect(ids.has('lamp-lift-up')).toBe(true);
+    expect(ids.has('glow-goal')).toBe(true);
   });
 });

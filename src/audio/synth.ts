@@ -366,9 +366,61 @@ export function renderGrab(): Float32Array {
   return samples;
 }
 
+/**
+ * A pickup: a short bell that rises in pitch with each one taken.
+ *
+ * The rising pitch is the sound's whole job. It tells the player how many they
+ * have without them having to read the counter, which is the difference between
+ * a pickup that feels like progress and one that feels like a checkbox.
+ */
+export function renderPickup(index: number): Float32Array {
+  const steps = Math.min(10, Math.max(0, Math.round(index) - 1));
+  const frequency = 740 * Math.pow(2, (steps * 2) / 12);
+  const length = Math.round(SAMPLE_RATE * 0.34);
+
+  const softness = decayEnvelope(length, 0.006, 0.12);
+  const tone = decayingTone(length, frequency, frequency, 0.09);
+  const overtone = decayingTone(length, frequency * 2.01, frequency * 2.01, 0.06);
+  for (let index = 0; index < length; index += 1) {
+    tone[index] = (tone[index] as number) * (softness[index] as number);
+    overtone[index] = (overtone[index] as number) * (softness[index] as number);
+  }
+
+  const samples = new Float32Array(length);
+  mixInto(samples, tone, 0, 0.9);
+  mixInto(samples, overtone, 0, 0.22);
+  normalise(samples, 0.5);
+  return samples;
+}
+
+/**
+ * Crossing the finish line: a major chord that opens outward.
+ *
+ * Four voices on the same root, each entering a little later and fading a little
+ * longer, so it blooms rather than strikes - which is what a run's end should
+ * sound like, after however many minutes of footfalls.
+ */
+export function renderComplete(): Float32Array {
+  const length = Math.round(SAMPLE_RATE * 1.2);
+  const samples = new Float32Array(length);
+  const root = 523.25;
+
+  for (const [index, ratio] of [1, 1.26, 1.5, 2].entries()) {
+    const frequency = root * ratio;
+    const voice = decayingTone(length, frequency, frequency, 0.34 + index * 0.08);
+    const envelope = decayEnvelope(length, 0.012 + index * 0.02, 0.5);
+    for (let sample = 0; sample < length; sample += 1) {
+      voice[sample] = (voice[sample] as number) * (envelope[sample] as number);
+    }
+    mixInto(samples, voice, 0, 0.5 - index * 0.07);
+  }
+
+  normalise(samples, 0.65);
+  return samples;
+}
+
 /** A foot scraping onto a ledge, for the climb cadence. */
-export function renderClimbTick(variant: number): Float32Array {
-  const length = Math.round(SAMPLE_RATE * 0.22);
+export function renderClimbTick(variant: number): Float32Array {  const length = Math.round(SAMPLE_RATE * 0.22);
   const noise = whiteNoise(length, 0x6600 + variant * 17);
   lowpass(noise, 1200);
   highpass(noise, 300);
