@@ -12,7 +12,6 @@ import * as THREE from 'three';
 
 import { logger } from '../core/log.js';
 import type { SurfaceTextureId } from '../game/level/surfaces.js';
-import { METRES_PER_TILE } from '../game/level/surfaces.js';
 import cityBackdropUrl from '../assets/textures/city-backdrop.png';
 import smokeUrl from '../assets/textures/fx-smoke.png';
 import skyNx from '../assets/textures/sky-nx.png';
@@ -145,13 +144,56 @@ export async function loadSurfaceTextures(
       // a fixed physical size is what the scene builder's UVs assume.
       texture.wrapS = THREE.RepeatWrapping;
       texture.wrapT = THREE.RepeatWrapping;
+      // A baseline that does not depend on the hardware. `applyAnisotropy` raises
+      // this to whatever the GPU reports once there is a renderer to ask; this is
+      // what anything that never reaches a renderer will use.
       texture.anisotropy = 4;
-      void METRES_PER_TILE[id];
       return [id, texture] as const;
     }),
   );
 
   return new Map(loaded.filter((entry): entry is readonly [SurfaceTextureId, THREE.Texture] => entry !== null));
+}
+
+/** Every texture a scene can hand to the renderer. */
+function sceneTextures(assets: SceneAssets): THREE.Texture[] {
+  const textures: THREE.Texture[] = [...assets.surfaces.values()];
+  if (assets.cityBackdrop) textures.push(assets.cityBackdrop);
+  if (assets.skybox) textures.push(assets.skybox);
+  if (assets.smoke) textures.push(assets.smoke);
+  return textures;
+}
+
+/**
+ * Raises every scene texture to the sharpest filtering the GPU offers.
+ *
+ * Grazing angles are where a tiled surface falls apart. A deck plate seen from the
+ * far side of the district covers hundreds of texels along the view direction for
+ * every one it covers across it, so no single mip level is right for both, and
+ * trilinear sampling picks one that is wrong for the pair. What the eye sees is
+ * sparkle and crawl over every surface whenever the camera moves - worst exactly
+ * when the player is running, which is when it matters most.
+ *
+ * Anisotropic filtering samples along the line the pixel actually covers instead.
+ * It is the cheapest fix there is: one texture parameter, no extra pass, and the
+ * hardware does the work at a cost bounded by the sample count the GPU reports.
+ *
+ * Must run before the first render. three.js applies these parameters when it
+ * uploads a texture and nothing re-uploads one afterwards, so this is called from
+ * the view's constructor with the renderer's own limit.
+ */
+export function applyAnisotropy(assets: SceneAssets, maxAnisotropy: number): void {
+  const samples = Math.max(1, Math.floor(maxAnisotropy));
+  for (const texture of sceneTextures(assets)) {
+    texture.anisotropy = samples;
+    // Mipmaps are what stop minified detail aliasing at all, and blending
+    // between three levels (rather than picking one) is what stops the seams
+    // between them showing up as bands across a receding surface.
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+  }
 }
 
 /** Loads everything the scene needs, in parallel. */

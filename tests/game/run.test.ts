@@ -83,7 +83,11 @@ describe('checkpoints and the finish', () => {
     run.tick(4, true);
     expect(run.reachCheckpoint(2)).toBe(true);
 
-    expect(run.snapshot().splits).toEqual([2, 5, 9]);
+    expect(run.snapshot().splits).toEqual([
+      { checkpoint: 0, seconds: 2 },
+      { checkpoint: 1, seconds: 5 },
+      { checkpoint: 2, seconds: 9 },
+    ]);
     expect(run.reachedIndex).toBe(2);
   });
 
@@ -94,13 +98,29 @@ describe('checkpoints and the finish', () => {
     run.tick(1, true);
 
     expect(run.reachCheckpoint(0)).toBe(false);
-    expect(run.snapshot().splits).toEqual([1]);
+    expect(run.snapshot().splits).toEqual([{ checkpoint: 0, seconds: 1 }]);
   });
 
   it('ignores a nonsense index', () => {
     const run = new RunState(options());
     expect(run.reachCheckpoint(-1)).toBe(false);
     expect(run.reachCheckpoint(1.5)).toBe(false);
+  });
+
+  it('keeps the splits dense and labelled when a checkpoint is skipped', () => {
+    // Skipping is allowed - reaching a later roof on foot is still progress - so
+    // the splits must not be an array indexed by checkpoint, or the results
+    // screen would print a split against a checkpoint the run never touched.
+    const run = new RunState(options());
+    run.tick(4, true);
+    run.reachCheckpoint(0);
+    run.tick(6, true);
+    run.reachCheckpoint(2);
+
+    expect(run.snapshot().splits).toEqual([
+      { checkpoint: 0, seconds: 4 },
+      { checkpoint: 2, seconds: 10 },
+    ]);
   });
 
   it('arms the finish only once every checkpoint is behind you', () => {
@@ -144,6 +164,23 @@ describe('pickups', () => {
 });
 
 describe('finishing', () => {
+  it('does not record a run that never started', () => {
+    // A level whose finish is reachable without moving would otherwise write a
+    // best of 0.000 - and the record is the one thing that outlives the session,
+    // so every later run would compare against it and never improve.
+    const run = new RunState(options({ bestSeconds: null }));
+    const result = run.finish();
+
+    expect(result?.seconds).toBe(0);
+    expect(result?.improved).toBe(false);
+    expect(run.snapshot().bestSeconds).toBeNull();
+
+    // ...and a real run afterwards is still a record.
+    run.begin();
+    run.tick(9, true);
+    expect(run.finish()?.improved).toBe(true);
+  });
+
   it('reports the run and sets the record when there was none', () => {
     const run = new RunState(options({ bestSeconds: null }));
     run.tick(12, true);

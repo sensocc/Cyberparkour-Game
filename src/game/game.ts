@@ -456,6 +456,12 @@ export class Game {
    * and a trigger that is only tested per frame is a trigger that can be run past.
    */
   private updateTriggers(): void {
+    // A dead player is falling, not running: they must not take a pickup on the
+    // way past one, and - worse - they must not *finish* on the way past the
+    // goal. Dying from the landing that put you on the pad is a death, not a
+    // completed run.
+    if (!this.player.alive) return;
+
     const { radius, heightTolerance } = this.config.collectible;
     for (const pickup of this.collectibles) {
       if (this.run.hasCollected(pickup.id)) continue;
@@ -825,13 +831,18 @@ export class Game {
 
   /** The play HUD lives next to the health and the checkpoints, not the debug rows. */
   private updateHud(): void {
+    // The play HUD moves every frame. Its clock is the whole point of the time
+    // trial, and a timer that ticks ten times a second reads as broken; the rest
+    // of it is a handful of text nodes and a transform, written only when they
+    // change. The debug overlay is the expensive one - a dozen rows of measured
+    // text - so it keeps its 10 Hz budget.
+    this.updateGameHud();
+
     const stats = this.stats.snapshot();
     const interval = 1 / Math.max(1, this.config.debug.hudRefreshHz);
     if (stats.elapsedSeconds - this.lastHudUpdate < interval) return;
     this.lastHudUpdate = stats.elapsedSeconds;
-
     this.options.hud.update(this.hudSnapshot(stats));
-    this.updateGameHud();
   }
 
   private hudSnapshot(stats: StatsSnapshot): HudSnapshot {
@@ -878,6 +889,10 @@ export class Game {
           // Works whichever door the player is standing next to, if any. Doing
           // nothing when there is none is correct: there is no "use" target, so
           // there is nothing to report.
+          //
+          // Only while playing: on the title screen, or frozen behind a results
+          // screen, a stray E must not swing a door somewhere off-camera.
+          if (this.status !== 'playing') break;
           const worked = this.doors.toggleNear(this.player.position);
           if (worked !== null) this.log?.debug('game', 'door worked', { door: worked });
           break;

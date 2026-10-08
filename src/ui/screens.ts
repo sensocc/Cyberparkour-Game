@@ -112,7 +112,7 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.5 technical demo: a complete district on two levels, joined by lifts, with pickups, a finish line and a clock on the wall.',
+        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.5.1 technical demo: a complete district on two levels, joined by lifts, with pickups, a finish line and a clock on the wall.',
       }),
       this.menu([
         button('Play', {
@@ -348,8 +348,11 @@ export class GameUi {
     );
 
     this.completeSplits.replaceChildren(
-      ...summary.splits.map((seconds, index) =>
-        el('li', { className: 'complete__split', text: `CP${index + 1}  ${formatRunTime(seconds)}` }),
+      ...summary.splits.map((split) =>
+        el('li', {
+          className: 'complete__split',
+          text: `CP${split.checkpoint + 1}  ${formatRunTime(split.seconds)}`,
+        }),
       ),
     );
 

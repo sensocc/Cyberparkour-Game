@@ -19,7 +19,7 @@ import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '..
 import { GameHud } from '../../src/ui/gameHud.js';
 import { DebugHud } from '../../src/ui/hud.js';
 import { GameUi } from '../../src/ui/screens.js';
-import type { TimeStore } from '../../src/game/run.js';
+import { formatRunTime, type TimeStore } from '../../src/game/run.js';
 import { FakeScheduler } from '../helpers/fakeScheduler.js';
 
 interface RenderedFrame {
@@ -1207,5 +1207,82 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     // The pickup is back: a restart is the route from the beginning.
     expect(harness.game.runSnapshot.collected).toBe(0);
     expect(harness.views[1]?.pickups).toContainEqual({ id: 'test-shard', visible: true });
+  });
+});
+
+describe('the V0.5.1 fixes', () => {
+  /**
+   * The demo district with a finish that sits *below* its kill plane.
+   *
+   * Contrived, and deliberately so: it is the one arrangement in which the player
+   * is dead and still inside the goal's reach. They fall off the home roof, the
+   * kill plane takes them at -12, and they keep falling - through the line at -15.
+   * A finish you can cross while dead is not a finished run.
+   */
+  const FATAL_GOAL_LEVEL = {
+    ...DEMO_DISTRICT,
+    checkpoints: [],
+    collectibles: [],
+    goal: { id: 'test-goal', position: { x: 0, y: -15, z: 20 } },
+  };
+
+  it('does not finish the run when the player is dead', () => {
+    const harness = createHarness({ level: FATAL_GOAL_LEVEL });
+    harness.game.start();
+
+    // Walk south, off the edge: the kill plane takes them, and they fall through
+    // the line on the way down.
+    harness.input.keyDown('KeyS');
+    stepFrames(harness, 200);
+
+    expect(harness.game.snapshot().player.deaths).toBeGreaterThan(0);
+    expect(harness.game.runSnapshot.finished).toBe(false);
+    expect(harness.game.currentStatus).toBe('playing');
+    expect(document.querySelector('.screen--complete')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('keeps the play HUD clock in step with the run, every frame', () => {
+    const harness = createHarness();
+    harness.game.start();
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 8);
+
+    // The clock is the point of the time trial, so it may not lag behind the run
+    // it is timing: this is what a ten-Hertz refresh looked like from outside.
+    const run = harness.game.runSnapshot;
+    expect(run.started).toBe(true);
+    expect(document.querySelector('.vitals__time')?.textContent).toBe(
+      formatRunTime(run.elapsedSeconds),
+    );
+  });
+
+  it('ignores the interact key when the game is not playing', () => {
+    const DOOR_LEVEL = {
+      ...DEMO_DISTRICT,
+      doors: [
+        {
+          id: 'test-door',
+          position: { x: 0, y: 1.1, z: 1 },
+          size: { x: 1.4, y: 2.2, z: 0.3 },
+          hinge: 'x-' as const,
+          openAngle: 2.1,
+        },
+      ],
+    };
+    const harness = createHarness({ level: DOOR_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+    harness.game.pause();
+
+    // E while paused must not queue a door to swing open behind the menu.
+    harness.input.keyDown('KeyE');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyE');
+
+    harness.game.resume();
+    stepFrames(harness, 90);
+
+    const latest = harness.views[0]?.doors.at(-1);
+    expect(latest?.open).toBe(0);
   });
 });

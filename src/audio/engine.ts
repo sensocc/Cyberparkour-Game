@@ -16,6 +16,7 @@ import type { AudioCue } from './director.js';
 import {
   MUSIC_SECONDS,
   SAMPLE_RATE,
+  pitchStep,
   renderClimbTick,
   renderComplete,
   renderDeath,
@@ -183,10 +184,10 @@ export class WebAudio implements AudioOutput {
           break;
         case 'pickup':
           // One buffer per pitch step, so a pickup does not have to be
-          // re-synthesised every time one is taken.
-          this.oneShot(`pickup-${Math.min(10, Math.max(0, Math.round(cue.index)))}`, () =>
-            renderPickup(cue.index),
-          );
+          // re-synthesised every time one is taken. The key is the *step*, not the
+          // index: `renderPickup` clamps its own pitch, so keying on the index would
+          // cache a separate (identical) buffer for every past the tenth.
+          this.oneShot(`pickup-${pitchStep(cue.index)}`, () => renderPickup(cue.index));
           break;
         case 'complete':
           this.oneShot('complete', renderComplete);

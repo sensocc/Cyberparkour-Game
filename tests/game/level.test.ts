@@ -922,3 +922,42 @@ describe('the V0.5 works level, lifts and the run', () => {
     expect(ids.has('glow-goal')).toBe(true);
   });
 });
+
+describe('the mounted neon', () => {
+  /**
+   * Two lit faces at the same depth and covering the same pixels are the one
+   * arrangement a depth buffer cannot resolve: the test is a tie, so which surface
+   * wins is decided by rounding, and the pair speckles and crawls as the camera
+   * moves. Every mounted plate therefore needs a standoff of its own.
+   *
+   * (A plate a few millimetres in front of the wall behind it is *not* a problem -
+   * its rear face points away from the camera and is culled - so the gap to the
+   * wall is a look decision. The gap to another plate is a bug.)
+   */
+  const PLANE_TOLERANCE = 0.02;
+
+  const spans = (a: number, b: number): readonly [number, number] => [a, b];
+  const overlap = (a: readonly [number, number], b: readonly [number, number]): boolean =>
+    a[0] < b[1] && b[0] < a[1];
+
+  it('hangs no two plates on the same plane', () => {
+    const built = buildLevel(DEMO_DISTRICT, BUILD_OPTIONS);
+    const plates = built.colliders.filter((collider) => /^(sign|strip)-/.test(collider.id));
+    expect(plates.length).toBeGreaterThan(0);
+
+    const clashes: string[] = [];
+    for (let i = 0; i < plates.length; i += 1) {
+      for (let j = i + 1; j < plates.length; j += 1) {
+        const a = plates[i]!;
+        const b = plates[j]!;
+        if (!overlap(spans(a.box.min.x, a.box.max.x), spans(b.box.min.x, b.box.max.x))) continue;
+        if (!overlap(spans(a.box.min.y, a.box.max.y), spans(b.box.min.y, b.box.max.y))) continue;
+        if (Math.abs(a.box.max.z - b.box.max.z) < PLANE_TOLERANCE) {
+          clashes.push(`${a.id} and ${b.id} both light the plane z=${a.box.max.z.toFixed(3)}`);
+        }
+      }
+    }
+
+    expect(clashes).toEqual([]);
+  });
+});

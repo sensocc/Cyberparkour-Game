@@ -146,9 +146,9 @@ export class ElevatorSystem {
     if (t < travel) return definition.lowTop + (t / travel) * span;
     t -= travel;
     if (t < this.dwell) return definition.highTop;
-    // The falling leg: `t` is now measured from the end of the *high dwell*, so
-    // subtracting the travel here rather than the dwell is what sent the platform
-    // up past its own ceiling on the way down.
+    // The falling leg: `t` now runs from 0 to `travel` measured from the end of
+    // the high dwell, so the *dwell* comes off here. Subtracting the travel was
+    // what used to send the platform up past its own ceiling on the way down.
     t -= this.dwell;
     return definition.highTop - (t / travel) * span;
   }

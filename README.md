@@ -5,52 +5,58 @@
 A low-poly, Quake-styled **first-person parkour game** set in a cyberpunk city,
 in the spirit of *Mirror's Edge*.
 
-This repository currently contains **V0.5**. V0.3 made the roof a route, and V0.4
-took the route indoors. V0.5 makes it a **level**: nine roofs on two levels, joined
+This repository currently contains **V0.5.1**. V0.3 made the roof a route, and V0.4
+took the route indoors. V0.5 made it a **level**: nine roofs on two levels, joined
 by two lifts so the district closes into a loop rather than running out at one end,
 with eight pickups strung along the way, a finish line that only opens when the
 route is behind you, and a clock. The air has fog and drifting smoke in it, the sky
 has stars in it, and the neon is on the buildings as well as the signs.
+
+V0.5.1 is a **bugfix release on top of that**: it repairs a test that CI ran out of
+time for, a clock that ticked ten times a second instead of sixty, and a handful of
+ways the run could be finished, timed or labelled wrongly — and softens the head bob
+significantly. No new feature, and nothing from V0.6.
 
 ---
 
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.5 delivers](#what-v05-delivers)
-3. [Quick start](#quick-start)
-4. [Controls](#controls)
-5. [What you should see](#what-you-should-see)
-6. [Locomotion](#locomotion)
-7. [The movement state machine](#the-movement-state-machine)
-8. [The manoeuvre bands](#the-manoeuvre-bands)
-9. [Wall running](#wall-running)
-10. [Wall jumping](#wall-jumping)
-11. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-12. [The landing roll](#the-landing-roll)
-13. [Pipe climbing](#pipe-climbing)
-14. [Interiors and doors](#interiors-and-doors)
-15. [Lifts](#lifts)
-16. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-17. [Checkpoints and respawn](#checkpoints-and-respawn)
-18. [The district](#the-district)
-19. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-20. [Neon](#neon)
-21. [Fall damage and health](#fall-damage-and-health)
-22. [Models and surfaces](#models-and-surfaces)
-23. [Sound](#sound)
-24. [How the textures are made](#how-the-textures-are-made)
-25. [Architecture](#architecture)
-26. [How a frame works](#how-a-frame-works)
-27. [Collision](#collision)
-28. [Crash reporting](#crash-reporting)
-29. [The HUDs](#the-huds)
-30. [Testing](#testing)
-31. [Continuous integration](#continuous-integration)
-32. [Project layout](#project-layout)
-33. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-34. [Out of scope for V0.5](#out-of-scope-for-v05)
-35. [Roadmap](#roadmap)
+2. [What V0.5.1 fixes](#what-v051-fixes)
+3. [What V0.5 delivers](#what-v05-delivers)
+4. [Quick start](#quick-start)
+5. [Controls](#controls)
+6. [What you should see](#what-you-should-see)
+7. [Locomotion](#locomotion)
+8. [The movement state machine](#the-movement-state-machine)
+9. [The manoeuvre bands](#the-manoeuvre-bands)
+10. [Wall running](#wall-running)
+11. [Wall jumping](#wall-jumping)
+12. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+13. [The landing roll](#the-landing-roll)
+14. [Pipe climbing](#pipe-climbing)
+15. [Interiors and doors](#interiors-and-doors)
+16. [Lifts](#lifts)
+17. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+18. [Checkpoints and respawn](#checkpoints-and-respawn)
+19. [The district](#the-district)
+20. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+21. [Neon](#neon)
+22. [Fall damage and health](#fall-damage-and-health)
+23. [Models and surfaces](#models-and-surfaces)
+24. [Sound](#sound)
+25. [How the textures are made](#how-the-textures-are-made)
+26. [Architecture](#architecture)
+27. [How a frame works](#how-a-frame-works)
+28. [Collision](#collision)
+29. [Crash reporting](#crash-reporting)
+30. [The HUDs](#the-huds)
+31. [Testing](#testing)
+32. [Continuous integration](#continuous-integration)
+33. [Project layout](#project-layout)
+34. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+35. [Out of scope for V0.5](#out-of-scope-for-v05)
+36. [Roadmap](#roadmap)
 
 ---
 
@@ -58,16 +64,118 @@ has stars in it, and the neon is on the buildings as well as the signs.
 
 | | |
 | --- | --- |
-| Version | `0.5.0` |
+| Version | `0.5.1` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 939 across 35 files |
+| Tests | 950 across 35 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.5 is finished and frozen. Nothing from V0.6 onward is implemented, and none of
-it is stubbed.
+V0.5 is finished and frozen, and V0.5.1 fixes the bugs found in it. Nothing from
+V0.6 onward is implemented, and none of it is stubbed.
+
+---
+
+## What V0.5.1 fixes
+
+V0.5.1 adds nothing. It fixes what V0.5 got wrong, and it is the first release whose
+*first* CI run on `main` came back red — so the worst of these was found by a
+machine, in public, and the rest by re-reading V0.5 line by line afterwards.
+
+**The texture test ran out of time on CI.** `tests/render/textures.test.ts > the
+committed texture set > is deterministic` failed on Node 22 with `Test timed out in
+5000ms`, having passed every time locally, where the machine is faster and Node is
+newer. The cause was V0.5's own skybox: the faces went from 256² to 512², and that
+test regenerates the whole texture set **twice** — several million pixels, each
+leaning on half a dozen transcendental functions. The generated images are now cached
+for the life of the file, so the four separate tests that want the 2048×512 skyline
+build it once between them, and the two tests that genuinely *are* made of pixel work
+are given an explicit 30-second budget instead of Vitest's five-second default for an
+ordinary unit test. A budget that says "this finished" rather than "this finished
+quickly" is the right shape for work that is heavy by nature — and it still catches a
+hang.
+
+**The clock ticked ten times a second.** The run timer advanced in visible 0.1 s
+steps: hundredths were *displayed*, but only decided ten times a second, which made
+the headline feature of the release read as broken rather than as precise. The play
+HUD is now refreshed every frame, and only the debug overlay keeps its 10 Hz budget,
+because only it is a dozen rows of measured text. The HUD also writes each text node
+only when its value actually changed, so refreshing it every frame costs nothing.
+
+**A dead player could still finish.** Falling to your death *through* the finish line
+completed the run, from mid-air, and the death was never resolved because the results
+screen replaced it. Pickups and the goal are now ignored entirely unless the player is
+alive: dying is a setback, not a shortcut.
+
+**A zero-second record.** A run that finished with the clock never started stored a
+best of `0.000`, and because the record only ever improves, **no later run could ever
+beat it** — the one thing in the game that outlives the session, permanently ruined by
+the first odd run. `RunState.finish` now only records a run that had a time on the
+clock.
+
+**Splits were indexed by checkpoint.** A checkpoint can be skipped, and the splits
+were stored *by* checkpoint index, which left holes: the results screen printed a time
+against a checkpoint the run had never touched, and `-:--.--` against ones it had. A
+split now carries its own checkpoint index, so the list is dense and every label is one
+the route actually reached.
+
+**`E` worked outside a run.** A stray interact keypress on the title screen, or from
+behind the results screen, could swing a door somewhere off-camera. The interact
+action is now only read while the game is playing.
+
+**The recovered-report banner wore alarm red.** Good news on the title screen — "a
+report from a previous session was saved" — rendered in the same red-bordered box as a
+fault. It now uses the `--ok` colour, which had been defined in the stylesheet and
+never used, which is a fair sign it was always meant to be.
+
+**Pickup buffers were keyed by index.** Every pickup past the tenth cached its own
+buffer, all of them the same sound. The cache key is the pitch *step* now, shared with
+`renderPickup` so the two cannot disagree about where the pitch stops rising.
+
+**Two lit plates on one plane.** The canyon sign hung directly across the middle lit
+band of the facade at exactly the same standoff — two lit faces at the same depth
+covering the same pixels, which is the one arrangement a depth buffer cannot resolve:
+the depth test ties, rounding decides, and the pair speckles and crawls as the camera
+moves. The sign now hangs in the gap between two bands, and a level test holds every
+mounted plate to a plane of its own. (A plate a few millimetres in front of the wall
+behind it is *not* the same thing: its rear face points away from the camera and is
+culled, so that gap is a look decision rather than a bug.)
+
+And three changes that are not fixes but were asked for. All of them are about the
+same thing, which is what the demo feels like while you are moving through it:
+
+**Head bob, softened significantly.** From 3.4 cm vertical and 1.7 cm lateral settling
+at 4.5/s to **1.7 cm vertical and 0.8 cm lateral**, settling at 3.2/s and falling off
+harder with speed, on a slightly longer stride — a rise and fall of 3.4 cm peak to
+peak at a walk and 1.9 cm at a sprint. The camera is the player's whole view of the
+world: a bob the eye has to *track* stops being atmosphere and becomes noise, and the
+works level — long drops onto a narrow deck — is exactly where that stops reading as
+running and starts reading as being shaken.
+
+**Texture shimmer, taken out with anisotropic filtering.** This is the one that
+matters most, and it is the largest single change in how the demo *looks*: the demo
+was rendering with four samples of anisotropic filtering on the object surfaces and
+**none on the skyline, the skybox or the smoke**. A player running across a roof is
+looking at it at a grazing angle, where a tiled texture covers hundreds of texels
+along the view direction for every one it covers across it — so no single mip level is
+right for both, trilinear sampling picks one that is wrong for the pair, and what the
+eye sees is sparkle and crawl over every surface and along the horizon whenever the
+camera moves. Every scene texture now asks for whatever the GPU reports, capped at
+sixteen: one texture parameter, no extra pass, and the hardware does the work.
+
+**A cheaper, exactly-rounded star test.** The skybox generator measured the distance
+from a pixel to a star with `Math.hypot`, which is not a correctly-rounded operation
+and is implemented differently by different JavaScript engines. `Math.sqrt(dx*dx +
+dy*dy)` is exactly rounded under IEEE 754, so that comparison's arithmetic cannot
+differ between engines, and it does less work — which is worth something at half a
+million pixels a face. The committed textures are byte-identical afterwards, which is
+what made it safe to change.
+
+Every one of these has a regression test. Two are worth pointing at specifically
+because they were written by reproducing the bug first: the dead player
+(`tests/game/game.test.ts`) fails against V0.5's code and passes against this one, and
+so does the zero-second record (`tests/game/run.test.ts`).
 
 ---
 
@@ -192,8 +300,9 @@ much lower friction and a 12% speed boost. It ends once friction has bled it bel
 2.6 m/s, or after 2.6 seconds, or when crouch is released.
 
 **Head bob.** Driven by *distance travelled* rather than time, so the cadence
-tracks speed and is identical at any frame rate. Deliberately quiet: 3.4 cm
-vertical, 1.7 cm lateral, a slow fade, and an amplitude that falls off with speed.
+tracks speed and is identical at any frame rate. Deliberately quiet, and softened
+again in V0.5.1 to roughly half what V0.3 settled on: 1.7 cm vertical, 0.8 cm
+lateral, a slow fade, and an amplitude that falls off with speed.
 
 ---
 
@@ -775,7 +884,7 @@ cyberparkour.logs.entries()
 npm test
 ```
 
-939 tests in 35 files, in five layers:
+950 tests in 35 files, in five layers:
 
 - **Unit tests** — maths, the delta-time system, the game loop, the input state, the
   AABB helpers, the collision solver, every movement mode and their transitions, the
@@ -798,7 +907,11 @@ npm test
   pointer-lock lifecycle.
 - **Asset tests** (`tests/render/`) — the scene graph (skybox, backdrop, lighting,
   point lights, emissive signs, door pivots, lift cars, pickups, smoke, the finish,
-  UV scaling, disposal) and the committed textures against their generators.
+  UV scaling, disposal) and the committed textures against their generators. Those
+  last ones are the only tests in the suite that are *expensive*: the committed
+  set is several million pixels, so the file caches each generated image rather
+  than building it once per test, and the two tests that genuinely are made of
+  pixel work are given a 30-second budget rather than Vitest's five-second default.
 
 Several tests exist because they caught real bugs during development:
 
@@ -825,6 +938,25 @@ Several tests exist because they caught real bugs during development:
 - The below-horizon sky *restarted* at a darker colour instead of carrying the
   horizon down with it, which drew a hard line across the sky.
 
+And in V0.5.1, from the first red CI run on `main` and from re-reading V0.5 with
+fresh eyes:
+
+- The committed-texture test regenerated the whole texture set twice and blew
+  Vitest's five-second timeout on CI's slower runners — the bug the release exists
+  for. It never failed locally, which is the whole reason it is worth a *budget*
+  rather than a faster machine next time.
+- The run clock only reached the screen ten times a second, so a timer showing
+  hundredths advanced in visible tenths.
+- A dead player falling through the finish line completed the run.
+- A run finished with no time on the clock stored a best of `0.000`, which nothing
+  could ever beat again.
+- The splits array was indexed by checkpoint, so skipping one shifted every label
+  after it.
+- `E` outside a run could still open a door.
+- The recovered-report banner on the title screen was styled as an error.
+- The pickup sample cache was keyed by index rather than by pitch step, so it grew
+  a duplicate buffer for every pickup past the tenth.
+
 ---
 
 ## Continuous integration
@@ -839,7 +971,13 @@ on demand. On Node 22 and Node 24 it:
 5. uploads the coverage report and the built `dist/` as artifacts.
 
 `npm run ci` runs the identical sequence locally, so a green local run means a green
-build.
+build — which is what V0.5 was merged on the strength of, and what V0.5.1 exists to
+make true again.
+
+The one wrinkle worth knowing about: the texture tests generate megabytes of pixels,
+and they are the only tests here whose runtime is bounded by how fast the runner is
+rather than by what they assert. They carry an explicit 30-second budget so that a
+slow runner proves the images *match*, not that the machine is quick.
 
 ---
 
@@ -971,6 +1109,12 @@ skybox, the textures, the lighting and the movement abilities were checked.
 
 **The crash reporter is local-only.** Nothing is uploaded.
 
+**The texture tests are the slow ones.** Not a limitation of the demo, but of the
+suite: they generate the committed image set from scratch to prove it has not gone
+stale, which is seconds of work on any machine rather than milliseconds. They carry a
+30-second budget for exactly that reason, and the rest of the suite is a second and a
+half.
+
 **No `LICENSE` file yet.** Without one, the default is "all rights reserved".
 
 ---
@@ -978,7 +1122,7 @@ skybox, the textures, the lighting and the movement abilities were checked.
 ## Out of scope for V0.5
 
 The roadmap continues past this demo. Nothing below is implemented, and none of it is
-stubbed:
+stubbed — V0.5.1 changed no behaviour that is listed here:
 
 **V0.6** feel, camera effects, animations, lighting, audio, models, UI,
 optimisation, settings (sensitivity, FOV, graphics, keybinds), player model.
@@ -993,10 +1137,14 @@ V0.0 built the engine skeleton, V0.1 made it a place, V0.2 made it a place you c
 move through, V0.3 turned it into a route, and V0.4 opened the route up — indoors,
 onto the signage, and into a movement state machine.
 
-V0.5, this version, makes it a **level**: nine roofs on two levels joined by two
-lifts into a loop, eight pickups along the way, a finish that has to be earned, and a
-clock that is kept between sessions. The air has fog and smoke in it, the sky has
-stars, and the neon is on the buildings.
+V0.5 made it a **level**: nine roofs on two levels joined by two lifts into a loop,
+eight pickups along the way, a finish that has to be earned, and a clock that is kept
+between sessions. The air has fog and smoke in it, the sky has stars, and the neon is
+on the buildings.
+
+V0.5.1, this version, is the bugfix release for V0.5: the CI timeout, the ten-Hertz
+clock, finishing while dead, the unbreakable zero-second record, and a softer head
+bob. It is the release that makes the green badge true again.
 
 The next milestone is V0.6: feel, camera effects, animation, lighting, audio, models
 and optimisation — the polish pass that turns a level into a game.

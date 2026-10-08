@@ -11,6 +11,7 @@ import * as THREE from 'three';
 
 import {
   TEXTURE_URLS,
+  applyAnisotropy,
   disposeSceneAssets,
   loadSceneAssets,
   loadSkybox,
@@ -256,5 +257,64 @@ describe('NO_ASSETS', () => {
     expect(NO_ASSETS.skybox).toBeNull();
     expect(NO_ASSETS.surfaces.size).toBe(0);
     expect(logsFrom(() => NO_ASSETS).logs).toEqual([]);
+  });
+});
+
+describe('applyAnisotropy', () => {
+  /** The textures a scene can hold, with only the ones that matter filled in. */
+  function assets(): { cityBackdrop: THREE.Texture | null; skybox: THREE.Texture | null; surfaces: Map<string, THREE.Texture>; smoke: THREE.Texture | null } {
+    return {
+      cityBackdrop: new THREE.Texture(),
+      skybox: new THREE.CubeTexture(),
+      surfaces: new Map([
+        ['deck-plate', new THREE.Texture()],
+        ['concrete', new THREE.Texture()],
+      ]),
+      smoke: new THREE.Texture(),
+    };
+  }
+
+  it('raises every texture to the sample count the GPU offers', () => {
+    const scene = assets();
+    applyAnisotropy(scene as never, 16);
+
+    for (const texture of [
+      scene.cityBackdrop,
+      scene.skybox,
+      scene.smoke,
+      ...scene.surfaces.values(),
+    ]) {
+      expect(texture?.anisotropy).toBe(16);
+    }
+  });
+
+  it('asks for mipmaps rather than leaving the filters to chance', () => {
+    // Mipmaps are what stop minified detail aliasing, and blending between three
+    // levels is what stops the seams between them showing as bands.
+    const scene = assets();
+    applyAnisotropy(scene as never, 8);
+
+    expect(scene.cityBackdrop?.generateMipmaps).toBe(true);
+    expect(scene.cityBackdrop?.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(scene.cityBackdrop?.magFilter).toBe(THREE.LinearFilter);
+    // `needsUpdate` is a write-only setter; what it does is bump the version, which
+    // is what makes three.js re-upload the texture and take the new parameters.
+    expect(scene.cityBackdrop?.version).toBeGreaterThan(0);
+  });
+
+  it('never asks for less than one sample, whatever it is handed', () => {
+    // A headless or software renderer can report zero, and an anisotropy of 0 is
+    // not "no filtering" - it is an invalid parameter.
+    for (const reported of [0, -4, 0.5]) {
+      const scene = assets();
+      applyAnisotropy(scene as never, reported);
+      expect(scene.cityBackdrop?.anisotropy, String(reported)).toBe(1);
+    }
+  });
+
+  it('copes with the textures that failed to load', () => {
+    const scene = { ...assets(), cityBackdrop: null, skybox: null, smoke: null, surfaces: new Map() };
+    expect(() => applyAnisotropy(scene as never, 16)).not.toThrow();
+    expect(() => applyAnisotropy(NO_ASSETS, 16)).not.toThrow();
   });
 });

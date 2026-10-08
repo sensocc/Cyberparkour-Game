@@ -511,13 +511,19 @@ export const DEFAULT_CONFIG: GameConfig = {
     // strides are long: at a realistic 0.9 m step a walk would be a 4 Hz buzz
     // rather than a run. Sprint strides are longer still, so the cadence rises
     // with speed without needing a separate timer.
-    strideLength: { walk: 4.6, sprint: 6.2, crouch: 2.8 },
-    verticalAmplitude: 0.034,
-    lateralAmplitude: 0.017,
+    strideLength: { walk: 5, sprint: 6.8, crouch: 3 },
+    // Softened again in 0.5.1, to roughly half what 0.3 settled on. The camera is
+    // the player's whole view of the world, and a bob the eye has to *track* stops
+    // being atmosphere and becomes noise - especially on the works level, where
+    // long drops to a narrow deck are the point of the route. What is left is a
+    // 3.4 cm rise and fall at a walk (1.9 cm at a sprint), which the eye reads as
+    // weight rather than as the screen moving.
+    verticalAmplitude: 0.017,
+    lateralAmplitude: 0.008,
     // A slow fade in and out: at 9/s the bob snapped on and off the moment you
     // started or stopped, which read as a jolt on top of the bob itself.
-    settleRate: 4.5,
-    speedFalloff: 0.6,
+    settleRate: 3.2,
+    speedFalloff: 0.45,
   },
   fallDamage: {
     maxHealth: 100,

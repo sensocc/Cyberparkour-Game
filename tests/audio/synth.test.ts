@@ -30,6 +30,7 @@ import {
   renderHurt,
   renderLanding,
   renderMusic,
+  pitchStep,
   renderPickup,
   renderScrape,
   renderWhoosh,
@@ -295,6 +296,19 @@ describe('the individual sounds', () => {
     expect(peakOf(first)).toBeLessThanOrEqual(0.65);
     expect(peakOf(first)).toBeGreaterThan(0.2);
     expect(zeroCrossings(later)).toBeGreaterThan(zeroCrossings(first));
+  });
+
+  it('names the pitch step a pickup lands on, so a cache can be keyed by it', () => {
+    // The engine caches one buffer per step. If this disagreed with the clamping
+    // inside `renderPickup`, every pickup past the tenth would add another
+    // identical buffer to the cache.
+    expect(pitchStep(1)).toBe(0);
+    expect(pitchStep(11)).toBe(10);
+    expect(pitchStep(40)).toBe(10);
+    expect(pitchStep(0)).toBe(0);
+    expect(pitchStep(-5)).toBe(0);
+    expect(pitchStep(6.4)).toBe(5);
+    expect(renderPickup(40)).toEqual(renderPickup(pitchStep(40) + 1));
   });
 
   it('caps the pickup pitch rather than rising for ever', () => {

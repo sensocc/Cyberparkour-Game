@@ -499,7 +499,10 @@ describe('the results screen', () => {
     seconds: 62.5,
     collected: 6,
     collectibleCount: 8,
-    splits: [10, 25.5],
+    splits: [
+      { checkpoint: 0, seconds: 10 },
+      { checkpoint: 1, seconds: 25.5 },
+    ],
     improved: true,
     bestSeconds: 62.5,
   };

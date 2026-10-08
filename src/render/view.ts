@@ -14,12 +14,23 @@ import { clamp01 } from '../core/math.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
+import { applyAnisotropy } from './assets.js';
 import { buildScene, type BuiltScene } from './sceneBuilder.js';
 import { pickupPose, smokePose } from './effects.js';
 import { GraphicsUnavailableError, NO_ASSETS, type GameViewLike, type SceneAssets } from './types.js';
 
 export { GraphicsUnavailableError };
 export type { GameViewLike };
+
+/**
+ * Most anisotropic filtering worth asking for.
+ *
+ * Sixteen taps is what mainstream GPUs offer; beyond that the cost is real and the
+ * difference is not. Asking for the GPU's own maximum with a ceiling here keeps a
+ * card that reports 32 from spending twice the bandwidth for nothing anyone can
+ * see.
+ */
+const MAX_ANISOTROPY = 16;
 
 export interface GameViewOptions {
   readonly canvas: HTMLCanvasElement;
@@ -67,6 +78,15 @@ export class GameView implements GameViewLike {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.setClearColor(new THREE.Color(options.definition.environment.skyColor), 1);
+
+    // Filtering has to be decided before the first frame: three.js applies it when
+    // it uploads a texture, and there is no second chance afterwards. This is the
+    // one place that knows both the textures and the GPU, which is why it happens
+    // here rather than in the loader.
+    applyAnisotropy(
+      options.assets ?? NO_ASSETS,
+      Math.min(MAX_ANISOTROPY, this.renderer.capabilities.getMaxAnisotropy()),
+    );
 
     this.camera = new THREE.PerspectiveCamera(
       options.config.camera.fov,

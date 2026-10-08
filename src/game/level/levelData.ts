@@ -601,8 +601,11 @@ export const DEMO_DISTRICT: LevelDefinition = {
     // The slow route: a 1 m service beam, which a 0.7 m player box can walk.
     box('canyon-beam', { at: [78, 4], bottom: 2.3, size: [12, 0.5, 1], model: 'deck' }),
     // Signage on the canyon facade, read from the roofs on either side. The lit
-    // face looks +Z, back across the gap.
-    sign({ id: 'sign-canyon', at: [78, 5.4, -11.05], size: [4.4, 1.6], tint: '#57e0ff' }),
+    // face looks +Z, back across the gap. It hangs in the space *between* two lit
+    // bands rather than across one: two plates on the same plane are two faces at
+    // the same depth, which is the one arrangement a depth buffer cannot resolve,
+    // and the pair speckles and crawls as the camera moves.
+    sign({ id: 'sign-canyon', at: [78, 4.2, -11.05], size: [4.4, 1.6], tint: '#57e0ff' }),
 
     // ------------------------------------------------------------- home roof
     box('penthouse', {

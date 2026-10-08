@@ -24,12 +24,26 @@ export interface RunOptions {
   readonly bestSeconds?: number | null;
 }
 
+/** One checkpoint's split. */
+export interface RunSplit {
+  /**
+   * Index of the checkpoint in the level's list.
+   *
+   * Carried with the time, because a checkpoint *can* be skipped: an array
+   * indexed by checkpoint would then have holes, and the results screen would
+   * label a split with a checkpoint the run never touched.
+   */
+  readonly checkpoint: number;
+  readonly seconds: number;
+}
+
 /** What a finished run amounted to. */
 export interface RunResult {
   readonly seconds: number;
   readonly collected: number;
   readonly collectibleCount: number;
-  readonly splits: readonly number[];
+  /** In the order the route reached them. */
+  readonly splits: readonly RunSplit[];
   /** Whether this run beat the previous record. */
   readonly improved: boolean;
   /** The record after this run. */
@@ -45,7 +59,7 @@ export interface RunSnapshot {
   readonly collectibleCount: number;
   readonly checkpointsReached: number;
   readonly checkpointCount: number;
-  readonly splits: readonly number[];
+  readonly splits: readonly RunSplit[];
   readonly bestSeconds: number | null;
   /** Whether crossing the finish would count. */
   readonly goalArmed: boolean;
@@ -59,7 +73,7 @@ export class RunState {
   private elapsed = 0;
   private started = false;
   private finished = false;
-  private splits: number[] = [];
+  private splits: RunSplit[] = [];
   private reached = 0;
   private readonly taken = new Set<string>();
   private improved = false;
@@ -105,7 +119,7 @@ export class RunState {
   reachCheckpoint(index: number): boolean {
     if (!Number.isInteger(index) || index < 0 || index <= this.reached - 1) return false;
     this.reached = index + 1;
-    this.splits[index] = this.elapsed;
+    this.splits.push({ checkpoint: index, seconds: this.elapsed });
     return true;
   }
 
@@ -149,7 +163,11 @@ export class RunState {
     this.finished = true;
 
     const previous = this.best;
-    this.improved = previous === null || this.elapsed < previous;
+    // A run with no time on the clock is not a record. A level that could be
+    // finished before the player had moved would otherwise write a zero that no
+    // later run could ever beat - and the record is the one thing here that
+    // outlives the session.
+    this.improved = this.elapsed > 0 && (previous === null || this.elapsed < previous);
     if (this.improved) this.best = this.elapsed;
 
     return {

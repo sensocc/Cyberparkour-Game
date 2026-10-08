@@ -89,6 +89,8 @@ export class GameHud {
   private readonly timeLabel: HTMLElement;
   private readonly pickupLabel: HTMLElement;
   private pips = 0;
+  /** Last checkpoint index the pips were filled to. */
+  private lastCheckpoint = -1;
 
   constructor() {
     this.healthFill = document.createElement('div');
@@ -129,20 +131,29 @@ export class GameHud {
   }
 
   update(snapshot: GameHudSnapshot): void {
+    // This runs every frame while playing, because the clock has to move every
+    // frame, so every write here is guarded: rewriting a dozen identical text
+    // nodes sixty times a second is work the browser then has to notice.
     const fraction = healthFraction(snapshot.health, snapshot.maxHealth);
     // The bar is scaled rather than resized, so it animates on the compositor and
     // never triggers layout in the middle of a frame.
-    this.healthFill.style.transform = `scaleX(${fraction})`;
-    this.element.dataset.health = healthBand(snapshot.health, snapshot.maxHealth);
-    this.healthLabel.textContent = `${healthPercent(snapshot.health, snapshot.maxHealth)}%`;
-    this.checkpointLabel.textContent = describeCheckpoints(snapshot.checkpoint, snapshot.checkpointCount);
+    const scale = `scaleX(${fraction})`;
+    if (this.healthFill.style.transform !== scale) this.healthFill.style.transform = scale;
 
-    this.timeLabel.textContent = formatRunTime(snapshot.elapsedSeconds);
-    this.pickupLabel.textContent = describePickups(snapshot.collected, snapshot.collectibleCount);
+    const band = healthBand(snapshot.health, snapshot.maxHealth);
+    if (this.element.dataset.health !== band) this.element.dataset.health = band;
+
+    this.setText(this.healthLabel, `${healthPercent(snapshot.health, snapshot.maxHealth)}%`);
+    this.setText(this.checkpointLabel, describeCheckpoints(snapshot.checkpoint, snapshot.checkpointCount));
+    this.setText(this.timeLabel, formatRunTime(snapshot.elapsedSeconds));
+    this.setText(this.pickupLabel, describePickups(snapshot.collected, snapshot.collectibleCount));
+
     // Attributes rather than class juggling, so the styling can say "the clock is
     // stopped" and "the finish is live" without the DOM being rearranged.
-    this.element.dataset.running = String(snapshot.running);
-    this.element.dataset.armed = String(snapshot.goalArmed);
+    const running = String(snapshot.running);
+    if (this.element.dataset.running !== running) this.element.dataset.running = running;
+    const armed = String(snapshot.goalArmed);
+    if (this.element.dataset.armed !== armed) this.element.dataset.armed = armed;
 
     if (snapshot.checkpointCount !== this.pips) {
       this.pips = snapshot.checkpointCount;
@@ -153,12 +164,23 @@ export class GameHud {
           return pip;
         }),
       );
+      // `replaceChildren` resets the pips to unfilled, so the fill has to be
+      // redone even if the reached index itself did not change.
+      this.lastCheckpoint = -1;
     }
 
-    const buttons = this.checkpointPips.children;
-    for (let index = 0; index < buttons.length; index += 1) {
-      buttons[index]?.classList.toggle('vitals__pip--reached', index <= snapshot.checkpoint);
+    if (snapshot.checkpoint !== this.lastCheckpoint) {
+      this.lastCheckpoint = snapshot.checkpoint;
+      const buttons = this.checkpointPips.children;
+      for (let index = 0; index < buttons.length; index += 1) {
+        buttons[index]?.classList.toggle('vitals__pip--reached', index <= snapshot.checkpoint);
+      }
     }
+  }
+
+  /** Writes text only when it has actually changed. */
+  private setText(element: HTMLElement, value: string): void {
+    if (element.textContent !== value) element.textContent = value;
   }
 
   destroy(): void {

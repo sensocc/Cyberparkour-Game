@@ -490,6 +490,14 @@ body {
   background: var(--panel);
 }
 
+/* The recovered-report banner sits on the title screen and carries *good* news -
+   a report from a previous session was saved - so it must not wear the base
+   notice's alarm red, which reads as "something is broken". */
+.notice--recovered {
+  border-color: rgba(110, 231, 168, 0.42);
+  background: rgba(10, 40, 30, 0.6);
+}
+
 /* ------------------------------------------------------------------ crash --- */
 
 .crash__meta {

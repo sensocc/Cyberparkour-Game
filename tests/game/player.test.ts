@@ -752,13 +752,13 @@ describe('head bob', () => {
     // The phase only advances with distance travelled, so standing still leaves it
     // exactly where it was.
     expect(state.bobPhase).toBe(phase);
-    // The amplitude fades rather than snapping - half a second at the configured
-    // rate constant leaves a little, and a few more would leave nothing.
-    expect(state.bobAmount).toBeLessThan(0.2);
+    // The amplitude fades rather than snapping: it drops straight away, but half a
+    // second is nowhere near long enough for it to disappear.
+    expect(state.bobAmount).toBeLessThan(1);
     expect(state.bobAmount).toBeGreaterThan(0);
     const later = { ...state };
-    advanceHeadBob(later, { game: CONFIG, config: PLAYER }, 1, 0);
-    expect(later.bobAmount).toBeLessThan(state.bobAmount);
+    advanceHeadBob(later, { game: CONFIG, config: PLAYER }, 2, 0);
+    expect(later.bobAmount).toBeLessThan(0.01);
   });
 });
 

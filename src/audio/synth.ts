@@ -373,8 +373,19 @@ export function renderGrab(): Float32Array {
  * have without them having to read the counter, which is the difference between
  * a pickup that feels like progress and one that feels like a checkbox.
  */
+/**
+ * Which pitch step a pickup index lands on.
+ *
+ * Shared with the engine, which caches one buffer per step: the two have to agree
+ * or the cache would grow a buffer for every pickup past the tenth, all of them
+ * the same sound.
+ */
+export function pitchStep(index: number): number {
+  return Math.min(10, Math.max(0, Math.round(index) - 1));
+}
+
 export function renderPickup(index: number): Float32Array {
-  const steps = Math.min(10, Math.max(0, Math.round(index) - 1));
+  const steps = pitchStep(index);
   const frequency = 740 * Math.pow(2, (steps * 2) / 12);
   const length = Math.round(SAMPLE_RATE * 0.34);
 

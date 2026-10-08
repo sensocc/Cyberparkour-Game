@@ -40,6 +40,7 @@ import {
 import {
   SKYBOX_FACES as FACE_ORDER,
   generateSkyboxFace,
+  type SkyboxFace,
   pixelToFaceCoordinates,
   skyboxFaceDirection,
   skyColorAt,
@@ -71,10 +72,46 @@ function expectSamePixels(actual: RgbaImage, expected: RgbaImage, label: string)
   expect(differences, `${label} has stale pixels`).toEqual([]);
 }
 
+/**
+ * Generated images, kept for the life of the file.
+ *
+ * Generating the whole set is several million pixels - the six skybox faces alone
+ * are 1.5 million, each leaning on half a dozen transcendental functions - and a
+ * dozen tests here want to look at the same images. Caching them means the file
+ * pays for each one once, and only the determinism test deliberately pays twice.
+ */
+const generatedImages = new Map<string, RgbaImage>();
+
+function imageFor(key: string, make: () => RgbaImage): RgbaImage {
+  const cached = generatedImages.get(key);
+  if (cached) return cached;
+  const image = make();
+  generatedImages.set(key, image);
+  return image;
+}
+
+/** A skybox face at a given size, cached by both. */
+const skyboxFace = (face: SkyboxFace, size: number): RgbaImage =>
+  imageFor(`sky-${face}-${size}`, () => generateSkyboxFace(face, size));
+
+/** The painted skyline, cached. */
+const cityBackdrop = (): RgbaImage => imageFor('city-backdrop', () => generateCityBackdrop());
+
+/**
+ * The budget for a test that generates megabytes of pixels.
+ *
+ * Vitest's default five seconds is a budget for ordinary unit tests; regenerating
+ * the whole texture set is real work, and on a shared CI runner under coverage
+ * instrumentation it is work that takes seconds, not milliseconds. A timeout that
+ * asserts "this finished" rather than "this finished quickly" is the right shape
+ * for it - and if generation ever *hangs*, thirty seconds still says so.
+ */
+const HEAVY = { timeout: 30_000 } as const;
+
 describe('the committed texture set', () => {
-  it('every declared texture is present and matches its generator', () => {
+  it('every declared texture is present and matches its generator', HEAVY, () => {
     for (const definition of TEXTURES) {
-      expectSamePixels(load(definition.name), definition.generate(), definition.name);
+      expectSamePixels(load(definition.name), imageFor(definition.name, definition.generate), definition.name);
     }
   });
 
@@ -94,9 +131,11 @@ describe('the committed texture set', () => {
     expect(EFFECT_TEXTURES.map((entry) => entry.name)).toEqual(['fx-smoke.png']);
   });
 
-  it('is deterministic', () => {
+  it('is deterministic', HEAVY, () => {
     for (const definition of TEXTURES) {
-      const first = Buffer.from(definition.generate().pixels);
+      // One generation is shared with the rest of the file; the second is
+      // deliberately fresh, because "same input, same image" is the claim.
+      const first = Buffer.from(imageFor(definition.name, definition.generate).pixels);
       const second = Buffer.from(definition.generate().pixels);
       expect(first.equals(second), definition.name).toBe(true);
     }
@@ -124,7 +163,7 @@ describe('the committed texture set', () => {
 describe('the object surfaces', () => {
   it('are all the declared size and fully opaque', () => {
     for (const definition of SURFACE_TEXTURES) {
-      const image = definition.generate();
+      const image = imageFor(`surface-${definition.id}`, definition.generate);
       expect(image.width, definition.id).toBe(definition.size);
       expect(image.height, definition.id).toBe(definition.size);
       for (const alpha of [0, Math.floor(image.height / 2), image.height - 1]) {
@@ -144,7 +183,7 @@ describe('the object surfaces', () => {
     for (const definition of SURFACE_TEXTURES) {
       if (emissiveTextures.has(definition.id)) continue;
 
-      const image = definition.generate();
+      const image = imageFor(`surface-${definition.id}`, definition.generate);
       let total = 0;
       let samples = 0;
       for (let y = 0; y < image.height; y += 4) {
@@ -165,7 +204,7 @@ describe('the object surfaces', () => {
     // sign's backing must be near-black so only the glyphs glow.
     const sign = SURFACE_TEXTURES.find((definition) => definition.id === 'sign');
     expect(sign).toBeDefined();
-    const image = sign?.generate();
+    const image = sign ? imageFor(`surface-${sign.id}`, sign.generate) : undefined;
     if (!image) throw new Error('the sign texture did not generate');
 
     let bright = 0;
@@ -188,7 +227,7 @@ describe('the object surfaces', () => {
     // feature is clipped at a boundary. Sampling the four edges shows they come
     // from the same distributions as the interior.
     for (const definition of SURFACE_TEXTURES) {
-      const image = definition.generate();
+      const image = imageFor(`surface-${definition.id}`, definition.generate);
       const edge = (x: number, y: number): number => {
         const colour = getPixel(image, x % image.width, y % image.height);
         return (colour.r + colour.g + colour.b) / 3;
@@ -207,7 +246,7 @@ describe('the object surfaces', () => {
 
   it('has recognisable structure rather than being a flat fill', () => {
     for (const definition of SURFACE_TEXTURES) {
-      const image = definition.generate();
+      const image = imageFor(`surface-${definition.id}`, definition.generate);
       const seen = new Set<string>();
       for (let y = 0; y < image.height; y += 2) {
         for (let x = 0; x < image.width; x += 2) {
@@ -253,7 +292,7 @@ describe('the skybox', () => {
     // agree along their shared edge because the edge's texels point the same way
     // on both, and both sample the same direction.
     for (const face of FACE_ORDER) {
-      const image = generateSkyboxFace(face, 16);
+      const image = skyboxFace(face, 16);
       for (const [x, y] of [
         [0, 0],
         [7, 3],
@@ -322,7 +361,7 @@ describe('the skybox', () => {
   it('is dark at the poles and brightest at the horizon', () => {
     const size = 64;
     const luminance = (face: 'py' | 'ny', axis: 'row' | 'column'): number => {
-      const image = generateSkyboxFace(face, size);
+      const image = skyboxFace(face, size);
       const colour = getPixel(image, axis === 'row' ? size / 2 : size / 2, axis === 'row' ? size / 2 : size / 2);
       return colour.r * 0.299 + colour.g * 0.587 + colour.b * 0.114;
     };
@@ -331,7 +370,7 @@ describe('the skybox', () => {
     const zenith = luminance('py', 'row');
     const nadir = luminance('ny', 'row');
 
-    const side = generateSkyboxFace('pz', size);
+    const side = skyboxFace('pz', size);
     let horizon = 0;
     for (let x = 0; x < size; x += 1) {
       const colour = getPixel(side, x, size / 2);
@@ -356,7 +395,7 @@ describe('the skybox', () => {
     // A cube face spans about 90 degrees, so its centre row is the horizon. The
     // brightest row should sit there rather than near either edge.
     const size = 64;
-    const image = generateSkyboxFace('pz', size);
+    const image = skyboxFace('pz', size);
 
     let brightestRow = 0;
     let brightest = -1;
@@ -375,21 +414,21 @@ describe('the skybox', () => {
   });
 
   it('carries a magenta cast on the horizon', () => {
-    const image = generateSkyboxFace('pz', 64);
+    const image = skyboxFace('pz', 64);
     // Just above the horizon line is where the glow is warmest.
     const above = getPixel(image, 32, 30);
     expect(above.r).toBeGreaterThan(above.g);
   });
 
   it('keeps the glow below the horizon rather than snapping to black', () => {
-    const image = generateSkyboxFace('pz', 64);
+    const image = skyboxFace('pz', 64);
     // Rows just under the horizon still have some light in them.
     expect(rowBrightness(image, 40)).toBeGreaterThan(20);
     expect(rowBrightness(image, 40)).toBeGreaterThan(rowBrightness(image, 62) - 12);
   });
 
   it('is fully opaque and the declared size', () => {
-    const image = generateSkyboxFace('nz', 32);
+    const image = skyboxFace('nz', 32);
     expect(image.width).toBe(32);
     expect(getPixel(image, 5, 5).a).toBe(255);
     expect(SKYBOX_FACE_SIZE).toBeGreaterThanOrEqual(64);
@@ -398,7 +437,7 @@ describe('the skybox', () => {
 
 describe('the city backdrop', () => {
   it('is transparent above the skyline and opaque below it', () => {
-    const image = generateCityBackdrop();
+    const image = cityBackdrop();
     for (let x = 0; x < image.width; x += 64) {
       expect(getPixel(image, x, 0).a, `top row at x=${x}`).toBe(0);
       expect(getPixel(image, x, image.height - 1).a, `bottom row at x=${x}`).toBe(255);
@@ -406,7 +445,7 @@ describe('the city backdrop', () => {
   });
 
   it('leaves real gaps in the skyline for the sky to show through', () => {
-    const image = generateCityBackdrop();
+    const image = cityBackdrop();
     let mixedRows = 0;
     for (let row = 0; row < image.height; row += 1) {
       let clear = 0;
@@ -420,14 +459,14 @@ describe('the city backdrop', () => {
   });
 
   it('packs buildings edge to edge, so the texture wraps without a gap', () => {
-    const image = generateCityBackdrop();
+    const image = cityBackdrop();
     for (let x = 0; x < image.width; x += 1) {
       expect(getPixel(image, x, image.height - 1).a, `column ${x}`).toBe(255);
     }
   });
 
   it('keeps the tallest building below the top of the frame', () => {
-    const image = generateCityBackdrop();
+    const image = cityBackdrop();
     for (let x = 0; x < image.width; x += 1) {
       expect(getPixel(image, x, 0).a, `column ${x} reaches the top`).toBe(0);
     }

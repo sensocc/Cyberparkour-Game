@@ -145,7 +145,12 @@ function starBrightness(u: number, v: number): number {
   const starU = (column + marginX + hash2(column + 31, row + 17) * (1 - 2 * marginX)) * cellWidth;
   const starV = (row + marginY + hash2(column + 53, row + 79) * (1 - 2 * marginY)) * cellHeight;
 
-  const distance = Math.hypot(u - starU, v - starV);
+  const dx = u - starU;
+  const dy = v - starV;
+  // `sqrt` rather than `hypot`: it is exactly rounded (so the field is identical
+  // on every engine, which matters because the result feeds a hard threshold) and
+  // several times faster, which matters because this is per pixel.
+  const distance = Math.sqrt(dx * dx + dy * dy);
   if (distance >= radius) return 0;
   const falloff = 1 - distance / radius;
   return (0.22 + 0.5 * hash2(column + 5, row + 41)) * falloff * falloff;
@@ -169,9 +174,17 @@ export interface SkyOptions {
  * seamless.
  */
 export function skyColorAt(direction: Vec3, options: SkyOptions = {}): RgbaColor {
-  const length = Math.hypot(direction.x, direction.y, direction.z) || 1;
-  const elevation = Math.asin(Math.max(-1, Math.min(1, direction.y / length)));
-  const azimuth = Math.atan2(direction.x, direction.z);
+  // `sqrt` rather than `hypot`: exactly rounded, so the sky is identical on every
+  // engine, and several times faster - which matters at half a million pixels a
+  // face. The vector is only used to normalise the elevation, so any consistent
+  // length would do.
+  const { x, y, z } = direction;
+  const length = Math.sqrt(x * x + y * y + z * z) || 1;
+  const elevation = Math.asin(Math.max(-1, Math.min(1, y / length)));
+  const azimuth = Math.atan2(x, z);
+  // One cosine, two uses: the horizon glow and the city's pooled light both lean
+  // towards the same quarter of the sky.
+  const towardsCity = Math.cos(azimuth - 0.9);
 
   // Above the horizon, a four-stop gradient keyed on elevation. Everything below
   // reuses the *same* value at elevation zero and carries it downwards, which is
@@ -189,13 +202,13 @@ export function skyColorAt(direction: Vec3, options: SkyOptions = {}): RgbaColor
   // A brighter, warmer glow towards one side of the horizon, as if the city were
   // lit from there. Applied unconditionally, so a point just below the horizon
   // inherits exactly the colour a point just above it has.
-  const directional = 0.55 + 0.45 * Math.cos(azimuth - 0.9);
+  const directional = 0.55 + 0.45 * towardsCity;
   colour = mixColors(colour, HORIZON_WARM, smoothstep(0.5, 0.0, above) * directional * 0.55);
 
   // The city's light, pooled along the skyline and fading out below it.
   const glowBand = smoothstep(0.34, 0.02, elevation) * smoothstep(-0.3, -0.02, elevation);
   if (glowBand > 0) {
-    const warm = 0.5 + 0.5 * Math.cos(azimuth - 0.9);
+    const warm = 0.5 + 0.5 * towardsCity;
     colour = mixColors(colour, CITY_GLOW, glowBand * (0.45 + 0.55 * warm * warm) * 0.4);
     const cool = glowBand * (0.5 + 0.5 * Math.cos(2 * azimuth + 2.1)) * 0.4;
     colour = mixColors(colour, CITY_COOL, cool * 0.25);
