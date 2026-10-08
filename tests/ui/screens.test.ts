@@ -39,6 +39,7 @@ function createUi(version = '0.0.0'): Harness {
     onResume: vi.fn(),
     onRestart: vi.fn(),
     onRespawn: vi.fn(),
+    onMainMenu: vi.fn(),
     onQuit: vi.fn(),
     onDownloadReport: vi.fn((report: CrashReport) => {
       captured = report;
@@ -90,12 +91,14 @@ describe('GameUi construction', () => {
     expect(root.querySelector('.title__version')?.textContent).toContain('Rooftop');
   });
 
-  it('lists the controls', () => {
-    const { root } = createUi();
-    const text = root.querySelector('.screen--start .controls')?.textContent ?? '';
+  it('lists the controls on their own screen', () => {
+    const { root, ui } = createUi();
+    ui.showControls();
+    const text = root.querySelector('.screen--menu .controls')?.textContent ?? '';
     expect(text).toContain('W A S D');
     expect(text).toContain('Move');
     expect(text).toContain('Mouse');
+    expect(text).toContain('Sprint');
     expect(text).toContain('F3');
     expect(text).toContain('Esc');
     expect(text).toContain('R');
@@ -110,7 +113,7 @@ describe('GameUi construction', () => {
 describe('GameUi callbacks', () => {
   it('fires onStart from the title screen', () => {
     const { root, calls } = createUi();
-    click(root.querySelector('.screen--start') as HTMLElement, /start session/i);
+    click(root.querySelector('.screen--start') as HTMLElement, /^play$/i);
     expect(calls.onStart).toHaveBeenCalledOnce();
   });
 
@@ -128,7 +131,7 @@ describe('GameUi callbacks', () => {
 
     click(pause, /^resume$/i);
     click(pause, /^respawn$/i);
-    click(pause, /^restart$/i);
+    click(pause, /^restart run$/i);
     click(pause, /quit/i);
 
     expect(calls.onResume).toHaveBeenCalledOnce();
@@ -222,6 +225,32 @@ describe('GameUi screen switching', () => {
       const visible = screens.filter((selector) => !root.querySelector(selector)?.hasAttribute('hidden'));
       expect(visible.length).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('returns to where Controls was opened from', () => {
+    const { root, ui } = createUi();
+
+    // Opened from the title screen, Back returns to the title screen.
+    ui.showStart();
+    ui.showControls();
+    click(root.querySelector('.screen--menu') as HTMLElement, /^back$/i);
+    expect(root.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(false);
+    expect(root.querySelector('.screen--menu')?.hasAttribute('hidden')).toBe(true);
+
+    // Opened from the pause menu, Back returns to the pause menu - not the title.
+    ui.showPause();
+    ui.showControls();
+    click(root.querySelector('.screen--menu') as HTMLElement, /^back$/i);
+    expect(root.querySelector('.screen--pause')?.hasAttribute('hidden')).toBe(false);
+    expect(root.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('returns from About to the title screen', () => {
+    const { root, ui } = createUi();
+    ui.showAbout();
+    click(root.querySelector('.screen--about') as HTMLElement, /^back$/i);
+    expect(root.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(false);
+    expect(root.querySelector('.screen--about')?.hasAttribute('hidden')).toBe(true);
   });
 });
 

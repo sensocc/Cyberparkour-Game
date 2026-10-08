@@ -30,12 +30,20 @@ import {
   renderLanding,
   renderMusic,
   renderScrape,
+  renderWhoosh,
   rmsOf,
   scaleInPlace,
 } from '../../src/audio/synth.js';
 import type { FootstepVariant } from '../../src/audio/synth.js';
 
 const VARIANTS: FootstepVariant[] = [0, 1, 2, 3];
+
+/** Peak of a raw slice, for envelope-shape checks. */
+function peakOfPlain(samples: Float32Array): number {
+  let peak = 0;
+  for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
+  return peak;
+}
 
 describe('buffer helpers', () => {
   it('mixInto sums rather than replaces, and clips out of range', () => {
@@ -187,6 +195,57 @@ describe('the individual sounds', () => {
     const hard = renderLanding(2);
     expect(hard.length).toBeGreaterThan(soft.length);
     expect(peakOf(hard)).toBeGreaterThanOrEqual(peakOf(soft) * 0.95);
+  });
+
+  it('steps in softly rather than clicking', () => {
+    // The complaint that started this: a run sounded like a snare drum, because
+    // each step was a 2 ms attack over a 35 ms decay. The envelope is now a
+    // slow-in, so the first few milliseconds carry almost no energy - which is
+    // what "soft" means numerically.
+    for (const gait of ['walk', 'sprint', 'crouch'] as const) {
+      const step = renderFootstep({ variant: 0, gait });
+
+      // Where the sound is loudest. A click peaks in the first millisecond; a
+      // sound with a real attack peaks where its envelope does, which is several
+      // milliseconds in.
+      let loudestAt = 0;
+      for (let index = 1; index < step.length; index += 1) {
+        if (Math.abs(step[index] as number) > Math.abs(step[loudestAt] as number)) loudestAt = index;
+      }
+      expect(loudestAt / SAMPLE_RATE, gait).toBeGreaterThan(0.004);
+
+      // And it is still rising in those first few milliseconds.
+      const head = step.slice(0, Math.round(SAMPLE_RATE * 0.002));
+      const rise = step.slice(Math.round(SAMPLE_RATE * 0.002), Math.round(SAMPLE_RATE * 0.006));
+      expect(peakOfPlain(head), gait).toBeLessThan(peakOfPlain(rise));
+    }
+  });
+
+  it('sits well below full scale, so steps do not dominate the mix', () => {
+    for (const gait of ['walk', 'sprint', 'crouch'] as const) {
+      const step = renderFootstep({ variant: 0, gait });
+      expect(peakOf(step), gait).toBeLessThanOrEqual(0.65);
+      // ...and is still a real signal, not a whisper.
+      expect(peakOf(step), gait).toBeGreaterThan(0.3);
+    }
+  });
+
+  it('decays over a long tail instead of stopping dead', () => {
+    const step = renderFootstep({ variant: 0, gait: 'walk' });
+    const tail = step.slice(Math.round(SAMPLE_RATE * 0.12), Math.round(SAMPLE_RATE * 0.2));
+    const peak = step.slice(0, Math.round(SAMPLE_RATE * 0.02) + 1);
+    // There is still something in the tail, and it is quiet.
+    expect(rmsOf(tail)).toBeGreaterThan(0);
+    expect(rmsOf(tail)).toBeLessThan(rmsOf(peak));
+  });
+
+  it('renders a whoosh for the airborne moves', () => {
+    const whoosh = renderWhoosh();
+    const at = (fraction: number): number => Math.abs(whoosh[Math.floor(whoosh.length * fraction)] as number);
+    expect(whoosh.length / SAMPLE_RATE).toBeGreaterThan(0.2);
+    // A swell: quiet at the start, loudest in the middle.
+    expect(at(0.4)).toBeGreaterThan(at(0.02));
+    expect(peakOf(whoosh)).toBeLessThanOrEqual(0.45);
   });
 
   it('gusts swell and die away', () => {

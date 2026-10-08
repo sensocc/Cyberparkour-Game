@@ -465,3 +465,96 @@ body {
     transition: none !important;
   }
 }
+
+/* ------------------------------------------------------------------- menu */
+
+.menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(320px, 100%);
+  margin: 14px 0 4px;
+}
+
+.menu .btn {
+  width: 100%;
+  text-align: left;
+}
+
+/* ------------------------------------------------------- play HUD: vitals */
+
+/*
+ * The play HUD, as opposed to the debug overlay (F3). It is deliberately quiet:
+ * two readouts, bottom-left, no background panel - it has to sit over a dark
+ * scene without becoming the thing you look at.
+ */
+.vitals {
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  pointer-events: none;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+}
+
+.vitals__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vitals__label {
+  min-width: 38px;
+  color: #cfe6f5;
+}
+
+.vitals__bar {
+  position: relative;
+  width: 168px;
+  height: 8px;
+  border: 1px solid var(--border);
+  background: rgba(6, 10, 18, 0.72);
+  overflow: hidden;
+}
+
+.vitals__fill {
+  height: 100%;
+  /* Scaled, not resized: the transform stays off the layout path entirely. */
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  transition: transform 120ms linear;
+}
+
+.vitals[data-health='hurt'] .vitals__fill {
+  background: linear-gradient(90deg, #8a6320, #ffc14f);
+}
+
+.vitals[data-health='critical'] .vitals__fill {
+  background: linear-gradient(90deg, #7a1e2c, var(--accent-2));
+}
+
+.vitals__checkpoints {
+  color: #cfe6f5;
+}
+
+.vitals__pips {
+  display: flex;
+  gap: 4px;
+}
+
+.vitals__pip {
+  width: 18px;
+  height: 3px;
+  background: rgba(125, 142, 166, 0.35);
+}
+
+.vitals__pip--reached {
+  background: var(--accent);
+  box-shadow: 0 0 6px rgba(88, 222, 255, 0.6);
+}

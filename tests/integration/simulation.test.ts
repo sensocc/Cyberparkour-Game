@@ -13,10 +13,10 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG, fixedStep } from '../../src/core/config.js';
 import { FixedStepAccumulator } from '../../src/core/delta.js';
-import { lengthVec3, vec3, type Vec3 } from '../../src/core/vec3.js';
+import { copyVec3, lengthVec3, vec3, type Vec3 } from '../../src/core/vec3.js';
 import { aabbFromCenterSize, overlaps } from '../../src/game/physics/aabb.js';
 import { buildLevel, groundHeightAt, propBounds, type BuiltLevel } from '../../src/game/level/level.js';
-import { DEMO_ROOF } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT, type PropDefinition } from '../../src/game/level/levelData.js';
 import {
   createPlayerState,
   eyeHeight,
@@ -35,14 +35,14 @@ const STEP = fixedStep(CONFIG);
 const TICKS_PER_SECOND = CONFIG.world.tickRate;
 
 function createSimulation(): { level: BuiltLevel; player: PlayerState; climbables: Set<string> } {
-  const level = buildLevel(DEMO_ROOF, {
+  const level = buildLevel(DEMO_DISTRICT, {
     maxSubStep: CONFIG.world.maxCollisionSubStep,
     player: standingSize(PLAYER),
   });
   const climbables = new Set(
     level.colliders.filter((collider) => collider.kind === 'climbable').map((collider) => collider.id),
   );
-  return { level, player: createPlayerState(DEMO_ROOF.spawn, CONFIG), climbables };
+  return { level, player: createPlayerState(DEMO_DISTRICT.spawn, CONFIG), climbables };
 }
 
 /** Options matching what `Game` passes to every step. */
@@ -52,7 +52,7 @@ function stepOptions(level: BuiltLevel, climbables: ReadonlySet<string>) {
     config: PLAYER,
     game: CONFIG,
     climbableIds: climbables,
-    killPlaneY: DEMO_ROOF.killPlaneY,
+    killPlaneY: DEMO_DISTRICT.killPlaneY,
     respawnDelaySeconds: CONFIG.respawn.delaySeconds,
     safetyFloorY: CONFIG.world.safetyFloorY,
   };
@@ -67,6 +67,7 @@ const input = (overrides: Partial<MoveInput> = {}): MoveInput => ({
   ...overrides,
 });
 
+const FORWARD_JUMP = input({ forward: 1, jump: true });
 const STILL = input();
 const FORWARD = input({ forward: 1 });
 const SPRINT_FORWARD = input({ forward: 1, sprint: true });
@@ -91,6 +92,16 @@ function placeAt(player: PlayerState, x: number, z: number, yaw = 0): void {
   player.maneuver = null;
   player.peakFallSpeed = 0;
   player.health = CONFIG.fallDamage.maxHealth;
+  player.wallId = null;
+  player.wallRunElapsed = 0;
+  player.wallJumpId = null;
+  player.wallCooldown = 0;
+  // Back to the level spawn as well: a test that happens to cross a checkpoint
+  // must not change where the next test's respawn lands.
+  player.checkpoint = -1;
+  copyVec3(player.respawn.position, player.spawn.position);
+  player.respawn.yaw = player.spawn.yaw;
+  player.respawn.pitch = player.spawn.pitch;
 }
 
 interface Trace {
@@ -222,7 +233,7 @@ describe('traversal on the shipped roof', () => {
     expect(trace.nonFinite).toBe(0);
     expect(trace.worstPenetration).toBe(0);
     expect(trace.minY).toBeGreaterThanOrEqual(0);
-    expect(player.position.z).toBeLessThan(DEMO_ROOF.spawn.position.z - 5);
+    expect(player.position.z).toBeLessThan(DEMO_DISTRICT.spawn.position.z - 5);
   });
 
   it('sprints further than it walks in the same time', () => {
@@ -232,8 +243,8 @@ describe('traversal on the shipped roof', () => {
     simulate(walk.level, walk.player, walk.climbables, 2, () => FORWARD);
     simulate(sprint.level, sprint.player, sprint.climbables, 2, () => SPRINT_FORWARD);
 
-    const walked = Math.abs(walk.player.position.z - DEMO_ROOF.spawn.position.z);
-    const sprinted = Math.abs(sprint.player.position.z - DEMO_ROOF.spawn.position.z);
+    const walked = Math.abs(walk.player.position.z - DEMO_DISTRICT.spawn.position.z);
+    const sprinted = Math.abs(sprint.player.position.z - DEMO_DISTRICT.spawn.position.z);
     expect(sprinted).toBeGreaterThan(walked * 1.2);
   });
 
@@ -277,74 +288,72 @@ describe('traversal on the shipped roof', () => {
     // Jittering on an open roof means eventually walking off it - and surviving
     // the fall by respawning.
     expect(trace.deaths).toBeGreaterThan(0);
-    expect(player.position.y).toBeGreaterThan(DEMO_ROOF.killPlaneY);
+    expect(player.position.y).toBeGreaterThan(DEMO_DISTRICT.killPlaneY);
     // No single landing should have been lethal without it being a long fall.
     expect(trace.maxDamage).toBeLessThanOrEqual(CONFIG.fallDamage.maxHealth);
   });
 });
 
-describe('the V0.2 abilities, on the roof that ships', () => {
-  it('mantles the terrace steps instead of being stopped by them', () => {
-    // The steps rise 0.5 m each towards terrace-l1 at 2 m.
+describe('the V0.3 abilities, on the district that ships', () => {
+  it('mantles every step of the roof access and onto the penthouse', () => {
+    // The flight rises 0.6 m a step to 2.4 m, then a 1.4 m mantle onto the roof.
     const { level, player, climbables } = createSimulation();
-    placeAt(player, 4, -16);
+    placeAt(player, -15, -8);
 
-    const trace = simulate(level, player, climbables, 3, () => RIGHT);
+    const trace = simulate(level, player, climbables, 3, () => input({ right: 1 }));
 
     expect(trace.maneuvers.has('mantle')).toBe(true);
-    // Walks up the steps and onto the terrace.
-    expect(player.position.x).toBeGreaterThan(8);
-    expect(player.position.y).toBeGreaterThanOrEqual(2);
-    expect(player.grounded).toBe(true);
+    // All the way up: the flight tops out at 2.4 m and the roof access at 3.8 m.
+    expect(trace.maxY).toBeGreaterThan(3.7);
+    expect(trace.groundIds.has('penthouse')).toBe(true);
     expect(trace.worstPenetration).toBe(0);
   });
 
-  it('grabs and pulls up onto the first terrace from a standing start', () => {
+  it('grabs and pulls up onto the duct, from a standing start', () => {
     const { level, player, climbables } = createSimulation();
-    // Right up against the terrace's west face, which is 2 m high.
-    placeAt(player, 7.5, -20);
+    const duct = DEMO_DISTRICT.props.find((entry) => entry.id === 'duct')!;
+    // Just west of the duct's face, which tops out 2.6 m above the deck.
+    placeAt(player, duct.position.x - duct.size.x / 2 - 0.35, duct.position.z, -Math.PI / 2);
 
-    // Jump in, release, then jump again to haul up - and then stop, so the
-    // player does not simply run off the far side of the terrace.
-    const trace = simulate(level, player, climbables, 5, (step) => {
-      if (step < 12) return input({ right: 1, jump: true });
-      if (step < 50) return input({ right: 1 });
-      if (step < 60) return input({ right: 1, jump: true });
+    const trace = simulate(level, player, climbables, 6, (step) => {
+      if (step < 12) return FORWARD_JUMP;
+      if (step < 50) return FORWARD;
+      if (step < 60) return FORWARD_JUMP;
       return STILL;
     });
 
     expect(trace.maneuvers.has('hang')).toBe(true);
     expect(trace.maneuvers.has('pull-up')).toBe(true);
     expect(player.grounded).toBe(true);
-    expect(player.position.y).toBeGreaterThan(1.5);
-    expect(player.position.y).toBeLessThan(2.5);
+    expect(player.position.y).toBeGreaterThan(2.5);
+    expect(player.position.y).toBeLessThan(2.7);
     expect(player.alive).toBe(true);
   });
 
   it('slides under the duct, which a standing player cannot pass', () => {
     const approach = (action: (step: number) => MoveInput): PlayerState => {
       const { level, player, climbables } = createSimulation();
-      placeAt(player, 14, 0);
+      placeAt(player, -8, 6);
       simulate(level, player, climbables, 3, action);
       return player;
     };
 
-    // The duct spans x = 17.4 to 18.6 with 1.4 m of clearance.
-    const running = approach((step) => (step < 60 ? SPRINT_RIGHT : input({ right: 1, crouch: true })));
+    // The duct spans x = 3.4 to 4.6 with 1.4 m of clearance beneath it.
+    const running = approach((step) => (step < 72 ? SPRINT_RIGHT : input({ right: 1, crouch: true })));
     const walking = approach(() => RIGHT);
 
-    expect(walking.position.x).toBeLessThan(17.4);
-    expect(running.position.x).toBeGreaterThan(18.6);
+    expect(walking.position.x).toBeLessThan(3.4);
+    expect(running.position.x).toBeGreaterThan(4.6);
   });
 
   it('climbs the riser pipe up past the pull-up ceiling', () => {
     const { level, player, climbables } = createSimulation();
-    const pipe = DEMO_ROOF.props.find((entry) => entry.id === 'riser-pipe');
+    const pipe = DEMO_DISTRICT.props.find((entry) => entry.id === 'riser-pipe') as PropDefinition;
     expect(pipe).toBeDefined();
-    const pipeTop = propBounds(pipe!).max.y;
+    const pipeTop = propBounds(pipe).max.y;
 
     // Stand just west of the pipe, facing it.
-    placeAt(player, -32.5, -16, -Math.PI / 2);
+    placeAt(player, pipe.position.x - pipe.size.x / 2 - 0.6, pipe.position.z, -Math.PI / 2);
 
     const trace = simulate(level, player, climbables, 6, () => FORWARD);
 
@@ -355,13 +364,13 @@ describe('the V0.2 abilities, on the roof that ships', () => {
     expect(trace.worstPenetration).toBe(0);
   });
 
-  it('survives a fall from terrace height, but takes damage for it', () => {
+  it('survives a fall from the penthouse roof, but takes damage for it', () => {
     const { level, player, climbables } = createSimulation();
-    // Clear of the terraces in X, so the drop runs the full 4.2 m to the deck.
-    placeAt(player, 34, -20);
-    player.position.y = propBounds(
-      DEMO_ROOF.props.find((entry) => entry.id === 'terrace-l2')!,
-    ).max.y;
+    // Level with the roof access block but clear of it in plan, so the drop runs
+    // the full 3.8 m to the deck rather than starting on a roof.
+    const penthouse = DEMO_DISTRICT.props.find((entry) => entry.id === 'penthouse')!;
+    placeAt(player, penthouse.position.x, -1);
+    player.position.y = propBounds(penthouse).max.y;
     player.previousPosition = { ...player.position };
     player.grounded = false;
     const loaded = player.health;
@@ -378,10 +387,9 @@ describe('the V0.2 abilities, on the roof that ships', () => {
 
   it('takes no damage from hopping off a 0.6 m step', () => {
     const { level, player, climbables } = createSimulation();
-    placeAt(player, 0, 20);
-    player.position.y = propBounds(
-      DEMO_ROOF.props.find((entry) => entry.id === 'ledge-low')!,
-    ).max.y;
+    const step = DEMO_DISTRICT.props.find((entry) => entry.id === 'penthouse-step-1')!;
+    placeAt(player, step.position.x, step.position.z);
+    player.position.y = propBounds(step).max.y;
     player.grounded = false;
 
     const trace = simulate(level, player, climbables, 2, () => STILL);
@@ -421,23 +429,24 @@ describe('fall detection and respawn', () => {
     // A respawn clears the cause and restores health.
     expect(player.deathCause).toBeNull();
     expect(player.health).toBe(CONFIG.fallDamage.maxHealth);
-    expect(player.position.x).toBeCloseTo(DEMO_ROOF.spawn.position.x, 6);
-    expect(player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 6);
+    expect(player.position.x).toBeCloseTo(DEMO_DISTRICT.spawn.position.x, 6);
+    expect(player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 6);
   });
 
   it('kills a fall from every edge of the deck', () => {
-    // Each start point is a couple of metres inside an edge, on a clear lane.
+    // Each start point is a couple of metres inside an edge of the home roof, on
+    // a lane that is clear of props all the way to the drop.
     const directions: [string, { x: number; z: number }, MoveInput][] = [
-      ['north (-Z)', { x: 0, z: -27 }, SPRINT_FORWARD],
-      ['south (+Z)', { x: 0, z: 18 }, SPRINT_BACK],
-      ['east (+X)', { x: 24, z: 0 }, SPRINT_RIGHT],
-      ['west (-X)', { x: -22, z: 14 }, SPRINT_LEFT],
+      ['north (-Z)', { x: 0, z: -9 }, SPRINT_FORWARD],
+      ['south (+Z)', { x: 0, z: 9 }, SPRINT_BACK],
+      ['east (+X)', { x: 12, z: 0 }, SPRINT_RIGHT],
+      ['west (-X)', { x: -14, z: 3 }, SPRINT_LEFT],
     ];
 
     for (const [name, start, direction] of directions) {
       const { level, player, climbables } = createSimulation();
       placeAt(player, start.x, start.z);
-      expect(groundHeightAt(DEMO_ROOF, start), `${name} start is on the deck`).toBeCloseTo(0, 9);
+      expect(groundHeightAt(DEMO_DISTRICT, start), `${name} start is on the deck`).toBeCloseTo(0, 9);
 
       let died = false;
       for (let step = 0; step < 600 && !died; step += 1) {
@@ -450,7 +459,7 @@ describe('fall detection and respawn', () => {
 
       expect(died, `${name} should be fatal`).toBe(true);
       expect(player.alive, name).toBe(false);
-      expect(player.position.y, name).toBeLessThanOrEqual(DEMO_ROOF.killPlaneY);
+      expect(player.position.y, name).toBeLessThanOrEqual(DEMO_DISTRICT.killPlaneY);
     }
   });
 });
@@ -535,7 +544,9 @@ describe('fixed-step accumulator integration', () => {
 describe('crash-report snapshot', () => {
   it('gives the reporter a complete, serialisable player state', () => {
     const { level, player, climbables } = createSimulation();
-    simulate(level, player, climbables, 2, () => SPRINT_FORWARD);
+    // Half a second: long enough to be moving, short enough that the player is
+    // still on the home roof rather than out over a canyon.
+    simulate(level, player, climbables, 0.5, () => SPRINT_FORWARD);
 
     const snapshot = snapshotPlayer(player);
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot);

@@ -42,6 +42,7 @@ const GAME: CrashGameState = {
     deathCause: null,
     health: 74,
     locomotion: 'grounded',
+    checkpoint: 1,
   },
 };
 

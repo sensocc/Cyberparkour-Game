@@ -11,7 +11,7 @@ import * as THREE from 'three';
 
 import { buildScene } from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
-import { DEMO_ROOF } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
 import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
 import { modelById } from '../../src/game/level/models.js';
 import { propBounds } from '../../src/game/level/level.js';
@@ -41,15 +41,15 @@ function meshOf(built: ReturnType<typeof buildScene>, id: string): THREE.Mesh {
 
 describe('buildScene geometry', () => {
   it('creates one mesh per model part, per prop', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
-      expect(built.meshes.size).toBe(DEMO_ROOF.props.length);
+      expect(built.meshes.size).toBe(DEMO_DISTRICT.props.length);
 
       // V0.2's whole point: props are models, so most of them are several meshes.
-      const multiPart = DEMO_ROOF.props.filter((prop) => partsOf(built, prop.id).length > 1);
-      expect(multiPart.length).toBeGreaterThan(DEMO_ROOF.props.length / 2);
+      const multiPart = DEMO_DISTRICT.props.filter((prop) => partsOf(built, prop.id).length > 1);
+      expect(multiPart.length).toBeGreaterThan(DEMO_DISTRICT.props.length / 2);
 
-      for (const prop of DEMO_ROOF.props) {
+      for (const prop of DEMO_DISTRICT.props) {
         for (const mesh of partsOf(built, prop.id)) {
           expect(mesh.name.startsWith(`${prop.id}#`), mesh.name).toBe(true);
           expect(built.scene.getObjectByName(mesh.name)).toBe(mesh);
@@ -61,11 +61,11 @@ describe('buildScene geometry', () => {
   });
 
   it('bakes each part into its own geometry, sized and positioned in world space', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       // Parts are normalised against the prop's box, so a part's world size is
       // its normalised extent times the prop's size.
-      const prop = DEMO_ROOF.props.find((entry) => entry.id === 'duct');
+      const prop = DEMO_DISTRICT.props.find((entry) => entry.id === 'duct');
       expect(prop).toBeDefined();
       const model = modelById(prop?.model ?? '');
       const first = model?.parts[0];
@@ -89,7 +89,7 @@ describe('buildScene geometry', () => {
   });
 
   it('gives each part its own geometry rather than sharing one unit cube', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const geometries = new Set(
         [...built.meshes.values()].flatMap((list) => list.map((mesh) => mesh.geometry)),
@@ -102,7 +102,7 @@ describe('buildScene geometry', () => {
   });
 
   it('scales texture repeats in world space, so density does not depend on size', () => {
-    const built = buildScene(DEMO_ROOF, assetTextures());
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
     try {
       // The deck is far bigger than the pipe run, but both should show the same
       // texels per metre, which means very different UV ranges.
@@ -118,7 +118,7 @@ describe('buildScene geometry', () => {
       };
 
       const deck = span(meshOf(built, 'deck'));
-      const pipe = span(meshOf(built, 'pipe-run'));
+      const pipe = span(meshOf(built, 'pipe-run-far'));
       expect(deck).toBeGreaterThan(pipe * 1.5);
       expect(pipe).toBeGreaterThan(0);
     } finally {
@@ -127,13 +127,13 @@ describe('buildScene geometry', () => {
   });
 
   it('caches materials by surface and tint', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
-      // The three AC units in the plant row are identical, so they share all
-      // their materials; the recoloured fourth one does not.
-      const first = partsOf(built, 'ac-unit-a').map((mesh) => mesh.material);
-      const second = partsOf(built, 'ac-unit-c').map((mesh) => mesh.material);
-      const recoloured = partsOf(built, 'ac-unit-d').map((mesh) => mesh.material);
+      // The three AC units in the home roof's plant row are identical, so they
+      // share all their materials; the recoloured one elsewhere does not.
+      const first = partsOf(built, 'ac-unit-home-a').map((mesh) => mesh.material);
+      const second = partsOf(built, 'ac-unit-home-b').map((mesh) => mesh.material);
+      const recoloured = partsOf(built, 'ac-unit-far-a').map((mesh) => mesh.material);
 
       expect(first).toEqual(second);
       expect(first[0]).not.toBe(recoloured[0]);
@@ -150,11 +150,11 @@ describe('buildScene geometry', () => {
   });
 
   it('applies the prop tints to the material colours', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const tower = meshOf(built, 'tower-a');
       const material = tower.material as THREE.MeshLambertMaterial;
-      const tint = DEMO_ROOF.props.find((entry) => entry.id === 'tower-a')?.tints?.concrete;
+      const tint = DEMO_DISTRICT.props.find((entry) => entry.id === 'tower-a')?.tints?.concrete;
       expect(tint).toBeDefined();
       expect(material.color.getHexString()).toBe((tint ?? '').replace('#', ''));
     } finally {
@@ -163,7 +163,7 @@ describe('buildScene geometry', () => {
   });
 
   it('honours the per-prop shadow flags', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       expect(meshOf(built, 'deck').receiveShadow).toBe(true);
       // The background towers opt out of receiving shadows.
@@ -174,15 +174,15 @@ describe('buildScene geometry', () => {
   });
 
   it('sets up the fog and the background from the environment', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const fog = built.scene.fog as THREE.Fog;
       expect(fog).toBeInstanceOf(THREE.Fog);
-      expect(fog.near).toBe(DEMO_ROOF.environment.fogNear);
-      expect(fog.far).toBe(DEMO_ROOF.environment.fogFar);
+      expect(fog.near).toBe(DEMO_DISTRICT.environment.fogNear);
+      expect(fog.far).toBe(DEMO_DISTRICT.environment.fogFar);
 
       const background = built.scene.background as THREE.Color;
-      expect(background.getHexString()).toBe(DEMO_ROOF.environment.skyColor.replace('#', ''));
+      expect(background.getHexString()).toBe(DEMO_DISTRICT.environment.skyColor.replace('#', ''));
     } finally {
       built.dispose();
     }
@@ -191,7 +191,7 @@ describe('buildScene geometry', () => {
 
 describe('buildScene lighting', () => {
   it('creates an ambient light and a shadow-casting sun', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const ambient = built.scene.getObjectByName('ambient');
       expect(ambient).toBeInstanceOf(THREE.HemisphereLight);
@@ -206,12 +206,12 @@ describe('buildScene lighting', () => {
   });
 
   it('places the sun along the configured direction', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const direction = new THREE.Vector3(
-        DEMO_ROOF.environment.sunDirection.x,
-        DEMO_ROOF.environment.sunDirection.y,
-        DEMO_ROOF.environment.sunDirection.z,
+        DEMO_DISTRICT.environment.sunDirection.x,
+        DEMO_DISTRICT.environment.sunDirection.y,
+        DEMO_DISTRICT.environment.sunDirection.z,
       ).normalize();
 
       const actual = built.sun.position.clone().normalize();
@@ -224,10 +224,10 @@ describe('buildScene lighting', () => {
   });
 
   it('sizes the shadow camera to cover the roof', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const camera = built.sun.shadow.camera;
-      const deck = DEMO_ROOF.props.find((prop) => prop.id === 'deck');
+      const deck = DEMO_DISTRICT.props.find((prop) => prop.id === 'deck');
       const halfWidth = (deck?.size.x ?? 0) / 2;
       const halfDepth = (deck?.size.z ?? 0) / 2;
 
@@ -245,7 +245,7 @@ describe('buildScene lighting', () => {
 describe('buildScene sky dome', () => {
   it('uses the cube skybox as the scene background', () => {
     const assets = assetTextures();
-    const built = buildScene(DEMO_ROOF, assets);
+    const built = buildScene(DEMO_DISTRICT, assets);
     try {
       // A cube skybox needs no geometry at all, which is the upgrade from V0.1's
       // gradient dome.
@@ -257,11 +257,11 @@ describe('buildScene sky dome', () => {
   });
 
   it('falls back to a flat colour when the skybox is missing', () => {
-    const built = buildScene(DEMO_ROOF, { cityBackdrop: null, skybox: null, surfaces: new Map() });
+    const built = buildScene(DEMO_DISTRICT, { cityBackdrop: null, skybox: null, surfaces: new Map() });
     try {
       const background = built.scene.background as THREE.Color;
       expect(background).toBeInstanceOf(THREE.Color);
-      expect(background.getHexString()).toBe(DEMO_ROOF.environment.skyColor.replace('#', ''));
+      expect(background.getHexString()).toBe(DEMO_DISTRICT.environment.skyColor.replace('#', ''));
     } finally {
       built.dispose();
     }
@@ -271,14 +271,14 @@ describe('buildScene sky dome', () => {
 describe('buildScene city backdrop', () => {
   it('wraps the texture around an open cylinder', () => {
     const assets = assetTextures();
-    const built = buildScene(DEMO_ROOF, assets);
+    const built = buildScene(DEMO_DISTRICT, assets);
     try {
       expect(built.backdrop).not.toBeNull();
       const geometry = built.backdrop?.geometry as THREE.CylinderGeometry;
       const material = built.backdrop?.material as THREE.MeshBasicMaterial;
 
       expect(geometry.parameters.openEnded).toBe(true);
-      expect(geometry.parameters.radiusTop).toBeCloseTo(DEMO_ROOF.environment.backdrop.radius, 9);
+      expect(geometry.parameters.radiusTop).toBeCloseTo(DEMO_DISTRICT.environment.backdrop.radius, 9);
       expect(material.map).toBe(assets.cityBackdrop);
       // Seen from the inside.
       expect(material.side).toBe(THREE.BackSide);
@@ -292,9 +292,9 @@ describe('buildScene city backdrop', () => {
   });
 
   it('sits the skyline on its configured ground line', () => {
-    const built = buildScene(DEMO_ROOF, assetTextures());
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
     try {
-      const { height, baseY } = DEMO_ROOF.environment.backdrop;
+      const { height, baseY } = DEMO_DISTRICT.environment.backdrop;
       expect(built.backdrop?.position.y).toBeCloseTo(baseY + height / 2, 9);
     } finally {
       built.dispose();
@@ -303,11 +303,11 @@ describe('buildScene city backdrop', () => {
 
   it('configures the texture to repeat horizontally and clamp vertically', () => {
     const assets = assetTextures();
-    const built = buildScene(DEMO_ROOF, assets);
+    const built = buildScene(DEMO_DISTRICT, assets);
     try {
       expect(assets.cityBackdrop?.wrapS).toBe(THREE.RepeatWrapping);
       expect(assets.cityBackdrop?.wrapT).toBe(THREE.ClampToEdgeWrapping);
-      expect(assets.cityBackdrop?.repeat.x).toBe(DEMO_ROOF.environment.backdrop.repeat);
+      expect(assets.cityBackdrop?.repeat.x).toBe(DEMO_DISTRICT.environment.backdrop.repeat);
       expect(assets.cityBackdrop?.repeat.y).toBe(1);
     } finally {
       built.dispose();
@@ -315,7 +315,7 @@ describe('buildScene city backdrop', () => {
   });
 
   it('is skipped entirely when the texture is missing', () => {
-    const built = buildScene(DEMO_ROOF, NO_ASSETS);
+    const built = buildScene(DEMO_DISTRICT, NO_ASSETS);
     try {
       expect(built.backdrop).toBeNull();
       expect(built.scene.getObjectByName('city-backdrop')).toBeUndefined();
@@ -326,10 +326,10 @@ describe('buildScene city backdrop', () => {
 
   it('is skipped for a degenerate radius or height', () => {
     const flat = {
-      ...DEMO_ROOF,
+      ...DEMO_DISTRICT,
       environment: {
-        ...DEMO_ROOF.environment,
-        backdrop: { ...DEMO_ROOF.environment.backdrop, height: 0 },
+        ...DEMO_DISTRICT.environment,
+        backdrop: { ...DEMO_DISTRICT.environment.backdrop, height: 0 },
       },
     };
     const built = buildScene(flat, assetTextures());
@@ -343,11 +343,11 @@ describe('buildScene city backdrop', () => {
 
 describe('buildScene ground grid', () => {
   it('places a grid at the city ground level', () => {
-    const built = buildScene(DEMO_ROOF);
+    const built = buildScene(DEMO_DISTRICT);
     try {
       const grid = built.scene.getObjectByName('ground-grid');
       expect(grid).toBeInstanceOf(THREE.GridHelper);
-      expect(grid?.position.y).toBeCloseTo(DEMO_ROOF.environment.backdrop.baseY + 0.01, 9);
+      expect(grid?.position.y).toBeCloseTo(DEMO_DISTRICT.environment.backdrop.baseY + 0.01, 9);
     } finally {
       built.dispose();
     }
@@ -356,7 +356,7 @@ describe('buildScene ground grid', () => {
 
 describe('buildScene disposal', () => {
   it('empties the scene', () => {
-    const built = buildScene(DEMO_ROOF, assetTextures());
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
     expect(built.scene.children.length).toBeGreaterThan(10);
 
     built.dispose();
@@ -364,7 +364,7 @@ describe('buildScene disposal', () => {
   });
 
   it('is safe to call twice', () => {
-    const built = buildScene(DEMO_ROOF, assetTextures());
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
     built.dispose();
     expect(() => built.dispose()).not.toThrow();
   });
@@ -381,14 +381,14 @@ describe('buildScene disposal', () => {
       texture.addEventListener('dispose', () => disposed.push(id));
     }
 
-    const built = buildScene(DEMO_ROOF, assets);
+    const built = buildScene(DEMO_DISTRICT, assets);
     built.dispose();
 
     expect(disposed).toEqual([]);
   });
 
   it('disposes the geometry and materials it created', () => {
-    const built = buildScene(DEMO_ROOF, assetTextures());
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
     const mesh = meshOf(built, 'deck');
     const geometryDispose = mesh.geometry.dispose.bind(mesh.geometry);
     const materialDispose = (mesh.material as THREE.Material).dispose.bind(mesh.material);

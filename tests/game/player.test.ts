@@ -748,8 +748,17 @@ describe('head bob', () => {
     state.bobAmount = 1;
     const phase = state.bobPhase;
     advanceHeadBob(state, { game: CONFIG, config: PLAYER }, 0.5, 0);
+
+    // The phase only advances with distance travelled, so standing still leaves it
+    // exactly where it was.
     expect(state.bobPhase).toBe(phase);
-    expect(state.bobAmount).toBeLessThan(0.1);
+    // The amplitude fades rather than snapping - half a second at the configured
+    // rate constant leaves a little, and a few more would leave nothing.
+    expect(state.bobAmount).toBeLessThan(0.2);
+    expect(state.bobAmount).toBeGreaterThan(0);
+    const later = { ...state };
+    advanceHeadBob(later, { game: CONFIG, config: PLAYER }, 1, 0);
+    expect(later.bobAmount).toBeLessThan(state.bobAmount);
   });
 });
 
@@ -846,10 +855,13 @@ describe('locomotion reporting', () => {
       from: vec3(),
       to: vec3(),
       arcHeight: 0,
-      fromHang: true,
+      kind: 'pull-up',
+      exitSpeed: 0,
+      exitDirection: vec3(),
+      lowProfile: false,
     };
     expect(locomotion(state)).toBe('pulling-up');
-    state.maneuver = { ...state.maneuver, fromHang: false };
+    state.maneuver = { ...state.maneuver, kind: 'mantle' };
     expect(locomotion(state)).toBe('mantling');
     state.maneuver = null;
 

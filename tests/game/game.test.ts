@@ -12,10 +12,11 @@ import type { ReadonlyVec3 } from '../../src/core/vec3.js';
 import { CrashReporter } from '../../src/diagnostics/crashReporter.js';
 import { MemoryCrashSink } from '../../src/diagnostics/crashSinks.js';
 import { Game, type GameStatus } from '../../src/game/game.js';
-import { DEMO_ROOF } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
 import type { Orientation } from '../../src/game/look.js';
 import { InputState } from '../../src/input/inputState.js';
 import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '../../src/render/types.js';
+import { GameHud } from '../../src/ui/gameHud.js';
 import { DebugHud } from '../../src/ui/hud.js';
 import { GameUi } from '../../src/ui/screens.js';
 import { FakeScheduler } from '../helpers/fakeScheduler.js';
@@ -48,6 +49,7 @@ interface Harness {
   readonly game: Game;
   readonly ui: GameUi;
   readonly hud: DebugHud;
+  readonly gameHud: GameHud;
   readonly input: InputState;
   readonly reporter: CrashReporter;
   readonly sink: MemoryCrashSink;
@@ -60,7 +62,7 @@ interface Harness {
 
 interface HarnessOptions {
   readonly createView?: CreateView;
-  readonly level?: typeof DEMO_ROOF;
+  readonly level?: typeof DEMO_DISTRICT;
 }
 
 function createHarness(options: HarnessOptions = {}): Harness {
@@ -83,7 +85,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     sinks: [sink],
     logBuffer: new LogBuffer({ mirrorToConsole: false }),
     getGameState: () => ({
-      levelId: DEMO_ROOF.id,
+      levelId: DEMO_DISTRICT.id,
       frameCount: 0,
       elapsedSeconds: 0,
       fps: 0,
@@ -92,15 +94,18 @@ function createHarness(options: HarnessOptions = {}): Harness {
   });
 
   const hud = new DebugHud(uiRoot);
+  const gameHud = new GameHud();
+  uiRoot.append(gameHud.element);
   const ui = new GameUi({
     root: uiRoot,
     version: '0.0.0',
-    levelName: DEMO_ROOF.name,
+    levelName: DEMO_DISTRICT.name,
     callbacks: {
       onStart: vi.fn(),
       onResume: vi.fn(),
       onRestart: vi.fn(),
       onRespawn: vi.fn(),
+    onMainMenu: vi.fn(),
       onQuit: vi.fn(),
       onDownloadReport: vi.fn(),
       onCopyReport: vi.fn(),
@@ -121,11 +126,12 @@ function createHarness(options: HarnessOptions = {}): Harness {
     pointerLockTarget: app,
     ui,
     hud,
+    gameHud,
     input,
     crashReporter: reporter,
     logBuffer: new LogBuffer({ mirrorToConsole: false }),
     config: DEFAULT_CONFIG,
-    level: options.level ?? DEMO_ROOF,
+    level: options.level ?? DEMO_DISTRICT,
     createView,
     scheduler,
     onStatusChange: (status) => statuses.push(status),
@@ -135,6 +141,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     game,
     ui,
     hud,
+    gameHud,
     input,
     reporter,
     sink,
@@ -160,7 +167,7 @@ describe('Game construction', () => {
 
   it('validates the level immediately, so an authoring mistake fails at boot', () => {
     expect(() =>
-      createHarness({ level: { ...DEMO_ROOF, id: 'broken', props: [] } }),
+      createHarness({ level: { ...DEMO_DISTRICT, id: 'broken', props: [] } }),
     ).toThrow(/Invalid level "broken"/);
   });
 
@@ -249,7 +256,7 @@ describe('Game.start', () => {
     harness.input.keyUp('KeyW');
 
     const { player } = harness.game.snapshot();
-    expect(player.position.z).toBeLessThan(DEMO_ROOF.spawn.position.z - 1);
+    expect(player.position.z).toBeLessThan(DEMO_DISTRICT.spawn.position.z - 1);
     expect(player.grounded).toBe(true);
   });
 
@@ -367,10 +374,10 @@ describe('Game.restart', () => {
     harness.game.restart();
 
     expect(harness.game.currentStatus).toBe('playing');
-    expect(moved.z).toBeLessThan(DEMO_ROOF.spawn.position.z);
+    expect(moved.z).toBeLessThan(DEMO_DISTRICT.spawn.position.z);
     const { player } = harness.game.snapshot();
-    expect(player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 9);
-    expect(player.position.x).toBeCloseTo(DEMO_ROOF.spawn.position.x, 9);
+    expect(player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 9);
+    expect(player.position.x).toBeCloseTo(DEMO_DISTRICT.spawn.position.x, 9);
     expect(player.velocity).toEqual({ x: 0, y: 0, z: 0 });
   });
 
@@ -498,7 +505,7 @@ describe('Game debug HUD toggle', () => {
     harness.input.keyDown('KeyR');
     stepFrames(harness, 1);
 
-    expect(harness.game.snapshot().player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 9);
+    expect(harness.game.snapshot().player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 9);
   });
 
   it('Esc pauses when pointer lock was never acquired', () => {
@@ -526,7 +533,7 @@ describe('Game crash handling', () => {
     expect(harness.reporter.reports).toHaveLength(1);
     expect(harness.reporter.lastReport?.source).toBe('game-loop');
     expect(harness.reporter.lastReport?.error.message).toBe('frame blew up');
-    expect(harness.reporter.lastReport?.game.levelId).toBe(DEMO_ROOF.id);
+    expect(harness.reporter.lastReport?.game.levelId).toBe(DEMO_DISTRICT.id);
   });
 
   it('releases the GPU when the renderer dies', () => {
@@ -677,8 +684,8 @@ describe('Game snapshot', () => {
 
     const snapshot = harness.game.snapshot();
     expect(snapshot.status).toBe('playing');
-    expect(snapshot.levelId).toBe(DEMO_ROOF.id);
-    expect(snapshot.levelName).toBe(DEMO_ROOF.name);
+    expect(snapshot.levelId).toBe(DEMO_DISTRICT.id);
+    expect(snapshot.levelName).toBe(DEMO_DISTRICT.name);
     expect(snapshot.stats.frames).toBe(30);
     expect(snapshot.stats.elapsedSeconds).toBeGreaterThan(0);
     expect(snapshot.renderer).toBe('Fake GPU');
@@ -839,8 +846,8 @@ describe('Game fall detection and respawn', () => {
     expect(respawned).toBe(true);
     const player = harness.game.snapshot().player;
     expect(player.alive).toBe(true);
-    expect(player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 3);
-    expect(player.position.x).toBeCloseTo(DEMO_ROOF.spawn.position.x, 3);
+    expect(player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 3);
+    expect(player.position.x).toBeCloseTo(DEMO_DISTRICT.spawn.position.x, 3);
     expect(player.deaths).toBe(1);
     // Back in play, so the crosshair returns.
     expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
@@ -852,12 +859,12 @@ describe('Game fall detection and respawn', () => {
     harness.input.keyDown('KeyW');
     stepFrames(harness, 60);
     harness.input.keyUp('KeyW');
-    expect(harness.game.snapshot().player.position.z).toBeLessThan(DEMO_ROOF.spawn.position.z - 1);
+    expect(harness.game.snapshot().player.position.z).toBeLessThan(DEMO_DISTRICT.spawn.position.z - 1);
 
     harness.game.respawn();
 
     const player = harness.game.snapshot().player;
-    expect(player.position.z).toBeCloseTo(DEMO_ROOF.spawn.position.z, 9);
+    expect(player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 9);
     expect(player.velocity).toEqual({ x: 0, y: 0, z: 0 });
     expect(player.alive).toBe(true);
     // A respawn is not a restart: the death count survives.
@@ -894,3 +901,96 @@ describe('Game fall detection and respawn', () => {
     expect(harness.ui.isDeathVisible).toBe(true);
   });
 });
+
+describe('the V0.3 play HUD and checkpoints', () => {
+  it('shows the play HUD with health and checkpoint progress', () => {
+    const harness = createHarness();
+    harness.game.start();
+    // The HUD refreshes at 10 Hz, so it takes a few frames to appear.
+    stepFrames(harness, 12);
+
+    const vitals = document.querySelector('.vitals');
+    expect(vitals).not.toBeNull();
+    expect(vitals?.textContent).toContain('100%');
+    expect(vitals?.textContent).toContain('CP 0 / 4');
+    expect(vitals?.querySelectorAll('.vitals__pip')).toHaveLength(4);
+  });
+
+  /**
+   * Walks the player into the first checkpoint, which sits on the annex roof
+   * across the northern gap.
+   *
+   * Driven by input rather than by moving the player directly: the checkpoint has
+   * to be reached by the simulation, which is the thing under test.
+   */
+  function reachFirstCheckpoint(harness: Harness): void {
+    const target = DEMO_DISTRICT.checkpoints[0]?.position;
+    harness.game.start();
+    stepFrames(harness, 10);
+
+    const set = (code: string, on: boolean): void => {
+      if (on) harness.input.keyDown(code);
+      else harness.input.keyUp(code);
+    };
+
+    for (let frame = 0; frame < 1200; frame += 1) {
+      const player = harness.game.snapshot().player;
+      if (player.checkpoint === 0) return;
+
+      // Steer at the checkpoint. The spawn faces -Z, so forward is -Z and right
+      // is +X.
+      const dx = (target?.x ?? 0) - player.position.x;
+      const dz = (target?.z ?? 0) - player.position.z;
+      set('KeyW', dz < -0.5);
+      set('KeyS', dz > 0.5);
+      set('KeyD', dx > 0.5);
+      set('KeyA', dx < -0.5);
+      set('ShiftLeft', true);
+
+      // Jump to cross the gap; then release and press again to pull up, because
+      // the press that grabbed the ledge is latched.
+      set('Space', player.locomotion === 'hanging' ? frame % 8 < 4 : player.grounded && frame % 6 < 3);
+
+      stepFrames(harness, 1);
+    }
+  }
+
+  it('marks a checkpoint reached, and says so', () => {
+    const harness = createHarness();
+    reachFirstCheckpoint(harness);
+
+    expect(harness.game.snapshot().player.checkpoint).toBe(0);
+    expect(document.querySelector('.notice--toast')?.textContent).toBe('CHECKPOINT 1 / 4');
+    expect(document.querySelector('.vitals__pip--reached')).not.toBeNull();
+  });
+
+  it('keeps the checkpoint across a respawn, but not across a restart', () => {
+    const harness = createHarness();
+    reachFirstCheckpoint(harness);
+    expect(harness.game.snapshot().player.checkpoint).toBe(0);
+
+    harness.game.respawn();
+    expect(harness.game.snapshot().player.checkpoint).toBe(0);
+
+    harness.game.restart();
+    expect(harness.game.snapshot().player.checkpoint).toBe(-1);
+  });
+
+  it('returns to the main menu, and stops the loop doing it', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 2);
+
+    harness.game.toMainMenu();
+
+    expect(harness.game.currentStatus).toBe('idle');
+    expect(document.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(false);
+    expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+
+    // And the title menu can start a fresh run from there.
+    harness.game.start();
+    expect(harness.game.currentStatus).toBe('playing');
+    expect(harness.game.snapshot().player.checkpoint).toBe(-1);
+  });
+});
+

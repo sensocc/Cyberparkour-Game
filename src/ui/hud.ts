@@ -50,6 +50,7 @@ export interface HudRow {
  * the movement abilities are doing anything at all.
  */
 export function describeGait(stance: Stance, sprinting: boolean, horizontalSpeed: number): string {
+  if (stance === 'rolling') return 'roll';
   if (stance === 'crouched') return 'crouch';
   if (horizontalSpeed < 0.1) return 'idle';
   return sprinting ? 'sprint' : 'walk';
@@ -69,6 +70,12 @@ export function describeLocomotion(snapshot: HudSnapshot): string {
       return 'CLIMBING';
     case 'sliding':
       return 'SLIDING';
+    case 'wall-running':
+      return 'WALL RUN';
+    case 'vaulting':
+      return 'VAULTING';
+    case 'rolling':
+      return 'ROLLING';
     case 'airborne':
       return 'airborne';
     case 'grounded':
@@ -81,8 +88,7 @@ export function describeLocomotion(snapshot: HudSnapshot): string {
 /**
  * Health as a bar, so fall damage is legible at a glance.
  *
- * The health *bar* is V0.3's UI work; this is the minimum needed to make fall
- * damage observable.
+ * The debug overlay's version; the *play* HUD has a real bar.
  */
 export function describeHealth(health: number, maxHealth: number): string {
   if (!(maxHealth > 0)) return 'n/a';

@@ -15,6 +15,8 @@ export interface UiCallbacks {
   readonly onStart: () => void;
   readonly onResume: () => void;
   readonly onRestart: () => void;
+  /** Leave the session and go back to the title screen. */
+  readonly onMainMenu: () => void;
   /** Return the player to their spawn point without restarting the session. */
   readonly onRespawn: () => void;
   readonly onQuit: () => void;
@@ -30,13 +32,22 @@ export interface GameUiOptions {
   readonly callbacks: UiCallbacks;
 }
 
+/** What the demo is, in one sentence per entry, for the About panel. */
+export const ABOUT_LINES: readonly string[] = [
+  'A low-poly first-person parkour run across a cyberpunk rooftop district.',
+  'Five furnished roofs, six metres apart horizontally and up to four apart vertically, crossed by mantling, pull-ups, climbing, vaulting, wall running and well-timed landings.',
+  'Fall and you go back to the last checkpoint you reached — not to the start.',
+];
+
 const CONTROLS: readonly [string, string][] = [
   ['W A S D', 'Move'],
   ['Mouse', 'Look'],
   ['Shift', 'Sprint'],
-  ['Space', 'Jump / pull up'],
-  ['Ctrl / C', 'Crouch / slide'],
-  ['W into a ledge', 'Mantle'],
+  ['Space', 'Jump · pull up from a hang · kick off a wall'],
+  ['Ctrl / C', 'Crouch · slide at speed · roll on a hard landing'],
+  ['W into a ledge', 'Mantle; keep running into a waist-high rail to vault it'],
+  ['Sprint at a rail', 'Kong vault — a diving vault that keeps its speed'],
+  ['Aim along a wall', 'Wall run; chain two facing walls to climb'],
   ['F3', 'Toggle debug info'],
   ['M', 'Mute'],
   ['Esc', 'Pause'],
@@ -47,6 +58,8 @@ export class GameUi {
   readonly root: HTMLElement;
   private readonly callbacks: UiCallbacks;
   private readonly startScreen: HTMLElement;
+  private readonly menuScreen: HTMLElement;
+  private readonly aboutScreen: HTMLElement;
   private readonly pauseScreen: HTMLElement;
   private readonly endedScreen: HTMLElement;
   private readonly crashScreen: HTMLElement;
@@ -80,29 +93,56 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk rooftop. This build is the V0.0 technical demo: rendering, camera, movement, collision and diagnostics.',
+        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.3 technical demo: vertical rooftops, gaps between buildings, and the moves that cross them.',
       }),
-      button('Start session', {
-        className: 'btn btn--primary',
-        onClick: () => this.callbacks.onStart(),
+      this.menu([
+        button('Play', {
+          className: 'btn btn--primary',
+          onClick: () => this.callbacks.onStart(),
+        }),
+        button('Controls', { onClick: () => this.showControls() }),
+        button('About', { onClick: () => this.showAbout() }),
+      ]),
+      this.recoveredBanner,
+      el('p', { className: 'title__hint', text: 'Click the window to lock the mouse, then press Esc to pause.' }),
+    ]);
+
+    this.menuScreen = this.buildScreen('screen--menu', [
+      el('h2', { className: 'screen__heading', text: 'CONTROLS' }),
+      el('p', {
+        className: 'screen__sub',
+        text: 'The manoeuvres engage from the movement itself, so there is no key to learn for them.',
       }),
       this.buildControls(),
-      this.recoveredBanner,
-      el('p', { className: 'title__hint', text: 'Click the window, then press Esc to pause.' }),
+      button('Back', { className: 'btn btn--primary', onClick: () => this.goBack() }),
     ]);
 
     // ------------------------------------------------------------------ pause
     this.pauseScreen = this.buildScreen('screen--pause', [
       el('h2', { className: 'screen__heading', text: 'PAUSED' }),
       el('p', { className: 'screen__sub', text: 'Mouse look is released while paused.' }),
-      button('Resume', { className: 'btn btn--primary', onClick: () => this.callbacks.onResume() }),
-      button('Respawn', {
-        title: 'Return to the spawn point without restarting',
-        onClick: () => this.callbacks.onRespawn(),
-      }),
-      button('Restart', { onClick: () => this.callbacks.onRestart() }),
-      button('Quit demo', { className: 'btn btn--danger', onClick: () => this.callbacks.onQuit() }),
-      this.buildControls(),
+      this.menu([
+        button('Resume', { className: 'btn btn--primary', onClick: () => this.callbacks.onResume() }),
+        button('Respawn', {
+          title: 'Go back to the last checkpoint without restarting',
+          onClick: () => this.callbacks.onRespawn(),
+        }),
+        button('Controls', { onClick: () => this.showControls() }),
+        button('Restart run', {
+          title: 'Start the route again from the beginning',
+          onClick: () => this.callbacks.onRestart(),
+        }),
+        button('Main menu', { onClick: () => this.callbacks.onMainMenu() }),
+        button('Quit demo', { className: 'btn btn--danger', onClick: () => this.callbacks.onQuit() }),
+      ]),
+    ]);
+
+    // ------------------------------------------------------------------ about
+    this.aboutScreen = this.buildScreen('screen--about', [
+      el('h2', { className: 'screen__heading', text: 'ABOUT' }),
+      ...ABOUT_LINES.map((line) => el('p', { className: 'screen__sub', text: line })),
+      el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
+      button('Back', { className: 'btn btn--primary', onClick: () => this.goBack() }),
     ]);
 
     // ------------------------------------------------------------------ ended
@@ -171,8 +211,9 @@ export class GameUi {
     this.deathOverlay.append(deathPanel);
     setHidden(this.deathOverlay, true);
 
-    // A brief red vignette on impact: without it fall damage is invisible, and
-    // the health bar proper is V0.3's UI work.
+    // A brief red vignette on impact: fall damage needs feedback *at the moment
+    // of the hit*, which a persistent bar cannot give. The health bar proper
+    // lives in the play HUD (`ui/gameHud.ts`).
     this.damageFlash = el('div', { className: 'damage-flash', attrs: { 'aria-hidden': 'true' } });
     setHidden(this.damageFlash, true);
 
@@ -181,6 +222,8 @@ export class GameUi {
       this.damageFlash,
       this.deathOverlay,
       this.startScreen,
+      this.menuScreen,
+      this.aboutScreen,
       this.pauseScreen,
       this.endedScreen,
       this.crashScreen,
@@ -197,6 +240,33 @@ export class GameUi {
     this.setActive(this.startScreen);
     this.setCrosshair(false);
     this.hideDeath();
+  }
+
+  /** The controls list, reachable from both the title screen and the pause menu. */
+  showControls(): void {
+    this.playMode = false;
+    this.returnTo = this.active;
+    this.setActive(this.menuScreen);
+    this.setCrosshair(false);
+  }
+
+  /** What this build is, reachable from the title screen. */
+  showAbout(): void {
+    this.playMode = false;
+    this.returnTo = this.active;
+    this.setActive(this.aboutScreen);
+    this.setCrosshair(false);
+  }
+
+  /** Which screen a Back button returns to. */
+  private returnTo: HTMLElement | null = null;
+  private active: HTMLElement | null = null;
+
+  goBack(): void {
+    const target = this.returnTo ?? this.startScreen;
+    this.returnTo = null;
+    if (target === this.pauseScreen) this.showPause();
+    else this.showStart();
   }
 
   showPause(): void {
@@ -332,9 +402,24 @@ export class GameUi {
   // ------------------------------------------------------------------ private
 
   private setActive(screen: HTMLElement | null): void {
-    for (const candidate of [this.startScreen, this.pauseScreen, this.endedScreen, this.crashScreen]) {
+    this.active = screen;
+    for (const candidate of [
+      this.startScreen,
+      this.menuScreen,
+      this.aboutScreen,
+      this.pauseScreen,
+      this.endedScreen,
+      this.crashScreen,
+    ]) {
       setHidden(candidate, candidate !== screen);
     }
+  }
+
+  /** A vertical list of menu buttons. */
+  private menu(entries: readonly HTMLElement[]): HTMLElement {
+    const list = el('div', { className: 'menu' });
+    list.append(...entries);
+    return list;
   }
 
 

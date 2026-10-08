@@ -173,34 +173,73 @@ export interface FootstepOptions {
 }
 
 /**
- * A footstep: a filtered noise scuff plus a low body thump.
+ * A footstep: a soft filtered scuff over a low body thump.
  *
- * Each of the four variants changes the filter, the thump pitch and the seed, so
- * a run does not sound like one sample on repeat.
+ * Deliberately *soft*. An earlier version had a 2 ms attack, a 35 ms decay and a
+ * bright 2.6 kHz filter, which made a run sound like a snare drum: a sharp tick
+ * every step, and at three and a half steps a second that is exhausting. Now the
+ * attack is a slow-in over 10 ms, the decay is three times as long, the filter is
+ * darker, and most of the level is in the low body rather than the scuff.
  */
 export function renderFootstep(options: FootstepOptions): Float32Array {
   const gait = options.gait;
-  const length = Math.round(SAMPLE_RATE * (gait === 'crouch' ? 0.13 : 0.18));
+  const length = Math.round(SAMPLE_RATE * (gait === 'crouch' ? 0.2 : 0.26));
   const scuff = whiteNoise(length, 0x1000 + options.variant * 97 + gait.length);
-  lowpass(scuff, gait === 'sprint' ? 2600 : gait === 'crouch' ? 900 : 1700);
+  lowpass(scuff, gait === 'sprint' ? 1500 : gait === 'crouch' ? 650 : 1050);
+  // A gentle high-pass keeps the low body from booming on a big speaker, without
+  // putting any brightness back.
+  highpass(scuff, 95);
 
-  const envelope = decayEnvelope(length, 0.002, gait === 'sprint' ? 0.05 : 0.035);
+  const envelope = decayEnvelope(
+    length,
+    0.01,
+    gait === 'sprint' ? 0.095 : gait === 'crouch' ? 0.06 : 0.075,
+  );
   for (let index = 0; index < length; index += 1) {
     scuff[index] = (scuff[index] as number) * (envelope[index] as number);
   }
 
   const body = decayingTone(
     length,
-    gait === 'crouch' ? 58 : 76 + options.variant * 6,
-    gait === 'crouch' ? 42 : 48,
-    0.04,
+    gait === 'crouch' ? 54 : 68 + options.variant * 5,
+    gait === 'crouch' ? 40 : 44,
+    0.075,
   );
+  const bodyEnvelope = decayEnvelope(length, 0.006, 0.07);
+  for (let index = 0; index < length; index += 1) {
+    body[index] = (body[index] as number) * (bodyEnvelope[index] as number);
+  }
 
   const samples = new Float32Array(length);
-  const gain = gait === 'sprint' ? 0.85 : gait === 'crouch' ? 0.34 : 0.6;
-  mixInto(samples, scuff, 0, gain);
-  mixInto(samples, body, 0, gait === 'crouch' ? 0.25 : 0.5);
-  normalise(samples, 0.82);
+  // Mostly body, a little scuff: a footfall, not a click.
+  const scuffGain = gait === 'sprint' ? 0.42 : gait === 'crouch' ? 0.16 : 0.3;
+  const bodyGain = gait === 'crouch' ? 0.3 : 0.72;
+  mixInto(samples, scuff, 0, scuffGain);
+  mixInto(samples, body, 0, bodyGain);
+  // Well under full scale, so footsteps sit beneath the music instead of over it.
+  normalise(samples, 0.6);
+  return samples;
+}
+
+/**
+ * A breathy swell of air, for the moves that are mostly a change of direction.
+ *
+ * A wall run, a wall jump and a roll are all the same sound really: air moving
+ * past. Filtered noise with a slow attack and a long tail, which sits under the
+ * scrape or the landing that follows rather than competing with it.
+ */
+export function renderWhoosh(): Float32Array {
+  const length = Math.round(SAMPLE_RATE * 0.55);
+  const samples = whiteNoise(length, 0x4400);
+  lowpass(samples, 2200);
+  highpass(samples, 260);
+
+  // In over a third of the sound and out over the rest: a swell, not a burst.
+  const envelope = decayEnvelope(length, 0.16, 0.3);
+  for (let index = 0; index < length; index += 1) {
+    samples[index] = (samples[index] as number) * (envelope[index] as number);
+  }
+  normalise(samples, 0.4);
   return samples;
 }
 
@@ -208,17 +247,17 @@ export function renderFootstep(options: FootstepOptions): Float32Array {
 export function renderScrape(variant: number): Float32Array {
   const length = Math.round(SAMPLE_RATE * 0.42);
   const noise = whiteNoise(length, 0x2200 + variant * 31);
-  highpass(noise, 380);
-  lowpass(noise, 5200);
+  highpass(noise, 240);
+  lowpass(noise, 3400);
 
-  const envelope = decayEnvelope(length, 0.02, 0.16);
+  const envelope = decayEnvelope(length, 0.04, 0.17);
   const samples = new Float32Array(length);
   for (let index = 0; index < length; index += 1) {
     // A slow wobble over the top, so the scrape has a grain to it.
     const grain = 0.75 + 0.25 * Math.sin((index / SAMPLE_RATE) * 2 * Math.PI * 17);
     samples[index] = (noise[index] as number) * (envelope[index] as number) * grain;
   }
-  normalise(samples, 0.62);
+  normalise(samples, 0.5);
   return samples;
 }
 
@@ -228,16 +267,16 @@ export function renderLanding(intensity: 0 | 1 | 2): Float32Array {
   const thud = decayingTone(length, 62 + intensity * 14, 34, 0.1 + intensity * 0.05);
 
   const crack = whiteNoise(length, 0x3300 + intensity);
-  lowpass(crack, 1100);
-  const crackEnvelope = decayEnvelope(length, 0.001, 0.05);
+  lowpass(crack, 800);
+  const crackEnvelope = decayEnvelope(length, 0.008, 0.07);
   for (let index = 0; index < length; index += 1) {
     crack[index] = (crack[index] as number) * (crackEnvelope[index] as number);
   }
 
   const samples = new Float32Array(length);
   mixInto(samples, thud, 0, 0.9);
-  mixInto(samples, crack, 0, 0.25 + intensity * 0.2);
-  normalise(samples, 0.9);
+  mixInto(samples, crack, 0, 0.18 + intensity * 0.16);
+  normalise(samples, 0.72);
   return samples;
 }
 
@@ -400,6 +439,6 @@ export function renderMusic(): Float32Array {
     }
   }
 
-  normalise(samples, 0.62);
+  normalise(samples, 0.5);
   return samples;
 }

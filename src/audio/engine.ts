@@ -25,6 +25,7 @@ import {
   renderLanding,
   renderMusic,
   renderScrape,
+  renderWhoosh,
   type FootstepVariant,
 } from './synth.js';
 
@@ -170,6 +171,9 @@ export class WebAudio implements AudioOutput {
           this.oneShot('scrape-0', () => renderScrape(0), 1.2);
           break;
         case 'slide-stop':
+          break;
+        case 'whoosh':
+          this.oneShot('whoosh', renderWhoosh);
           break;
       }
     } catch (error) {

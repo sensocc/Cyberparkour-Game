@@ -31,11 +31,12 @@ import {
 } from './diagnostics/crashSinks.js';
 import { createAudio, type AudioOutput } from './audio/engine.js';
 import { Game } from './game/game.js';
-import { DEMO_ROOF } from './game/level/levelData.js';
+import { DEMO_DISTRICT } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
 import { disposeSceneAssets, loadSceneAssets } from './render/assets.js';
 import { NO_ASSETS, type SceneAssets } from './render/types.js';
 import { GameView } from './render/view.js';
+import { GameHud } from './ui/gameHud.js';
 import { DebugHud } from './ui/hud.js';
 import { copyReport, downloadReport, downloadReports } from './ui/reportIO.js';
 import { GameUi } from './ui/screens.js';
@@ -58,6 +59,7 @@ interface Shell {
   readonly canvasHost: HTMLElement;
   readonly input: InputState;
   readonly hud: DebugHud;
+  readonly gameHud: GameHud;
   readonly ui: GameUi;
   readonly reporter: CrashReporter;
   /** Assigned once the game exists; the UI callbacks read it lazily. */
@@ -86,6 +88,8 @@ function createShell(): Shell {
   const holder: { game: Game | null } = { game: null };
 
   const hud = new DebugHud(uiRoot);
+  const gameHud = new GameHud();
+  uiRoot.append(gameHud.element);
 
   const store = resolveStore();
   const storageSink = new StorageCrashSink(store, CRASH_STORAGE_KEY, 10);
@@ -97,13 +101,14 @@ function createShell(): Shell {
   const ui = new GameUi({
     root: uiRoot,
     version: APP_VERSION,
-    levelName: DEMO_ROOF.name,
+    levelName: DEMO_DISTRICT.name,
     callbacks: {
       onStart: () => holder.game?.start(),
       onResume: () => holder.game?.resume(),
       onRestart: () => holder.game?.restart(),
       onQuit: () => holder.game?.quit(),
       onRespawn: () => holder.game?.respawn(),
+      onMainMenu: () => holder.game?.toMainMenu(),
       onDownloadReport: (report) => {
         const ok = downloadReport(report);
         ui.toast(ok ? 'Crash report downloaded.' : 'The browser blocked the download.');
@@ -169,7 +174,9 @@ function createShell(): Shell {
   reporter.install();
   logger.info('app', `${DEMO_LABEL} booting`);
 
-  return { app, canvasHost, input, hud, ui, reporter, holder };
+  ui.showStart();
+
+  return { app, canvasHost, input, hud, gameHud, ui, reporter, holder };
 }
 
 /** Loads the flat textures, degrading to flat colours rather than failing. */
@@ -191,11 +198,12 @@ function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
     pointerLockTarget: shell.app,
     ui: shell.ui,
     hud: shell.hud,
+    gameHud: shell.gameHud,
     input: shell.input,
     crashReporter: shell.reporter,
     logBuffer: logger,
     config: DEFAULT_CONFIG,
-    level: DEMO_ROOF,
+    level: DEMO_DISTRICT,
     audio: createAudioBackend(),
     createView: (canvas, definition, config) =>
       new GameView({ canvas, definition, config, assets }),

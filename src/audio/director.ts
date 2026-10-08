@@ -25,6 +25,7 @@ export type AudioCue =
   | { readonly kind: 'pull-up' }
   | { readonly kind: 'slide-start' }
   | { readonly kind: 'slide-stop' }
+  | { readonly kind: 'whoosh' }
   | { readonly kind: 'hurt'; readonly damage: number }
   | { readonly kind: 'death' }
   | { readonly kind: 'gust' };
@@ -78,7 +79,15 @@ export class AudioDirector {
     if (kind === 'hang') this.push({ kind: 'grab' });
     else if (kind === 'slide') this.push({ kind: 'slide-start' });
     else if (kind === 'climb') return;
-    else this.push({ kind: kind });
+    // The three airborne moves share one sound: a breathy swell of air, which is
+    // what they all are. A wall run then scrapes underneath it like a slide does,
+    // and a vault or a kong lands - both of which `update` handles.
+    else if (kind === 'wall-run' || kind === 'wall-jump' || kind === 'roll') {
+      this.push({ kind: 'whoosh' });
+    } else if (kind === 'vault' || kind === 'kong-vault') {
+      this.push({ kind: 'whoosh' });
+      this.push({ kind: 'land', intensity: 0 });
+    } else this.push({ kind: kind });
   }
 
   maneuverEnd(kind: ManeuverKind): void {
@@ -125,7 +134,10 @@ export class AudioDirector {
       this.distanceSinceStep = this.strideFor('walk') / 2;
     }
 
-    if (state.sliding) {
+    // Sliding drags on the floor, wall running drags on the wall, and a roll
+    // drags on both. Same sound, and it is the contact that makes all three read
+    // as movement you are committed to rather than floating.
+    if (state.sliding || state.wallId !== null || state.maneuver?.kind === 'roll') {
       this.scrapeTimer -= dt;
       if (this.scrapeTimer <= 0) {
         this.scrapeTimer = SCRAPE_INTERVAL;

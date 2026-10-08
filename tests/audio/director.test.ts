@@ -154,7 +154,10 @@ describe('the footstep cadence', () => {
           from: vec3(),
           to: vec3(),
           arcHeight: 0,
-          fromHang: false,
+          kind: 'mantle',
+          exitSpeed: 0,
+          exitDirection: vec3(),
+          lowProfile: false,
         };
       },
     ]) {

@@ -26,7 +26,7 @@ import { DomInput } from '../input/domInput.js';
 import type { InputState } from '../input/inputState.js';
 import { applyLook } from './look.js';
 import { buildLevel, type BuiltLevel } from './level/level.js';
-import { DEMO_ROOF, type LevelDefinition } from './level/levelData.js';
+import { DEMO_DISTRICT, type LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
   eyePosition,
@@ -40,6 +40,7 @@ import {
   type PlayerState,
 } from './player.js';
 import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '../render/types.js';
+import type { GameHud } from '../ui/gameHud.js';
 import type { DebugHud, HudSnapshot } from '../ui/hud.js';
 import type { GameUi } from '../ui/screens.js';
 
@@ -52,6 +53,7 @@ export interface GameOptions {
   readonly pointerLockTarget: HTMLElement;
   readonly ui: GameUi;
   readonly hud: DebugHud;
+  readonly gameHud: GameHud;
   readonly input: InputState;
   readonly crashReporter: CrashReporter;
   readonly logBuffer?: LogBuffer;
@@ -119,7 +121,7 @@ export class Game {
   constructor(options: GameOptions) {
     this.options = options;
     this.config = options.config ?? DEFAULT_CONFIG;
-    this.definition = options.level ?? DEMO_ROOF;
+    this.definition = options.level ?? DEMO_DISTRICT;
     this.log = options.logBuffer;
 
     this.accumulator = new FixedStepAccumulator(
@@ -254,6 +256,28 @@ export class Game {
     this.log?.info('game', 'resumed');
   }
 
+  /**
+   * Leaves the session and returns to the title screen.
+   *
+   * Not the same as quitting: nothing is torn down, so the next Play is instant,
+   * but the run is abandoned - the checkpoint progress and the death count go with
+   * it, because starting the route again is the point of leaving.
+   */
+  toMainMenu(): void {
+    if (this.status === 'ended') return;
+    this.setStatus('idle');
+    this.options.input.clear();
+    this.domInput.detach();
+    this.domInput.exitPointerLock();
+    this.loop.stop();
+    this.audioDirector.reset();
+    this.audioOutput.silence();
+    this.audioOutput.setMusic(false);
+    this.options.hud.setVisible(true);
+    this.options.ui.showStart();
+    this.log?.info('game', 'returned to the main menu');
+  }
+
   /** Tears everything down and rebuilds from the spawn point. */
   restart(): void {
     this.log?.info('game', 'restarting', { from: this.status });
@@ -324,6 +348,7 @@ export class Game {
       config: this.config.player,
       game: this.config,
       climbableIds: this.climbables,
+      checkpoints: this.definition.checkpoints,
       killPlaneY: this.definition.killPlaneY,
       respawnDelaySeconds: this.config.respawn.delaySeconds,
       safetyFloorY: this.config.world.safetyFloorY,
@@ -355,6 +380,30 @@ export class Game {
         health: Math.round(this.player.health),
       });
     }
+  }
+
+  /**
+   * Records a checkpoint reached, and tells the player.
+   *
+   * The toast matters more than it looks: the checkpoint radius is deliberately
+   * generous, so a player can cross one without noticing, and being told is the
+   * difference between "the game saved my progress" and "the game respawned me
+   * somewhere strange after I fell".
+   */
+  private handleCheckpoint(index: number): void {
+    const total = this.definition.checkpoints.length;
+    this.log?.info('game', 'checkpoint reached', { checkpoint: index, total });
+    this.options.ui.toast(`CHECKPOINT ${index + 1} / ${total}`);
+    this.updateGameHud();
+  }
+
+  private updateGameHud(): void {
+    this.options.gameHud.update({
+      health: this.player.health,
+      maxHealth: this.config.fallDamage.maxHealth,
+      checkpoint: this.player.checkpoint,
+      checkpointCount: this.definition.checkpoints.length,
+    });
   }
 
   private handleRespawn(): void {
@@ -520,6 +569,7 @@ export class Game {
       if (outcome.landing) this.handleLanding(outcome.landing.impact, outcome.landing.damage);
       if (outcome.started) this.audioDirector.maneuverStart(outcome.started);
       if (outcome.ended) this.audioDirector.maneuverEnd(outcome.ended);
+      if (outcome.checkpoint !== null) this.handleCheckpoint(outcome.checkpoint);
     });
 
     this.updateAudio(steps * fixedStep(this.config));
@@ -564,6 +614,7 @@ export class Game {
     this.view.render(this.scratchEye, this.player);
   }
 
+  /** The play HUD lives next to the health and the checkpoints, not the debug rows. */
   private updateHud(): void {
     const stats = this.stats.snapshot();
     const interval = 1 / Math.max(1, this.config.debug.hudRefreshHz);
@@ -571,6 +622,7 @@ export class Game {
     this.lastHudUpdate = stats.elapsedSeconds;
 
     this.options.hud.update(this.hudSnapshot(stats));
+    this.updateGameHud();
   }
 
   private hudSnapshot(stats: StatsSnapshot): HudSnapshot {

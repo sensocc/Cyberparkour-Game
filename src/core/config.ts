@@ -113,6 +113,114 @@ export interface SlideConfig {
   readonly maxSeconds: number;
 }
 
+export interface WallRunConfig {
+  /** Horizontal speed needed to attach to a wall (m/s). */
+  readonly minSpeed: number;
+  /** Longest a single wall run can last (s). */
+  readonly maxSeconds: number;
+  /** Gravity multiplier while running a wall. */
+  readonly gravityScale: number;
+  /** Acceleration pushing the player into the wall, so contact is kept (m/s^2). */
+  readonly stickAcceleration: number;
+  /** Fraction of horizontal speed lost per second while wall-running (1/s). */
+  readonly speedDecay: number;
+  /** How far to the side to look for a wall (m). */
+  readonly reach: number;
+  /** A wall only counts if its top rises this far above the feet (m). */
+  readonly minHeight: number;
+  /**
+   * Seconds the wall just left is refused, when a run ends on its own.
+   *
+   * Without this the run would simply start again on the next step and the
+   * duration limit would mean nothing: a player could hold forward against one
+   * wall and stay up forever. Short, because running a long wall and dropping
+   * back onto it on purpose is legitimate.
+   */
+  readonly reattachCooldownSeconds: number;
+}
+
+export interface WallJumpConfig {
+  /** Speed pushed away from the wall (m/s). */
+  readonly outwardSpeed: number;
+  /** Upward speed given by the jump (m/s). */
+  readonly upwardSpeed: number;
+  /** Fraction of the along-wall speed kept through the jump. */
+  readonly keepSpeed: number;
+  /**
+   * Seconds before the *same* wall can be attached to again.
+   *
+   * Longer than the jump's own airtime on purpose: that is what stops a player
+   * from holding jump against one wall and climbing it, while leaving a second
+   * wall immediately available so two facing walls can still be chained.
+   */
+  readonly lockoutSeconds: number;
+}
+
+export interface RollConfig {
+  /** Impact speed at which a landing can be rolled off (m/s). */
+  readonly minImpact: number;
+  readonly durationSeconds: number;
+  /** How far the roll carries the player (m). */
+  readonly distance: number;
+  /** Shortest roll worth doing, when the full distance is blocked (m). */
+  readonly minDistance: number;
+  /**
+   * Fraction of the fall damage still taken when an impact is rolled.
+   *
+   * A roll is the reward for a well-timed landing, not an immunity: it turns a
+   * fatal drop into a survivable one and a survivable one into a scratch.
+   */
+  readonly damageFraction: number;
+  /** Speed the roll leaves the player with (m/s). */
+  readonly exitSpeed: number;
+}
+
+export interface VaultConfig {
+  /** Lowest obstacle top that can be vaulted, above the feet (m). */
+  readonly minHeight: number;
+  /** Highest obstacle top that can be vaulted, above the feet (m). */
+  readonly maxHeight: number;
+  /** How far ahead of the box to look (m). */
+  readonly reach: number;
+  /** Deepest obstacle that can be crossed (m). Anything wider is a wall. */
+  readonly maxDepth: number;
+  /** How far past the obstacle's near face the player lands (m). */
+  readonly landingGap: number;
+  /** How far below the landing spot the ground may be (m). */
+  readonly supportDepth: number;
+  readonly vault: {
+    /** Entry speed needed (m/s). */
+    readonly minSpeed: number;
+    readonly durationSeconds: number;
+    /** Fraction of the entry speed kept on landing. */
+    readonly speedRetention: number;
+    /** How far above the obstacle the body clears it (m). */
+    readonly clearance: number;
+  };
+  /**
+   * The Kong vault: a diving vault off a sprint.
+   *
+   * Same obstacle band, but it needs real speed, travels further, clears the
+   * obstacle lower (it is a dive, not a hop) and - the point of it - keeps far
+   * more of its speed, so it is how a route stays fast.
+   */
+  readonly kong: {
+    readonly minSpeed: number;
+    readonly durationSeconds: number;
+    /** Extra travel compared with a plain vault (m). */
+    readonly distanceBonus: number;
+    readonly speedRetention: number;
+    readonly clearance: number;
+  };
+}
+
+export interface CheckpointConfig {
+  /** How close the player must pass, horizontally (m). */
+  readonly radius: number;
+  /** How far above or below a checkpoint still counts (m). */
+  readonly heightTolerance: number;
+}
+
 export interface HeadBobConfig {
   /** Metres of travel per full bob cycle, by gait. */
   readonly strideLength: Readonly<{ walk: number; sprint: number; crouch: number }>;
@@ -120,8 +228,17 @@ export interface HeadBobConfig {
   readonly verticalAmplitude: number;
   /** Sideways travel at full amplitude (m). */
   readonly lateralAmplitude: number;
-  /** How quickly the bob fades in and out (1/s). */
+  /** How quickly the bob fades in and out (1/s). Smaller is gentler. */
   readonly settleRate: number;
+  /**
+   * Amplitude multiplier once the player is at sprint speed.
+   *
+   * The bob's *frequency* rises with speed, so a constant amplitude means the
+   * camera moves faster and faster the quicker you go - which is what made
+   * sprinting feel like being shaken. Scaling the amplitude down with speed keeps
+   * the perceived shake roughly constant.
+   */
+  readonly speedFalloff: number;
 }
 
 export interface FallDamageConfig {
@@ -163,7 +280,12 @@ export interface GameConfig {
     readonly pullUp: PullUpConfig;
     readonly climb: ClimbConfig;
     readonly slide: SlideConfig;
+    readonly wallRun: WallRunConfig;
+    readonly wallJump: WallJumpConfig;
+    readonly roll: RollConfig;
+    readonly vault: VaultConfig;
   };
+  readonly checkpoint: CheckpointConfig;
   readonly headBob: HeadBobConfig;
   readonly fallDamage: FallDamageConfig;
   readonly respawn: RespawnConfig;
@@ -229,6 +351,71 @@ export const DEFAULT_CONFIG: GameConfig = {
       steerAcceleration: 4,
       maxSeconds: 2.6,
     },
+
+    wallRun: {
+      // A run-up, but a shorter one than a slide needs: leaving a wall jump is
+      // often slower than a run, and it should still be possible to re-attach.
+      minSpeed: 6,
+      maxSeconds: 1.5,
+      // Low enough that a wall run clearly fights gravity, high enough that it
+      // does not simply hang: 0.16g gives about a 6 m drop over the full run.
+      gravityScale: 0.16,
+      stickAcceleration: 14,
+      speedDecay: 0.15,
+      reach: 0.55,
+      minHeight: 1.6,
+      reattachCooldownSeconds: 0.35,
+    },
+    wallJump: {
+      outwardSpeed: 6.4,
+      // Higher than a standing jump, so a wall jump gains height.
+      upwardSpeed: 7.8,
+      keepSpeed: 0.92,
+      lockoutSeconds: 0.55,
+    },
+    roll: {
+      // Below this a roll is pointless; above it, it is the difference between
+      // walking away and dying.
+      minImpact: 13,
+      durationSeconds: 0.5,
+      distance: 3.4,
+      minDistance: 0.9,
+      damageFraction: 0.25,
+      exitSpeed: 3.5,
+    },
+    vault: {
+      // Starts where the mantle band ends, so "waist high" is unambiguous: a
+      // low obstacle is stepped onto, a waist-high one is crossed.
+      minHeight: 0.5,
+      maxHeight: 1.15,
+      reach: 0.6,
+      // Wide obstacles are climbed onto, thin ones are crossed. Without this a
+      // crate would be vaulted and a rail mantled, which is exactly backwards.
+      maxDepth: 1.1,
+      landingGap: 1.7,
+      supportDepth: 0.7,
+      vault: {
+        minSpeed: 7,
+        durationSeconds: 0.44,
+        speedRetention: 0.62,
+        clearance: 0.12,
+      },
+      kong: {
+        // A sprint, so a Kong vault is something you have to wind up for.
+        minSpeed: 9.5,
+        durationSeconds: 0.52,
+        distanceBonus: 1.3,
+        // Nearly all of it: that is what makes the Kong vault worth the risk.
+        speedRetention: 0.92,
+        clearance: 0.04,
+      },
+    },
+  },
+  checkpoint: {
+    // Generous, because a checkpoint is a kindness rather than a challenge, and
+    // a route should not be lost to a near miss.
+    radius: 3,
+    heightTolerance: 2.5,
   },
   headBob: {
     // One bob cycle per stride, and one footstep per half stride. These are
@@ -236,10 +423,13 @@ export const DEFAULT_CONFIG: GameConfig = {
     // strides are long: at a realistic 0.9 m step a walk would be a 4 Hz buzz
     // rather than a run. Sprint strides are longer still, so the cadence rises
     // with speed without needing a separate timer.
-    strideLength: { walk: 4.2, sprint: 5.4, crouch: 2.6 },
-    verticalAmplitude: 0.055,
-    lateralAmplitude: 0.032,
-    settleRate: 9,
+    strideLength: { walk: 4.6, sprint: 6.2, crouch: 2.8 },
+    verticalAmplitude: 0.034,
+    lateralAmplitude: 0.017,
+    // A slow fade in and out: at 9/s the bob snapped on and off the moment you
+    // started or stopped, which read as a jolt on top of the bob itself.
+    settleRate: 4.5,
+    speedFalloff: 0.6,
   },
   fallDamage: {
     maxHealth: 100,

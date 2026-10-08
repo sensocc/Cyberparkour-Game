@@ -1,10 +1,15 @@
 /**
  * Player state and movement.
  *
- * V0.1 had one movement mode. V0.2 has six, and rather than a formal state
+ * V0.1 had one movement mode and V0.2 six. V0.3 adds wall running and the
+ * scripted traversal moves - the landing roll, the vault and the Kong vault -
+ * which sit beside V0.2's mantling and pull-ups. Rather than a formal state
  * machine they are resolved by a priority chain at the top of `stepPlayer`:
  *
- *   dead -> mantling -> hanging -> climbing -> sliding -> ordinary locomotion
+ *   dead -> scripted move -> hanging -> climbing -> locomotion
+ *
+ * A scripted move owns the body outright; wall running, sliding and the ordinary
+ * gaits are all decided inside the locomotion step.
  *
  * A manoeuvre in progress owns the player completely - input is ignored while
  * mantling, because the body is mid-move and being able to steer out of it would
@@ -16,7 +21,7 @@
  * locomotion model is testable headlessly.
  */
 
-import type { GameConfig, PlayerConfig, SlideConfig } from '../core/config.js';
+import type { GameConfig, PlayerConfig, RollConfig, SlideConfig } from '../core/config.js';
 import { clamp, damp } from '../core/math.js';
 import {
   applySafetyFloor,
@@ -27,7 +32,14 @@ import {
   type CollisionWorld,
   type MoveResult,
 } from './physics/collision.js';
-import { findClimbable, findLedge, landingFeet } from './physics/ledges.js';
+import { aabbFromCenterSize } from './physics/aabb.js';
+import {
+  findClimbable,
+  findLedge,
+  findVaultObstacle,
+  findWallRunSurface,
+  landingFeet,
+} from './physics/ledges.js';
 import {
   copyVec3,
   lerpVec3,
@@ -37,7 +49,7 @@ import {
   type ReadonlyVec3,
   type Vec3,
 } from '../core/vec3.js';
-import type { SpawnPoint } from './level/levelData.js';
+import type { CheckpointDefinition, SpawnPoint } from './level/levelData.js';
 
 /** Movement intent for one step. */
 export interface MoveInput {
@@ -67,18 +79,42 @@ export type Locomotion =
   | 'airborne'
   | 'mantling'
   | 'pulling-up'
+  | 'vaulting'
+  | 'rolling'
+  | 'wall-running'
   | 'hanging'
   | 'climbing'
   | 'sliding'
   | 'dead';
 
-export type Stance = 'standing' | 'crouched';
+export type Stance = 'standing' | 'crouched' | 'rolling';
 
 /** Why the player died. */
 export type DeathCause = 'fell' | 'impact';
 
 /** One of the discrete moves, as reported to the audio director. */
-export type ManeuverKind = 'mantle' | 'pull-up' | 'climb' | 'slide' | 'hang';
+export type ManeuverKind =
+  | 'mantle'
+  | 'pull-up'
+  | 'climb'
+  | 'slide'
+  | 'hang'
+  | 'roll'
+  | 'vault'
+  | 'kong-vault'
+  | 'wall-run'
+  | 'wall-jump';
+
+/** The moves that are scripted paths rather than simulated motion. */
+export type ScriptedMove = 'mantle' | 'pull-up' | 'roll' | 'vault' | 'kong-vault';
+
+const MANEUVER_LOCOMOTION: Readonly<Record<ScriptedMove, Locomotion>> = {
+  mantle: 'mantling',
+  'pull-up': 'pulling-up',
+  roll: 'rolling',
+  vault: 'vaulting',
+  'kong-vault': 'vaulting',
+};
 
 /** A scripted move from one position to another. */
 export interface ManeuverMove {
@@ -86,9 +122,20 @@ export interface ManeuverMove {
   readonly durationSeconds: number;
   readonly from: Vec3;
   readonly to: Vec3;
+  /**
+   * How far the path arches above the straight line between its ends.
+   *
+   * Zero for a roll, small for a mantle, and - for a vault - whatever it takes to
+   * clear the obstacle, worked out when the move starts.
+   */
   readonly arcHeight: number;
-  /** True when the move began from a hang, which changes its speed and sound. */
-  readonly fromHang: boolean;
+  readonly kind: ScriptedMove;
+  /** Speed to leave with when the move finishes (m/s, 0 to stop dead). */
+  readonly exitSpeed: number;
+  /** Direction to leave in. Only read when `exitSpeed` is above zero. */
+  readonly exitDirection: Vec3;
+  /** True when the body must stay low for the whole move, as in a roll. */
+  readonly lowProfile: boolean;
 }
 
 export interface PlayerState {
@@ -140,15 +187,34 @@ export interface PlayerState {
   bobPhase: number;
   /** Head-bob amplitude multiplier, 0..1, faded in and out. */
   bobAmount: number;
-  /** Where `respawnPlayer` sends the player back to. */
+  /** The level's own spawn point, which never changes. */
   readonly spawn: { position: Vec3; yaw: number; pitch: number };
+  /**
+   * Where `respawnPlayer` actually sends the player: the spawn until a checkpoint
+   * is reached, then that checkpoint.
+   */
+  readonly respawn: { position: Vec3; yaw: number; pitch: number };
+  /** Index of the last checkpoint reached, or -1 for none. */
+  checkpoint: number;
+  /** Collider the player is running along, if any. */
+  wallId: string | null;
+  /** Horizontal unit vector from the player towards that wall. */
+  wallNormal: Vec3;
+  /** Seconds spent on the current wall run, so it cannot last forever. */
+  wallRunElapsed: number;
+  /** Wall that may not be used again until the cooldown expires. */
+  wallJumpId: string | null;
+  /** Seconds left on that lockout. */
+  wallCooldown: number;
 }
 
 export interface PlayerStepOptions {
   readonly world: CollisionWorld;
   readonly config: PlayerConfig;
-  /** The manoeuvre, head-bob and fall-damage tuning. */
-  readonly game: Pick<GameConfig, 'maneuver' | 'headBob' | 'fallDamage'>;
+  /** The manoeuvre, head-bob, fall-damage and checkpoint tuning. */
+  readonly game: Pick<GameConfig, 'maneuver' | 'headBob' | 'fallDamage' | 'checkpoint'>;
+  /** Checkpoints to watch for, in route order. */
+  readonly checkpoints?: readonly CheckpointDefinition[];
   /** Ids of colliders that can be climbed. */
   readonly climbableIds?: ReadonlySet<string>;
   /** Fall detection: the Y at or below which the player dies. */
@@ -164,6 +230,8 @@ export interface Landing {
   readonly impact: number;
   /** Health lost. */
   readonly damage: number;
+  /** True when the impact was rolled off instead of taken on the feet. */
+  readonly rolled: boolean;
 }
 
 export interface PlayerStepOutcome {
@@ -176,6 +244,8 @@ export interface PlayerStepOutcome {
   readonly started: ManeuverKind | null;
   /** Set on the step a manoeuvre finished. */
   readonly ended: ManeuverKind | null;
+  /** Index of a checkpoint reached on this step. */
+  readonly checkpoint: number | null;
 }
 
 function outcome(
@@ -186,6 +256,7 @@ function outcome(
     landing?: Landing | null;
     started?: ManeuverKind | null;
     ended?: ManeuverKind | null;
+    checkpoint?: number | null;
   } = {},
 ): PlayerStepOutcome {
   return {
@@ -195,6 +266,7 @@ function outcome(
     landing: extra.landing ?? null,
     started: extra.started ?? null,
     ended: extra.ended ?? null,
+    checkpoint: extra.checkpoint ?? null,
   };
 }
 
@@ -226,30 +298,54 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     bobPhase: 0,
     bobAmount: 0,
     spawn: { position: spawnPosition, yaw: spawn.yaw, pitch: spawn.pitch },
+    respawn: {
+      position: vec3(spawnPosition.x, spawnPosition.y, spawnPosition.z),
+      yaw: spawn.yaw,
+      pitch: spawn.pitch,
+    },
+    checkpoint: -1,
+    wallId: null,
+    wallNormal: vec3(0, 0, 0),
+    wallRunElapsed: 0,
+    wallJumpId: null,
+    wallCooldown: 0,
   };
   return state;
 }
 
 // ------------------------------------------------------------------ queries
 
+/**
+ * True while the body has to stay low, whether from crouching or from a move
+ * that is low by nature, such as a roll.
+ *
+ * One predicate rather than a flag per case, so the collision box and the eye
+ * height can never disagree about how tall the player currently is.
+ */
+function isLowProfile(state: PlayerState): boolean {
+  return state.crouching || state.maneuver?.lowProfile === true;
+}
+
 export function playerHeight(state: PlayerState, config: PlayerConfig): number {
-  return state.crouching ? config.crouchHeight : config.standHeight;
+  return isLowProfile(state) ? config.crouchHeight : config.standHeight;
 }
 
 export function eyeHeight(state: PlayerState, config: PlayerConfig): number {
-  return state.crouching ? config.crouchEyeHeight : config.standEyeHeight;
+  return isLowProfile(state) ? config.crouchEyeHeight : config.standEyeHeight;
 }
 
 export function stance(state: PlayerState): Stance {
+  if (state.maneuver?.lowProfile === true) return 'rolling';
   return state.crouching ? 'crouched' : 'standing';
 }
 
 /** What the player is doing right now. */
 export function locomotion(state: PlayerState): Locomotion {
   if (!state.alive) return 'dead';
-  if (state.maneuver) return state.maneuver.fromHang ? 'pulling-up' : 'mantling';
+  if (state.maneuver) return MANEUVER_LOCOMOTION[state.maneuver.kind];
   if (state.hangId) return 'hanging';
   if (state.climbId) return 'climbing';
+  if (state.wallId) return 'wall-running';
   if (state.sliding) return 'sliding';
   if (!state.grounded) return 'airborne';
   return 'grounded';
@@ -267,15 +363,21 @@ export function standingSize(config: PlayerConfig): { radius: number; height: nu
 
 // ---------------------------------------------------------------- lifecycle
 
-/** Clears every manoeuvre and returns the player to a neutral, standing pose. */
+/**
+ * Clears every manoeuvre and returns the player to a neutral, standing pose.
+ *
+ * The player goes back to their *respawn* point, which is the level spawn until a
+ * checkpoint has been reached, and to the facing they had when they got there.
+ * Progress is kept: a respawn is a setback, not a restart.
+ */
 export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
-  copyVec3(state.position, state.spawn.position);
-  copyVec3(state.previousPosition, state.spawn.position);
+  copyVec3(state.position, state.respawn.position);
+  copyVec3(state.previousPosition, state.respawn.position);
   state.velocity.x = 0;
   state.velocity.y = 0;
   state.velocity.z = 0;
-  state.yaw = state.spawn.yaw;
-  state.pitch = state.spawn.pitch;
+  state.yaw = state.respawn.yaw;
+  state.pitch = state.respawn.pitch;
   state.grounded = false;
   state.groundId = null;
   state.crouching = false;
@@ -292,11 +394,24 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.peakFallSpeed = 0;
   state.bobPhase = 0;
   state.bobAmount = 0;
+  state.wallId = null;
+  state.wallRunElapsed = 0;
+  state.wallJumpId = null;
+  state.wallCooldown = 0;
   if (config) state.health = config.fallDamage.maxHealth;
 }
 
-/** Full session reset: as `respawnPlayer`, and the death count goes back to zero. */
+/**
+ * Full session reset: as `respawnPlayer`, and the run goes back to the start.
+ *
+ * That means the death count and every checkpoint reached are forgotten too,
+ * which is the difference between a respawn and starting over.
+ */
 export function resetPlayerState(state: PlayerState, config?: GameConfig): void {
+  state.checkpoint = -1;
+  copyVec3(state.respawn.position, state.spawn.position);
+  state.respawn.yaw = state.spawn.yaw;
+  state.respawn.pitch = state.spawn.pitch;
   respawnPlayer(state, config);
   state.deaths = 0;
 }
@@ -312,6 +427,7 @@ export function stepPlayer(
   if (!Number.isFinite(dt) || dt <= 0) return outcome(createMoveResult());
 
   if (state.grabCooldown > 0) state.grabCooldown = Math.max(0, state.grabCooldown - dt);
+  if (state.wallCooldown > 0) state.wallCooldown = Math.max(0, state.wallCooldown - dt);
 
   // While dead the player keeps falling - so the death reads as a fall rather
   // than a freeze - but no input is accepted and the death cannot re-trigger.
@@ -329,13 +445,47 @@ export function stepPlayer(
   }
 
   // A scripted move in progress owns the body until it finishes.
-  if (state.maneuver) return stepManeuver(state, dt, options);
+  let result: PlayerStepOutcome;
+  if (state.maneuver) result = stepManeuver(state, dt, options);
+  else if (state.hangId) result = stepHanging(state, input, dt, options);
+  else if (state.climbId) result = stepClimbing(state, input, dt, options);
+  else result = stepLocomotion(state, input, dt, options);
 
-  if (state.hangId) return stepHanging(state, input, dt, options);
-  if (state.climbId) return stepClimbing(state, input, dt, options);
+  // Checkpoints are watched in every mode, so passing one mid-vault counts.
+  if (!state.alive) return result;
+  const reached = updateCheckpoints(state, options);
+  return reached === null ? result : { ...result, checkpoint: reached };
+}
 
-  const move = stepLocomotion(state, input, dt, options);
-  return move;
+/**
+ * Advances the respawn point when the player passes a checkpoint they have not
+ * reached before.
+ *
+ * Only ever forwards: walking back over an earlier checkpoint does not undo it,
+ * and skipping one is allowed - reaching a later roof on foot is still progress,
+ * and refusing to record it would strand the player.
+ */
+function updateCheckpoints(state: PlayerState, options: PlayerStepOptions): number | null {
+  const list = options.checkpoints;
+  if (!list || list.length === 0) return null;
+  const { radius, heightTolerance } = options.game.checkpoint;
+  const radiusSquared = radius * radius;
+
+  for (let index = state.checkpoint + 1; index < list.length; index += 1) {
+    const point = list[index];
+    if (!point) continue;
+    const dx = state.position.x - point.position.x;
+    const dz = state.position.z - point.position.z;
+    if (dx * dx + dz * dz > radiusSquared) continue;
+    if (Math.abs(state.position.y - point.position.y) > heightTolerance) continue;
+
+    state.checkpoint = index;
+    copyVec3(state.respawn.position, point.position);
+    state.respawn.yaw = point.yaw ?? state.spawn.yaw;
+    state.respawn.pitch = 0;
+    return index;
+  }
+  return null;
 }
 
 // ------------------------------------------------------------- dead / manoeuvre
@@ -392,16 +542,20 @@ function stepManeuver(state: PlayerState, dt: number, options: PlayerStepOptions
     return outcome(createMoveResult());
   }
 
-  const kind: ManeuverKind = maneuver.fromHang ? 'pull-up' : 'mantle';
   copyVec3(state.position, maneuver.to);
   copyVec3(state.previousPosition, maneuver.to);
   state.maneuver = null;
   state.crouching = false;
   state.grounded = true;
   state.peakFallSpeed = 0;
+  // A vault carries the speed it entered with - that is the whole point of it -
+  // so a move can hand momentum back rather than always ending dead.
+  state.velocity.x = maneuver.exitDirection.x * maneuver.exitSpeed;
+  state.velocity.z = maneuver.exitDirection.z * maneuver.exitSpeed;
+  state.velocity.y = 0;
 
   advanceHeadBob(state, options, dt, 0);
-  return outcome(createMoveResult(), { ended: kind });
+  return outcome(createMoveResult(), { ended: maneuver.kind });
 }
 
 /** Hauling up from a hang, or letting go. */
@@ -421,7 +575,7 @@ function stepHanging(
   if (input.jump && !state.jumpLatch) {
     const target = climbTargetFromHang(state, options);
     if (target) {
-      startManeuver(state, target, true, options);
+      startLadderManeuver(state, target, 'pull-up', options);
       return outcome(createMoveResult(), { started: 'pull-up' });
     }
   }
@@ -493,7 +647,7 @@ function stepClimbing(
       surface.box.max.y,
     );
     state.climbId = null;
-    startManeuver(state, to, false, options);
+    startLadderManeuver(state, to, 'mantle', options);
     return outcome(createMoveResult(), { ended: 'climb', started: 'mantle' });
   }
 
@@ -532,6 +686,9 @@ function stepLocomotion(
     wasGrounded,
     dt,
   );
+  const wallEvent = updateWallRun(state, input, options, wasGrounded, dt);
+  let started: ManeuverKind | null = slideEvent.started ?? wallEvent.started;
+  let ended: ManeuverKind | null = slideEvent.ended ?? wallEvent.ended;
 
   const basis = yawBasis(state.yaw);
   let wishX = basis.forward.x * input.forward + basis.right.x * input.right;
@@ -569,6 +726,14 @@ function stepLocomotion(
   if (state.grounded && !state.sliding) {
     if (state.velocity.y < 0) state.velocity.y = 0;
     if (input.jump) state.velocity.y = config.jumpSpeed;
+  } else if (state.alive && tryWallJump(state, input, options)) {
+    started = 'wall-jump';
+  } else if (state.wallId !== null) {
+    // Running a wall is still a fall, just a slow one: gravity at a fraction of
+    // its strength, so a wall run carries you across a gap rather than holding
+    // you up.
+    state.velocity.y -= config.gravity * options.game.maneuver.wallRun.gravityScale * dt;
+    if (state.velocity.y < -config.maxFallSpeed) state.velocity.y = -config.maxFallSpeed;
   } else {
     state.velocity.y -= config.gravity * dt;
     if (state.velocity.y < -config.maxFallSpeed) state.velocity.y = -config.maxFallSpeed;
@@ -590,25 +755,28 @@ function stepLocomotion(
 
   let landing: Landing | null = null;
   let died = false;
-  let started: ManeuverKind | null = slideEvent.started;
-  let ended: ManeuverKind | null = slideEvent.ended;
 
   if (!state.grounded) {
     state.peakFallSpeed = Math.max(state.peakFallSpeed, -state.velocity.y);
   } else if (!wasGrounded) {
-    landing = applyLanding(state, options);
+    landing = applyLanding(state, input, options);
     // A hard landing can kill outright, and that death has to reach the game the
-    // same way a fall off the level does.
+    // same way a fall off the level does. A rolled landing is still a landing, so
+    // the sound and the camera feedback happen either way.
     if (!state.alive) died = true;
+    if (landing.rolled) started = 'roll';
   }
 
   if (state.alive && !state.grounded && !state.maneuver) {
     if (tryGrab(state, input, options)) started = 'hang';
   }
 
-  if (state.alive && state.grounded) {
-    const mantle = tryMantle(state, input, options);
-    if (mantle) started = 'mantle';
+  if (state.alive && state.grounded && !state.maneuver) {
+    // A vault is checked first: an obstacle you can cross is one you should cross
+    // rather than climb onto, and the two bands overlap by design.
+    const vaulted = tryVault(state, input, options);
+    if (vaulted) started = vaulted;
+    else if (tryMantle(state, input, options)) started = 'mantle';
     else if (tryClimb(state, input, options)) started = 'climb';
   }
 
@@ -744,20 +912,310 @@ function applySteering(
 }
 
 /** Fall damage: how hard the landing was, and what it cost. */
-function applyLanding(state: PlayerState, options: PlayerStepOptions): Landing {
+function applyLanding(state: PlayerState, input: MoveInput, options: PlayerStepOptions): Landing {
   const fall = options.game.fallDamage;
   const impact = state.peakFallSpeed;
   state.peakFallSpeed = 0;
 
-  if (impact <= fall.safeImpactSpeed) return { impact, damage: 0 };
+  if (impact <= fall.safeImpactSpeed) return { impact, damage: 0, rolled: false };
 
   const span = Math.max(1e-6, fall.fatalImpactSpeed - fall.safeImpactSpeed);
   const fraction = clamp((impact - fall.safeImpactSpeed) / span, 0, 1);
-  const damage = fall.maxHealth * fraction;
+  let damage = fall.maxHealth * fraction;
+
+  // A roll is the reward for landing well: it carries the impact forward instead
+  // of stopping it, and takes most of the sting out. Deliberately not immunity -
+  // it turns a fatal drop into a survivable one, and a survivable one into a
+  // scratch, which is what makes timing it worth doing.
+  const rolled = tryRoll(state, input, impact, options);
+  if (rolled) damage *= options.game.maneuver.roll.damageFraction;
 
   state.health = Math.max(0, state.health - damage);
   if (state.health <= 0) killPlayer(state, 'impact');
-  return { impact, damage };
+  return { impact, damage, rolled };
+}
+
+/**
+ * Rolls off a hard landing, if the player asked for it and there is room.
+ *
+ * Triggered by the crouch key, the same one that slides: both are "get low and
+ * keep going", and giving the roll its own key would have been a fifth movement
+ * input for one move.
+ */
+function tryRoll(
+  state: PlayerState,
+  input: MoveInput,
+  impact: number,
+  options: PlayerStepOptions,
+): boolean {
+  const { config, world } = options;
+  const roll = options.game.maneuver.roll;
+  if (!input.crouch || impact < roll.minImpact) return false;
+
+  const direction = travelDirection(state, input);
+  if (!direction) return false;
+
+  const distance = rollDistance(state, direction, world, config, roll);
+  if (distance === null) return false;
+
+  startManeuver(state, {
+    to: vec3(
+      state.position.x + direction.x * distance,
+      state.position.y,
+      state.position.z + direction.z * distance,
+    ),
+    kind: 'roll',
+    arcHeight: 0,
+    durationSeconds: roll.durationSeconds,
+    exitSpeed: roll.exitSpeed,
+    exitDirection: direction,
+    lowProfile: true,
+  });
+  return true;
+}
+
+/**
+ * How far a roll can actually go, or null if it cannot start.
+ *
+ * The full distance is tried first and shortened in steps, so landing in front of
+ * a crate rolls a short way instead of refusing to roll at all - or worse, rolling
+ * the player into the crate.
+ */
+function rollDistance(
+  state: PlayerState,
+  direction: ReadonlyVec3,
+  world: CollisionWorld,
+  config: PlayerConfig,
+  roll: RollConfig,
+): number | null {
+  for (let distance = roll.distance; distance >= roll.minDistance - 1e-6; distance -= 0.25) {
+    const feet = vec3(
+      state.position.x + direction.x * distance,
+      state.position.y,
+      state.position.z + direction.z * distance,
+    );
+    const box = aabbFromCenterSize(
+      { x: feet.x, y: feet.y + config.crouchHeight / 2, z: feet.z },
+      { x: config.radius * 2, y: config.crouchHeight, z: config.radius * 2 },
+    );
+    if (world.isFree(box)) return distance;
+  }
+  return null;
+}
+
+/**
+ * Vaults a waist-high obstacle.
+ *
+ * Two flavours, chosen by speed and nothing else: at any real running speed a thin
+ * obstacle is crossed with a plain vault, and from a sprint the same obstacle
+ * becomes a Kong vault - a dive that travels further, clears lower, and keeps
+ * almost all of its speed. One obstacle, two moves, decided by how fast you hit
+ * it, which is exactly the skill the move is supposed to reward.
+ */
+function tryVault(
+  state: PlayerState,
+  input: MoveInput,
+  options: PlayerStepOptions,
+): ManeuverKind | null {
+  const { config, world } = options;
+  const vault = options.game.maneuver.vault;
+  const direction = wishDirection(state, input);
+  if (!direction) return null;
+
+  // The move is chosen by the speed the player is carrying, not by the input, so
+  // gliding over a rail slowly is a vault and sprinting at it is a Kong.
+  const speed = lengthXZ(state.velocity);
+  const kong = speed >= vault.kong.minSpeed;
+  if (!kong && speed < vault.vault.minSpeed) return null;
+
+  const spec = kong ? vault.kong : vault.vault;
+  const landingGap = vault.landingGap + (kong ? vault.kong.distanceBonus : 0);
+
+  const box = playerBox(state.position, config.radius, playerHeight(state, config));
+  const hit = findVaultObstacle({
+    world,
+    box,
+    direction,
+    reach: vault.reach,
+    minTopY: state.position.y + vault.minHeight,
+    maxTopY: state.position.y + vault.maxHeight,
+    maxDepth: vault.maxDepth,
+    landingGap,
+    supportDepth: vault.supportDepth,
+    radius: config.radius,
+    standHeight: config.standHeight,
+    ignoreId: state.groundId,
+  });
+  if (!hit) return null;
+
+  // Clear the obstacle by lifting the whole path until the apex is above it. The
+  // arc is computed here because only the probe knows how tall the box was.
+  const midY = (state.position.y + hit.landing.y) / 2;
+  const arcHeight = Math.max(0, hit.topY + spec.clearance - midY);
+  const travel = travelDirection(state, input) ?? direction;
+
+  startManeuver(state, {
+    to: hit.landing,
+    kind: kong ? 'kong-vault' : 'vault',
+    arcHeight,
+    durationSeconds: spec.durationSeconds,
+    exitSpeed: speed * spec.speedRetention,
+    exitDirection: travel,
+  });
+  return kong ? 'kong-vault' : 'vault';
+}
+
+// -------------------------------------------------------------- wall running
+
+/**
+ * Attaches to, holds onto, and lets go of a wall.
+ *
+ * Attaching needs air, speed *along* a wall, and a wall tall enough to be worth
+ * running: a hop next to a parapet should not turn into a wall run. While
+ * attached, gravity is scaled down and the player is pushed gently into the
+ * wall, which is what keeps the contact that the probe needs to find it again
+ * next step - without that push, the wall would flicker in and out of reach and
+ * the run would stutter.
+ */
+function updateWallRun(
+  state: PlayerState,
+  input: MoveInput,
+  options: PlayerStepOptions,
+  wasGrounded: boolean,
+  dt: number,
+): { started: ManeuverKind | null; ended: ManeuverKind | null } {
+  const run = options.game.maneuver.wallRun;
+  const none = { started: null, ended: null };
+
+  if (state.wallId !== null) {
+    state.wallRunElapsed += dt;
+    const hit = probeWall(state, input, options);
+    const stillAttached =
+      !state.grounded &&
+      state.wallRunElapsed <= run.maxSeconds &&
+      lengthXZ(state.velocity) >= run.minSpeed &&
+      hit !== null &&
+      hit.collider.id === state.wallId;
+
+    if (stillAttached) {
+      state.velocity.x += state.wallNormal.x * run.stickAcceleration * dt;
+      state.velocity.z += state.wallNormal.z * run.stickAcceleration * dt;
+      const decay = Math.max(0, 1 - run.speedDecay * dt);
+      state.velocity.x *= decay;
+      state.velocity.z *= decay;
+      // A wall run is a controlled descent, not a fall: without this, landing
+      // after a long one would hurt as though it had been a drop.
+      state.peakFallSpeed = 0;
+      return none;
+    }
+
+    // Hand the wall a short lockout on the way out, so the run cannot simply
+    // restart on the next step and become an indefinite hover.
+    state.wallJumpId = state.wallId;
+    state.wallCooldown = options.game.maneuver.wallRun.reattachCooldownSeconds;
+    state.wallId = null;
+    return { started: null, ended: 'wall-run' };
+  }
+
+  // Attaching only happens in the air: on the ground you are just next to a wall.
+  if (wasGrounded || state.grounded) return none;
+  if (state.hangId !== null || state.climbId !== null || state.maneuver !== null) return none;
+  if (lengthXZ(state.velocity) < run.minSpeed) return none;
+
+  const hit = probeWall(state, input, options);
+  if (!hit) return none;
+
+  state.wallId = hit.collider.id;
+  copyVec3(state.wallNormal, hit.direction);
+  state.wallRunElapsed = 0;
+  return { started: 'wall-run', ended: null };
+}
+
+/** The wall beside the player, honouring the wall-jump lockout. */
+function probeWall(state: PlayerState, input: MoveInput, options: PlayerStepOptions) {
+  const run = options.game.maneuver.wallRun;
+  const travel = travelDirection(state, input);
+  if (!travel) return null;
+
+  return findWallRunSurface({
+    world: options.world,
+    box: playerBox(state.position, options.config.radius, playerHeight(state, options.config)),
+    travel,
+    reach: run.reach,
+    minHeight: run.minHeight,
+    ignoreId: state.groundId,
+    ignoreWallId: state.wallCooldown > 0 ? state.wallJumpId : null,
+  });
+}
+
+/**
+ * Kicks off a wall, or off nothing if there is no wall to kick.
+ *
+ * The along-wall speed is kept and the outward and upward speeds are set, so
+ * chaining two facing walls carries momentum instead of resetting it. The wall
+ * that was used is then locked out for longer than the jump's own airtime, which
+ * is what stops a player from holding jump against one wall and climbing it,
+ * while leaving a second wall available immediately.
+ */
+function tryWallJump(state: PlayerState, input: MoveInput, options: PlayerStepOptions): boolean {
+  if (!input.jump) return false;
+  if (state.grounded || state.maneuver !== null || state.hangId !== null) return false;
+  if (state.climbId !== null) return false;
+
+  let normal: ReadonlyVec3 | null = state.wallId !== null ? state.wallNormal : null;
+  let wallId = state.wallId;
+  if (normal === null) {
+    const hit = probeWall(state, input, options);
+    if (!hit) return false;
+    normal = hit.direction;
+    wallId = hit.collider.id;
+  }
+
+  const wallJump = options.game.maneuver.wallJump;
+  const into = state.velocity.x * normal.x + state.velocity.z * normal.z;
+  const alongX = state.velocity.x - normal.x * into;
+  const alongZ = state.velocity.z - normal.z * into;
+
+  state.velocity.x = alongX * wallJump.keepSpeed - normal.x * wallJump.outwardSpeed;
+  state.velocity.z = alongZ * wallJump.keepSpeed - normal.z * wallJump.outwardSpeed;
+  state.velocity.y = wallJump.upwardSpeed;
+  state.crouching = false;
+  state.sliding = false;
+  state.wallId = null;
+  state.wallJumpId = wallId;
+  state.wallCooldown = wallJump.lockoutSeconds;
+  return true;
+}
+
+// ----------------------------------------------------------------- direction
+
+/**
+ * The horizontal direction the player is asking to move in, or null.
+ *
+ * Shared by everything that needs "which way is the player pushing this step",
+ * with one threshold: a direction under 0.4 of full deflection (a diagonal tap
+ * pattern or a stick drifting) does not count as intent.
+ */
+function wishDirection(state: PlayerState, input: MoveInput): Vec3 | null {
+  const basis = yawBasis(state.yaw);
+  const x = basis.forward.x * input.forward + basis.right.x * input.right;
+  const z = basis.forward.z * input.forward + basis.right.z * input.right;
+  const length = Math.hypot(x, z);
+  if (length < 0.4) return null;
+  return vec3(x / length, 0, z / length);
+}
+
+/**
+ * The direction the player is actually travelling in.
+ *
+ * Falling back to the wish direction matters for a roll: the whole point is to
+ * carry a landing forward, but a player who lands with almost no speed should
+ * still roll in the direction they are holding rather than not at all.
+ */
+function travelDirection(state: PlayerState, input: MoveInput): Vec3 | null {
+  const speed = lengthXZ(state.velocity);
+  if (speed > 1) return vec3(state.velocity.x / speed, 0, state.velocity.z / speed);
+  return wishDirection(state, input);
 }
 
 /** Catches a ledge that is too high to step onto. */
@@ -766,19 +1224,16 @@ function tryGrab(state: PlayerState, input: MoveInput, options: PlayerStepOption
 
   const { config, world } = options;
   const pullUp = options.game.maneuver.pullUp;
-  const basis = yawBasis(state.yaw);
 
   // Only reach for something the player is actually heading towards.
-  const wishX = basis.forward.x * input.forward + basis.right.x * input.right;
-  const wishZ = basis.forward.z * input.forward + basis.right.z * input.right;
-  const wishLength = Math.hypot(wishX, wishZ);
-  if (wishLength < 0.4) return false;
+  const wish = wishDirection(state, input);
+  if (!wish) return false;
 
   const box = playerBox(state.position, config.radius, playerHeight(state, config));
   const hit = findLedge({
     world,
     box,
-    direction: { x: wishX / wishLength, y: 0, z: wishZ / wishLength },
+    direction: wish,
     reach: pullUp.reach,
     minTopY: state.position.y + pullUp.minHeight,
     maxTopY: state.position.y + pullUp.maxHeight,
@@ -825,18 +1280,15 @@ function tryGrab(state: PlayerState, input: MoveInput, options: PlayerStepOption
 function tryMantle(state: PlayerState, input: MoveInput, options: PlayerStepOptions): boolean {
   const { config, world } = options;
   const mantle = options.game.maneuver.mantle;
-  const basis = yawBasis(state.yaw);
 
-  const wishX = basis.forward.x * input.forward + basis.right.x * input.right;
-  const wishZ = basis.forward.z * input.forward + basis.right.z * input.right;
-  const wishLength = Math.hypot(wishX, wishZ);
-  if (wishLength < 0.4) return false;
+  const wish = wishDirection(state, input);
+  if (!wish) return false;
 
   const box = playerBox(state.position, config.radius, playerHeight(state, config));
   const hit = findLedge({
     world,
     box,
-    direction: { x: wishX / wishLength, y: 0, z: wishZ / wishLength },
+    direction: wish,
     reach: mantle.reach,
     minTopY: state.position.y + mantle.minHeight,
     maxTopY: state.position.y + mantle.maxHeight,
@@ -860,7 +1312,7 @@ function tryMantle(state: PlayerState, input: MoveInput, options: PlayerStepOpti
     hit.direction,
     hit.topY,
   );
-  startManeuver(state, to, false, options);
+  startLadderManeuver(state, to, 'mantle', options);
   return true;
 }
 
@@ -897,28 +1349,53 @@ function tryClimb(state: PlayerState, input: MoveInput, options: PlayerStepOptio
   return true;
 }
 
-function startManeuver(
-  state: PlayerState,
-  to: Vec3,
-  fromHang: boolean,
-  options: PlayerStepOptions,
-): void {
-  const config = fromHang ? options.game.maneuver.pullUp : options.game.maneuver.mantle;
+/** What a scripted move needs beyond its own tuning. */
+interface ManeuverSpec {
+  readonly to: ReadonlyVec3;
+  readonly kind: ScriptedMove;
+  readonly arcHeight: number;
+  readonly durationSeconds: number;
+  /** Speed to leave with when the move finishes. Defaults to a dead stop. */
+  readonly exitSpeed?: number;
+  readonly exitDirection?: ReadonlyVec3;
+  /** Set for moves that stay low to the ground. */
+  readonly lowProfile?: boolean;
+}
+
+function startManeuver(state: PlayerState, spec: ManeuverSpec): void {
   state.maneuver = {
     elapsed: 0,
-    durationSeconds: config.durationSeconds,
+    durationSeconds: spec.durationSeconds,
     from: { ...state.position },
-    to: { ...to },
-    arcHeight: config.arcHeight,
-    fromHang,
+    to: vec3(spec.to.x, spec.to.y, spec.to.z),
+    arcHeight: spec.arcHeight,
+    kind: spec.kind,
+    exitSpeed: spec.exitSpeed ?? 0,
+    exitDirection: vec3(spec.exitDirection?.x ?? 0, 0, spec.exitDirection?.z ?? 0),
+    lowProfile: spec.lowProfile ?? false,
   };
   state.hangId = null;
   state.climbId = null;
   state.sliding = false;
+  state.wallId = null;
   state.grounded = false;
   state.velocity.x = 0;
   state.velocity.y = 0;
   state.velocity.z = 0;
+}
+
+/**
+ * Starts a mantle or pull-up from the tuning tables, which is what all three of
+ * the ladder-style moves do.
+ */
+function startLadderManeuver(
+  state: PlayerState,
+  to: Vec3,
+  kind: 'mantle' | 'pull-up',
+  options: PlayerStepOptions,
+): void {
+  const config = kind === 'pull-up' ? options.game.maneuver.pullUp : options.game.maneuver.mantle;
+  startManeuver(state, { to, kind, arcHeight: config.arcHeight, durationSeconds: config.durationSeconds });
 }
 
 /**
@@ -971,7 +1448,7 @@ export function advanceHeadBob(
   travelled: number,
 ): void {
   const bob = options.game.headBob;
-  const moving = travelled > 0.001 && state.grounded && !state.sliding;
+  const moving = travelled > 0.001 && state.grounded && !state.sliding && state.maneuver === null;
 
   if (moving) {
     const stride = state.crouching ? bob.strideLength.crouch : bob.strideLength.walk;
@@ -981,14 +1458,35 @@ export function advanceHeadBob(
     state.bobPhase = (state.bobPhase + (travelled / length) * Math.PI * 2) % (Math.PI * 2);
   }
 
-  state.bobAmount = damp(state.bobAmount, moving ? 1 : 0, bob.settleRate, dt);
+  // `damp` takes a *fraction* of the remaining distance per second, while the
+  // config states a rate constant in 1/s, so the rate is converted here. Passing
+  // the rate constant straight through - which is what this did - clamps anything
+  // above 1 to 1, and 1 means "arrive immediately": the bob was snapping on and
+  // off at every start and stop rather than fading, which was most of what made
+  // it feel like being jolted.
+  state.bobAmount = damp(state.bobAmount, moving ? 1 : 0, 1 - Math.exp(-bob.settleRate), dt);
+}
+
+/**
+ * How much of the head bob's full amplitude to apply at the current speed.
+ *
+ * The bob's frequency scales with speed but its amplitude should not: without
+ * this, sprinting shakes the camera half again as fast at the same throw.
+ */
+export function headBobAmplitudeScale(state: PlayerState, config: GameConfig): number {
+  const { walkSpeed, sprintSpeed } = config.player;
+  const speed = lengthXZ(state.velocity);
+  const span = Math.max(1e-6, sprintSpeed - walkSpeed);
+  const t = clamp((speed - walkSpeed) / span, 0, 1);
+  return 1 - (1 - config.headBob.speedFalloff) * t;
 }
 
 /**
  * The camera's world-space offset from the head bob.
  *
  * Two vertical bobs per stride (one per foot) and one lateral sway, which is what
- * makes a walk read as a walk rather than as a bounce.
+ * makes a walk read as a walk rather than as a bounce. Both are scaled by how far
+ * into the fade the bob is and by the speed falloff above.
  */
 export function headBobOffset(
   state: PlayerState,
@@ -996,7 +1494,7 @@ export function headBobOffset(
   out: Vec3 = vec3(),
 ): Vec3 {
   const bob = config.headBob;
-  const amount = state.bobAmount;
+  const amount = state.bobAmount * headBobAmplitudeScale(state, config);
   const basis = yawBasis(state.yaw);
   const lateral = Math.sin(state.bobPhase) * bob.lateralAmplitude * amount;
 
@@ -1095,6 +1593,8 @@ export interface PlayerSnapshot {
   readonly deathCause: DeathCause | null;
   readonly health: number;
   readonly locomotion: Locomotion;
+  /** Index of the last checkpoint reached, or -1 for none. */
+  readonly checkpoint: number;
 }
 
 export function snapshotPlayer(state: PlayerState): PlayerSnapshot {
@@ -1113,5 +1613,6 @@ export function snapshotPlayer(state: PlayerState): PlayerSnapshot {
     deathCause: state.deathCause,
     health: state.health,
     locomotion: locomotion(state),
+    checkpoint: state.checkpoint,
   };
 }
