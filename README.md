@@ -118,7 +118,7 @@ rather than out of a plan:
 across, and a radial falloff quantised onto a texel grid makes a plus sign, which the
 face projection then stretched. Stars are now smaller than a texel, so the sampler
 rounds them into points, with the brightness skewed so most are faint and a few are
-bright. The whole skybox dropped from 383 KiB to 321 KiB in the process.
+bright. The committed texture set fell from 383 KiB to 321 KiB in the process.
 
 **Shadows were not the shadows the demo asked for.** `THREE.PCFSoftShadowMap` was
 removed in three.js r186: setting it logs a warning and silently falls back to hard
