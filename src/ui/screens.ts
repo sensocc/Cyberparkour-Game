@@ -8,9 +8,11 @@
 
 import type { CrashReport } from '../diagnostics/crashReport.js';
 import { summarizeReport } from '../diagnostics/crashReport.js';
+import type { GameSettings } from '../core/settings.js';
 import { formatRunTime, type RunResult } from '../game/run.js';
 import { button, el, formatNumber, setHidden } from './dom.js';
 import { describePickups } from './gameHud.js';
+import { SettingsPanel } from './settingsScreen.js';
 
 export interface UiCallbacks {
   /** Begin playing (also the pointer-lock request, so it must be a gesture). */
@@ -25,12 +27,17 @@ export interface UiCallbacks {
   readonly onDownloadReport: (report: CrashReport) => void;
   readonly onCopyReport: (report: CrashReport) => void;
   readonly onDownloadRecovered: () => void;
+  /** Applies a settings change. The screen redraws from the result, not the patch. */
+  readonly onSettingsChange: (patch: Partial<GameSettings>) => void;
+  readonly onSettingsReset: () => void;
 }
 
 export interface GameUiOptions {
   readonly root: HTMLElement;
   readonly version: string;
   readonly levelName: string;
+  /** The settings in force, drawn on the settings screen. */
+  readonly settings: GameSettings;
   readonly callbacks: UiCallbacks;
 }
 
@@ -40,6 +47,8 @@ export const ABOUT_LINES: readonly string[] = [
   'Nine roofs on two levels, crossed by mantling, pull-ups, climbing, vaulting, wall running, pipe climbing and well-timed landings — and joined by two lifts, so the district is a loop rather than a line.',
   'Two of the roofs have machine rooms you can walk into, lit from the inside and behind a door you open yourself, and the signage across them glows.',
   'Eight pickups are scattered along the route, including a few that need the abilities rather than a straight line. Reach the finish with every checkpoint behind you to complete the run — the clock is on the screen, and the record is kept.',
+  'You have a body: look down and you will see your own chest, arms and legs, and the sun casts your shadow onto the roof.',
+  'Every key, the mouse sensitivity, the field of view, the graphics preset, the volume and how much the camera moves can all be changed in Settings, and they are remembered between sessions.',
 ];
 
 const CONTROLS: readonly [string, string][] = [
@@ -53,7 +62,7 @@ const CONTROLS: readonly [string, string][] = [
   ['Aim along a wall', 'Wall run; chain two facing walls to climb'],
   ['W into a pipe', 'Climb it; C or S slides down it, faster than climbing'],
   ['E at a door', 'Open or close it'],
-  ['F3', 'Toggle debug info'],
+  ['F3', 'Toggle the debug overlay (off by default)'],
   ['M', 'Mute'],
   ['Esc', 'Pause'],
   ['R', 'Restart'],
@@ -93,6 +102,8 @@ export class GameUi {
   private readonly crashStack: HTMLElement;
   private readonly recoveredBanner: HTMLElement;
   private readonly noticeBox: HTMLElement;
+  /** The one screen with inputs; it owns its own DOM and reports patches upward. */
+  private readonly settingsPanel: SettingsPanel;
   private currentReport: CrashReport | null = null;
   /** True while the presentation is "playing", so the crosshair can come back. */
   private playMode = false;
@@ -101,6 +112,15 @@ export class GameUi {
     this.callbacks = options.callbacks;
     this.root = options.root;
     this.root.classList.add('ui');
+
+    this.settingsPanel = new SettingsPanel({
+      onChange: (patch) => this.callbacks.onSettingsChange(patch),
+      onReset: () => this.callbacks.onSettingsReset(),
+      onBack: () => this.goBack(),
+    });
+    this.settingsPanel.update(options.settings);
+    this.root.append(this.settingsPanel.element);
+    setHidden(this.settingsPanel.element, true);
 
     // ------------------------------------------------------------------ start
     this.recoveredBanner = el('div', { className: 'notice notice--recovered' });
@@ -112,13 +132,14 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.5.1 technical demo: a complete district on two levels, joined by lifts, with pickups, a finish line and a clock on the wall.',
+        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.6 technical demo: a complete district on two levels, joined by lifts, with pickups, a finish line and a clock on the wall — and a body of your own, settings you keep, and a camera that answers the running.',
       }),
       this.menu([
         button('Play', {
           className: 'btn btn--primary',
           onClick: () => this.callbacks.onStart(),
         }),
+        button('Settings', { onClick: () => this.showSettings() }),
         button('Controls', { onClick: () => this.showControls() }),
         button('About', { onClick: () => this.showAbout() }),
       ]),
@@ -146,6 +167,7 @@ export class GameUi {
           title: 'Go back to the last checkpoint without restarting',
           onClick: () => this.callbacks.onRespawn(),
         }),
+        button('Settings', { onClick: () => this.showSettings() }),
         button('Controls', { onClick: () => this.showControls() }),
         button('Restart run', {
           title: 'Start the route again from the beginning',
@@ -292,6 +314,25 @@ export class GameUi {
     this.returnTo = this.active;
     this.setActive(this.menuScreen);
     this.setCrosshair(false);
+  }
+
+  /**
+   * The settings screen, reachable from the title screen and the pause menu.
+   *
+   * While it is open the game is *not* playing: from the title screen there is no
+   * run yet, and from the pause menu the run is paused. That is what makes it safe
+   * for the screen to capture keystrokes for rebinding.
+   */
+  showSettings(): void {
+    this.playMode = false;
+    this.returnTo = this.active;
+    this.setActive(this.settingsPanel.element);
+    this.setCrosshair(false);
+  }
+
+  /** Redraws the settings screen from the settings now in force. */
+  setSettings(settings: GameSettings): void {
+    this.settingsPanel.update(settings);
   }
 
   /** What this build is, reachable from the title screen. */
@@ -490,6 +531,7 @@ export class GameUi {
       this.endedScreen,
       this.completeScreen,
       this.crashScreen,
+      this.settingsPanel.element,
     ]) {
       setHidden(candidate, candidate !== screen);
     }

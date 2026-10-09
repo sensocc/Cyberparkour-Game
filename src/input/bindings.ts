@@ -76,3 +76,92 @@ export function actionForKey(bindings: Bindings, code: string): KeyAction | null
   }
   return null;
 }
+
+/**
+ * Every action, in the order a player would look for them.
+ *
+ * Presentation only - the input layer iterates the bindings object - but the order
+ * matters on the settings screen, where "Forward, Back, Left, Right, Sprint" reads
+ * like a control scheme and an alphabetical list reads like a config file.
+ */
+export const ACTION_ORDER: readonly KeyAction[] = [
+  'moveForward',
+  'moveBackward',
+  'moveLeft',
+  'moveRight',
+  'sprint',
+  'jump',
+  'crouch',
+  'interact',
+  'pause',
+  'restart',
+  'toggleDebug',
+  'mute',
+];
+
+/** What each action is called where a player can see it. */
+export const ACTION_LABELS: Record<KeyAction, string> = {
+  moveForward: 'Forward',
+  moveBackward: 'Back',
+  moveLeft: 'Left',
+  moveRight: 'Right',
+  sprint: 'Sprint',
+  jump: 'Jump · pull up · wall kick',
+  crouch: 'Crouch · slide · roll',
+  interact: 'Open a door',
+  toggleDebug: 'Debug HUD',
+  mute: 'Mute',
+  pause: 'Pause',
+  restart: 'Restart run',
+};
+
+/**
+ * A `KeyboardEvent.code` as a player would say it.
+ *
+ * The bindings are physical codes, which is the right thing to *store* and a poor
+ * thing to *show*: nobody has ever looked for a key called "Backquote". Anything
+ * unrecognised falls back to the code itself, so a key this has never heard of is
+ * still identifiable.
+ */
+export function describeKey(code: string): string {
+  if (code.startsWith('Key')) return code.slice(3);
+  if (code.startsWith('Digit')) return code.slice(5);
+  if (code.startsWith('Numpad')) return `Num ${code.slice(6)}`;
+
+  const named: Record<string, string> = {
+    Space: 'Space',
+    Escape: 'Esc',
+    Enter: 'Enter',
+    Tab: 'Tab',
+    Backspace: 'Backspace',
+    Backquote: '`',
+    Minus: '-',
+    Equal: '=',
+    BracketLeft: '[',
+    BracketRight: ']',
+    Semicolon: ';',
+    Quote: "'",
+    Comma: ',',
+    Period: '.',
+    Slash: '/',
+    Backslash: '\\',
+    ArrowUp: '\u2191',
+    ArrowDown: '\u2193',
+    ArrowLeft: '\u2190',
+    ArrowRight: '\u2192',
+    ShiftLeft: 'Left Shift',
+    ShiftRight: 'Right Shift',
+    ControlLeft: 'Left Ctrl',
+    ControlRight: 'Right Ctrl',
+    AltLeft: 'Left Alt',
+    AltRight: 'Right Alt',
+  };
+  if (code in named) return named[code] as string;
+  if (code.startsWith('Arrow')) return code.slice(5);
+  return code;
+}
+
+/** A binding list as one line: `Space`, or `Space + E`. */
+export function describeBinding(codes: readonly string[]): string {
+  return codes.map(describeKey).join(' + ');
+}

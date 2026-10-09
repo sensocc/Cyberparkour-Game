@@ -170,8 +170,9 @@ describe('DebugHud', () => {
     document.body.append(container);
   });
 
-  it('mounts a visible panel with every row', () => {
+  it('mounts a panel with every row', () => {
     const hud = new DebugHud(container);
+    hud.setVisible(true);
     expect(container.querySelector('.hud')).not.toBeNull();
     expect(hud.isVisible).toBe(true);
     expect(container.querySelectorAll('.hud__label').length).toBe(formatHudRows(SNAPSHOT).length);
@@ -179,6 +180,7 @@ describe('DebugHud', () => {
 
   it('writes live values into the panel', () => {
     const hud = new DebugHud(container);
+    hud.setVisible(true);
     hud.update(SNAPSHOT);
 
     const text = container.querySelector('.hud__list')?.textContent ?? '';
@@ -197,15 +199,21 @@ describe('DebugHud', () => {
     expect(container.querySelector('.hud__list')?.textContent).toBe(before);
   });
 
+  it('starts hidden, because it is developer information and this is a demo', () => {
+    const hud = new DebugHud(container);
+    expect(hud.isVisible).toBe(false);
+    expect(container.querySelector('.hud')?.classList.contains('hud--hidden')).toBe(true);
+  });
+
   it('toggle flips visibility and reports the new state', () => {
     const hud = new DebugHud(container);
 
-    expect(hud.toggle()).toBe(false);
-    expect(hud.isVisible).toBe(false);
-    expect(container.querySelector('.hud')?.classList.contains('hud--hidden')).toBe(true);
-
     expect(hud.toggle()).toBe(true);
+    expect(hud.isVisible).toBe(true);
     expect(container.querySelector('.hud')?.classList.contains('hud--hidden')).toBe(false);
+
+    expect(hud.toggle()).toBe(false);
+    expect(container.querySelector('.hud')?.classList.contains('hud--hidden')).toBe(true);
   });
 
   it('updates again once restored to visible', () => {
@@ -230,6 +238,7 @@ describe('DebugHud', () => {
 
   it('does not attach pointer handlers, so it never steals clicks', () => {
     const hud = new DebugHud(container);
+    hud.setVisible(true);
     const spy = vi.fn();
     hud.element.addEventListener('click', spy);
     hud.element.dispatchEvent(new MouseEvent('click', { bubbles: true }));

@@ -11,12 +11,14 @@
 
 import type { GameConfig } from '../core/config.js';
 import { clamp01 } from '../core/math.js';
+import { DEFAULT_SETTINGS, type VolumeSettings } from '../core/settings.js';
 import { logger } from '../core/log.js';
 import type { AudioCue } from './director.js';
 import {
   MUSIC_SECONDS,
   SAMPLE_RATE,
   pitchStep,
+  renderCheckpoint,
   renderClimbTick,
   renderComplete,
   renderDeath,
@@ -28,6 +30,7 @@ import {
   renderMusic,
   renderPickup,
   renderScrape,
+  renderUiClick,
   renderWhoosh,
   type FootstepVariant,
 } from './synth.js';
@@ -40,6 +43,14 @@ export interface AudioOutput {
   play(cue: AudioCue): void;
   /** Sets the continuous wind level, 0..1. */
   setWind(intensity: number): void;
+  /**
+   * Sets the three volume sliders.
+   *
+   * Effects covers everything the game triggers - footsteps, landings, the pickup
+   * bell, the wind - and music covers the ambient track. Master multiplies both, so
+   * pulling it to zero is silence without disturbing what the other two are set to.
+   */
+  setVolumes(volumes: VolumeSettings): void;
   /** Starts or stops the ambient music. */
   setMusic(enabled: boolean): void;
   setMuted(muted: boolean): void;
@@ -54,6 +65,7 @@ export interface AudioOutput {
 export class SilentAudio implements AudioOutput {
   readonly isSilent = true;
   play(): void {}
+  setVolumes(): void {}
   setWind(): void {}
   setMusic(): void {}
   setMuted(): void {}
@@ -73,8 +85,11 @@ export class WebAudio implements AudioOutput {
   readonly isSilent = false;
   private readonly context: AudioContext;
   private readonly master: GainNode;
+  private readonly sfxGain: GainNode;
   private readonly musicGain: GainNode;
   private readonly windGain: GainNode;
+  private volumes: VolumeSettings = DEFAULT_SETTINGS.volumes;
+  private musicEnabled = false;
   private readonly windSource: AudioBufferSourceNode | null;
   private readonly buffers = new Map<string, AudioBuffer>();
   private musicSource: AudioBufferSourceNode | null = null;
@@ -86,8 +101,14 @@ export class WebAudio implements AudioOutput {
     this.context = factory();
 
     this.master = this.context.createGain();
-    this.master.gain.value = 1;
+    this.master.gain.value = this.volumes.master;
     this.master.connect(this.context.destination);
+
+    // One node for everything the game triggers, so the effects slider is a single
+    // multiplication rather than a gain per cue.
+    this.sfxGain = this.context.createGain();
+    this.sfxGain.gain.value = this.volumes.effects;
+    this.sfxGain.connect(this.master);
 
     this.musicGain = this.context.createGain();
     this.musicGain.gain.value = 0;
@@ -127,7 +148,7 @@ export class WebAudio implements AudioOutput {
       const node = this.context.createGain();
       node.gain.value = gain;
       source.connect(node);
-      node.connect(this.master);
+      node.connect(this.sfxGain);
       source.start();
     } catch (error) {
       logger.debug('audio', `could not play "${key}"`, { error: String(error) });
@@ -192,6 +213,14 @@ export class WebAudio implements AudioOutput {
         case 'complete':
           this.oneShot('complete', renderComplete);
           break;
+        case 'checkpoint':
+          this.oneShot('checkpoint', renderCheckpoint);
+          break;
+        case 'ui-click':
+          // Quieter than everything else: it plays on every button, and it is the
+          // one cue that must never be the loudest thing in the room.
+          this.oneShot('ui-click', renderUiClick, 0.6);
+          break;
       }
     } catch (error) {
       logger.debug('audio', 'cue failed', { cue: cue.kind, error: String(error) });
@@ -200,9 +229,30 @@ export class WebAudio implements AudioOutput {
 
   setWind(intensity: number): void {
     this.wind = clamp01(intensity);
-    if (this.muted) return;
+    this.applyGains(0.15);
+  }
+
+  setVolumes(volumes: VolumeSettings): void {
+    this.volumes = volumes;
+    this.applyGains(0.05);
+  }
+
+  /**
+   * Pushes the mute flag and the three volumes into the graph.
+   *
+   * The only place any gain is written, and that is the point: mute used to be
+   * re-applied by hand in three methods, which is how a "muted" game ended up with
+   * the wind still audible after a volume change.
+   */
+  private applyGains(smoothing: number): void {
     try {
-      this.windGain.gain.setTargetAtTime(this.wind * 0.5, this.context.currentTime, 0.15);
+      const time = this.context.currentTime;
+      const master = this.muted ? 0 : this.volumes.master;
+      this.master.gain.setTargetAtTime(master, time, smoothing);
+      this.sfxGain.gain.setTargetAtTime(this.volumes.effects, time, smoothing);
+      this.windGain.gain.setTargetAtTime(this.wind * 0.5 * this.volumes.effects, time, smoothing);
+      const music = this.musicSource ? 0.34 : 0;
+      this.musicGain.gain.setTargetAtTime(this.musicEnabled ? music * this.volumes.music : 0, time, smoothing);
     } catch {
       // A scheduler hiccup is not worth surfacing.
     }
@@ -219,7 +269,8 @@ export class WebAudio implements AudioOutput {
         source.start();
         this.musicSource = source;
       }
-      this.musicGain.gain.setTargetAtTime(enabled && !this.muted ? 0.34 : 0, this.context.currentTime, 0.4);
+      this.musicEnabled = enabled;
+      this.applyGains(0.4);
     } catch (error) {
       logger.debug('audio', 'music could not be started', { error: String(error) });
     }
@@ -227,13 +278,7 @@ export class WebAudio implements AudioOutput {
 
   setMuted(muted: boolean): void {
     this.muted = muted;
-    try {
-      this.master.gain.setTargetAtTime(muted ? 0 : 1, this.context.currentTime, 0.05);
-      this.windGain.gain.setTargetAtTime(muted ? 0 : this.wind * 0.5, this.context.currentTime, 0.05);
-      this.musicGain.gain.setTargetAtTime(muted || !this.musicSource ? 0 : 0.34, this.context.currentTime, 0.05);
-    } catch {
-      // Ignore.
-    }
+    this.applyGains(0.05);
   }
 
   get isMuted(): boolean {
@@ -250,6 +295,7 @@ export class WebAudio implements AudioOutput {
 
   silence(): void {
     try {
+      this.wind = 0;
       this.windGain.gain.value = 0;
     } catch {
       // Ignore.

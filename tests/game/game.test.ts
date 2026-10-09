@@ -8,12 +8,22 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { LogBuffer } from '../../src/core/log.js';
+import {
+  DEFAULT_SETTINGS,
+  FOV_RANGE,
+  SENSITIVITY_RANGE,
+  type GameSettings,
+  type QualityPreset,
+} from '../../src/core/settings.js';
 import type { ReadonlyVec3 } from '../../src/core/vec3.js';
+import type { AudioOutput } from '../../src/audio/engine.js';
+import type { AudioCue } from '../../src/audio/director.js';
 import { CrashReporter } from '../../src/diagnostics/crashReporter.js';
 import { MemoryCrashSink } from '../../src/diagnostics/crashSinks.js';
 import { Game, type GameStatus } from '../../src/game/game.js';
 import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
 import type { Orientation } from '../../src/game/look.js';
+import type { PlayerPose } from '../../src/game/pose.js';
 import { InputState } from '../../src/input/inputState.js';
 import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '../../src/render/types.js';
 import { GameHud } from '../../src/ui/gameHud.js';
@@ -35,6 +45,9 @@ class FakeView implements GameViewLike {
   readonly lifts: { id: string; topY: number }[] = [];
   readonly pickups: { id: string; visible: boolean }[] = [];
   readonly animations: number[] = [];
+  readonly fovs: number[] = [];
+  readonly bodies: { feet: ReadonlyVec3; yaw: number; pose: PlayerPose }[] = [];
+  readonly qualities: QualityPreset[] = [];
   disposed = false;
 
   setSize(width: number, height: number): void {
@@ -61,6 +74,18 @@ class FakeView implements GameViewLike {
     this.animations.push(elapsedSeconds);
   }
 
+  setFov(fov: number): void {
+    this.fovs.push(fov);
+  }
+
+  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose): void {
+    this.bodies.push({ feet: { ...feet }, yaw, pose });
+  }
+
+  setQuality(preset: QualityPreset): void {
+    this.qualities.push(preset);
+  }
+
   dispose(): void {
     this.disposed = true;
   }
@@ -85,6 +110,9 @@ interface HarnessOptions {
   readonly createView?: CreateView;
   readonly level?: typeof DEMO_DISTRICT;
   readonly store?: TimeStore;
+  readonly settings?: GameSettings;
+  /** Replaces the silent default, so a test can see what was asked of the mixer. */
+  readonly audio?: AudioOutput;
 }
 
 function createHarness(options: HarnessOptions = {}): Harness {
@@ -122,16 +150,19 @@ function createHarness(options: HarnessOptions = {}): Harness {
     root: uiRoot,
     version: '0.0.0',
     levelName: DEMO_DISTRICT.name,
+    settings: options.settings ?? DEFAULT_SETTINGS,
     callbacks: {
       onStart: vi.fn(),
       onResume: vi.fn(),
       onRestart: vi.fn(),
       onRespawn: vi.fn(),
-    onMainMenu: vi.fn(),
+      onMainMenu: vi.fn(),
       onQuit: vi.fn(),
       onDownloadReport: vi.fn(),
       onCopyReport: vi.fn(),
       onDownloadRecovered: vi.fn(),
+      onSettingsChange: vi.fn(),
+      onSettingsReset: vi.fn(),
     },
   });
 
@@ -154,9 +185,11 @@ function createHarness(options: HarnessOptions = {}): Harness {
     logBuffer: new LogBuffer({ mirrorToConsole: false }),
     config: DEFAULT_CONFIG,
     level: options.level ?? DEMO_DISTRICT,
+    ...(options.settings ? { settings: options.settings } : {}),
     ...(options.store ? { store: options.store } : {}),
     createView,
     scheduler,
+    ...(options.audio ? { audio: options.audio } : {}),
     onStatusChange: (status) => statuses.push(status),
   });
 
@@ -503,19 +536,21 @@ describe('Game.dispose', () => {
 });
 
 describe('Game debug HUD toggle', () => {
-  it('F3 hides and shows the panel', () => {
+  it('F3 shows and hides the panel, which starts hidden', () => {
+    // V0.6's UI pass: the debug overlay is off by default, so a technical demo does
+    // not look like a development build.
     const harness = createHarness();
     harness.game.start();
-    expect(harness.hud.isVisible).toBe(true);
+    expect(harness.hud.isVisible).toBe(false);
 
     harness.input.keyDown('F3');
     stepFrames(harness, 1);
-    expect(harness.hud.isVisible).toBe(false);
+    expect(harness.hud.isVisible).toBe(true);
 
     harness.input.keyUp('F3');
     harness.input.keyDown('F3');
     stepFrames(harness, 1);
-    expect(harness.hud.isVisible).toBe(true);
+    expect(harness.hud.isVisible).toBe(false);
   });
 
   it('R restarts the demo', () => {
@@ -813,6 +848,8 @@ describe('Game locomotion abilities', () => {
   it('reports the gait in the debug HUD', () => {
     const harness = createHarness();
     harness.game.start();
+    // A hidden overlay is not updated at all, which is the point of hiding it.
+    harness.hud.setVisible(true);
 
     harness.input.keyDown('KeyW');
     harness.input.keyDown('ShiftLeft');
@@ -1284,5 +1321,167 @@ describe('the V0.5.1 fixes', () => {
 
     const latest = harness.views[0]?.doors.at(-1);
     expect(latest?.open).toBe(0);
+  });
+});
+
+describe('settings, from the game', () => {
+  /** A store that survives being handed to two games, for the persistence tests. */
+  function fakeStore(initial: Record<string, string> = {}) {
+    const data: Record<string, string> = { ...initial };
+    return {
+      getItem: (key: string) => data[key] ?? null,
+      setItem: (key: string, value: string) => {
+        data[key] = value;
+      },
+    };
+  }
+
+  /** An audio backend that records what it was asked for. */
+  function recordingAudio(): AudioOutput & { cues: AudioCue[]; volumes: number[] } {
+    const cues: AudioCue[] = [];
+    const volumes: number[] = [];
+    return {
+      isSilent: true,
+      cues,
+      volumes,
+      play: (cue) => cues.push(cue),
+      setWind: () => {},
+      setMusic: () => {},
+      setMuted: () => {},
+      setVolumes: (next) => volumes.push(next.master),
+      resume: () => {},
+      silence: () => {},
+      dispose: () => {},
+    };
+  }
+
+  it('applies a change to everything that reads it', () => {
+    const audio = recordingAudio();
+    const store = fakeStore();
+    const harness = createHarness({ audio, store });
+    harness.game.start();
+    const fake = harness.views[0];
+    expect(fake).toBeDefined();
+    fake!.fovs.length = 0;
+    fake!.qualities.length = 0;
+
+    const applied = harness.game.updateSettings({ fov: 95, quality: 'low', volumes: { music: 0.2 } });
+
+    expect(applied.fov).toBe(95);
+    expect(applied.quality).toBe('low');
+    expect(fake!.fovs).toContain(95);
+    expect(fake!.qualities.at(-1)?.label).toBe('Low');
+    expect(audio.volumes.at(-1)).toBe(applied.volumes.master);
+    expect(audio.volumes.at(-1)).toBeCloseTo(0.8, 6);
+  });
+
+  it('clamps what it is given, and reports what it settled on', () => {
+    const harness = createHarness();
+    harness.game.start();
+    const applied = harness.game.updateSettings({ fov: 500, sensitivity: -3, quality: 'ultra' as never });
+
+    expect(applied.fov).toBe(FOV_RANGE.max);
+    expect(applied.sensitivity).toBe(SENSITIVITY_RANGE.min);
+    expect(applied.quality).toBe('high');
+  });
+
+  it('saves, and reads back what it saved', () => {
+    const store = fakeStore();
+    const first = createHarness({ store });
+    first.game.start();
+    first.game.updateSettings({ motion: 'off', fov: 70 });
+
+    const second = createHarness({ store });
+    expect(second.game.currentSettings.motion).toBe('off');
+    expect(second.game.currentSettings.fov).toBe(70);
+  });
+
+  it('resets to the defaults, bindings included', () => {
+    // Bindings are a setting too, and the reason to reach for reset is that the game
+    // has stopped answering the way the player expects.
+    const harness = createHarness();
+    harness.game.start();
+    harness.game.updateSettings({ fov: 70, bindings: { ...DEFAULT_SETTINGS.bindings, jump: ['KeyJ'] } });
+    expect(harness.game.currentSettings.bindings.jump).toEqual(['KeyJ']);
+
+    const reset = harness.game.resetSettings();
+    expect(reset).toEqual(DEFAULT_SETTINGS);
+    expect(harness.game.currentSettings.bindings.jump).toEqual(DEFAULT_SETTINGS.bindings.jump);
+  });
+
+  it('rebinding takes effect immediately, without a restart', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 2);
+    harness.input.keyUp('KeyW');
+
+    harness.game.updateSettings({ bindings: { ...DEFAULT_SETTINGS.bindings, moveForward: ['KeyI'] } });
+    harness.input.keyDown('KeyI');
+    stepFrames(harness, 30);
+
+    // Pressing the new key moved the player.
+    expect(harness.game.snapshot().player.position.z).not.toBeCloseTo(3, 6);
+  });
+
+  it('scales the camera motion setting into the head bob', () => {
+    /** How far the eye rises and falls above the player's own feet while walking. */
+    const bobReach = (motion: 'full' | 'off'): number => {
+      const harness = createHarness({ settings: { ...DEFAULT_SETTINGS, motion } });
+      harness.game.start();
+      harness.input.keyDown('KeyW');
+      let min = Infinity;
+      let max = -Infinity;
+      for (let frame = 0; frame < 150; frame += 1) {
+        stepFrames(harness, 1);
+        const eye = harness.views[0]?.frames.at(-1)?.eye;
+        const player = harness.game.snapshot().player;
+        if (!eye || !player.alive || !player.grounded) continue;
+        min = Math.min(min, eye.y - player.position.y);
+        max = Math.max(max, eye.y - player.position.y);
+      }
+      return max - min;
+    };
+
+    const full = bobReach('full');
+    // There has to be a bob for the setting to be about anything.
+    expect(full).toBeGreaterThan(0.005);
+    expect(bobReach('off')).toBeLessThan(full * 0.5);
+  });
+});
+
+describe('the sounds a run makes', () => {
+  it('rings when a checkpoint is reached', () => {
+    const audio = {
+      isSilent: true,
+      cues: [] as AudioCue[],
+      play(cue: AudioCue) {
+        this.cues.push(cue);
+      },
+      setWind() {},
+      setMusic() {},
+      setMuted() {},
+      setVolumes() {},
+      resume() {},
+      silence() {},
+      dispose() {},
+    };
+    const harness = createHarness({
+      audio,
+      level: {
+        ...DEMO_DISTRICT,
+        // A few metres north of the spawn, so walking reaches it.
+        checkpoints: [{ id: 'test-checkpoint', position: { x: 0, y: 0.2, z: -2 } }],
+        collectibles: [],
+        goal: undefined,
+      },
+    });
+    harness.game.start();
+
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 120);
+    harness.input.keyUp('KeyW');
+
+    expect(harness.game.runSnapshot.checkpointsReached).toBeGreaterThan(0);
+    expect(audio.cues.some((cue) => cue.kind === 'checkpoint')).toBe(true);
   });
 });

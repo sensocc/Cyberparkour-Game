@@ -294,7 +294,15 @@ describe('traversal on the shipped roof', () => {
     // Jittering on an open roof means eventually walking off it - and surviving
     // the fall by respawning.
     expect(trace.deaths).toBeGreaterThan(0);
-    expect(player.position.y).toBeGreaterThan(DEMO_DISTRICT.killPlaneY);
+    // A live player must never be below the kill plane. A *dead* one legitimately
+    // can be: a dead player keeps falling until the respawn timer expires, which is
+    // what stops a death from reading as a teleport - so a minute that happens to
+    // end mid-death ends below the plane, on purpose.
+    if (player.alive) {
+      expect(player.position.y).toBeGreaterThan(DEMO_DISTRICT.killPlaneY);
+    } else {
+      expect(player.deaths).toBeGreaterThan(0);
+    }
     // No single landing should have been lethal without it being a long fall.
     expect(trace.maxDamage).toBeLessThanOrEqual(CONFIG.fallDamage.maxHealth);
   });

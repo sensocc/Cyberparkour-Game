@@ -21,7 +21,7 @@ export interface DomInputOptions {
 export class DomInput {
   private readonly target: HTMLElement;
   private readonly input: InputState;
-  private readonly boundCodes: ReadonlySet<string>;
+  private boundCodes: ReadonlySet<string>;
   private readonly onPointerLockChange: (locked: boolean) => void;
   private attached = false;
 
@@ -30,6 +30,18 @@ export class DomInput {
     this.input = options.input;
     this.onPointerLockChange = options.onPointerLockChange ?? (() => {});
     this.boundCodes = new Set(Object.values(options.bindings ?? DEFAULT_BINDINGS).flat());
+  }
+
+  /**
+   * Swaps the key table, including which codes get `preventDefault`.
+   *
+   * `boundCodes` is what keeps the browser's own shortcuts working: F5 and F12 are
+   * only swallowed once something is actually bound to them, so rebinding has to
+   * move this set with the table.
+   */
+  setBindings(bindings: Bindings): void {
+    this.input.setBindings(bindings);
+    this.boundCodes = new Set(Object.values(bindings).flat());
   }
 
   get pointerLocked(): boolean {

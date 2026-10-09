@@ -16,7 +16,17 @@
  * world is frozen behind it, and the loop is still there to be restarted.
  */
 
-import { DEFAULT_CONFIG, fixedStep, type GameConfig } from '../core/config.js';
+import { DEFAULT_CONFIG, fixedStep, withMotionScale, type GameConfig } from '../core/config.js';
+import {
+  DEFAULT_SETTINGS,
+  MOTION_SCALES,
+  QUALITY_PRESETS,
+  normaliseSettings,
+  readSettings,
+  writeSettings,
+  type GameSettings,
+  type VolumeSettings,
+} from '../core/settings.js';
 import { FixedStepAccumulator } from '../core/delta.js';
 import { logger, type LogBuffer } from '../core/log.js';
 import { AudioDirector, type AudioCue } from '../audio/director.js';
@@ -27,7 +37,9 @@ import type { CrashReporter } from '../diagnostics/crashReporter.js';
 import { FrameStats, type StatsSnapshot } from '../diagnostics/stats.js';
 import { DomInput } from '../input/domInput.js';
 import type { InputState } from '../input/inputState.js';
-import { applyLook } from './look.js';
+import { CameraEffects, type MotionSample } from './camera.js';
+import { applyLook, type Orientation } from './look.js';
+import { describePose, emptyPose, type PlayerPose } from './pose.js';
 import { buildLevel, climbableIds as collectClimbableIds, pipeIds as collectPipeIds, type BuiltLevel } from './level/level.js';
 import { DoorSystem } from './level/doors.js';
 import { ElevatorSystem, carryRider } from './level/elevators.js';
@@ -82,6 +94,13 @@ export interface GameOptions {
    * game never touches `localStorage` itself.
    */
   readonly store?: TimeStore;
+  /**
+   * Player settings. Read from the store when omitted, so a game constructed
+   * without them still respects what the player chose last time.
+   */
+  readonly settings?: GameSettings;
+  /** Called after any settings change, so a UI can redraw what it shows. */
+  readonly onSettingsChange?: (settings: GameSettings) => void;
   readonly onStatusChange?: (status: GameStatus) => void;
 }
 
@@ -111,6 +130,18 @@ export class Game {
    * - it reports, which is the whole point of keeping it separate.
    */
   private readonly motion = new MotionTracker();
+  /** What the view does in response to the body: see `camera.ts`. */
+  private readonly effects = new CameraEffects();
+  private readonly scratchOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
+  /** The body's pose, rewritten every frame so the render path allocates nothing. */
+  private readonly scratchPose: PlayerPose = emptyPose();
+  private readonly scratchSample: MotionSample & {
+    speedFraction: number;
+    crouching: boolean;
+    slideFraction: number;
+    wallRunFraction: number;
+    wallRunSide: -1 | 0 | 1;
+  } = { speedFraction: 0, crouching: false, slideFraction: 0, wallRunFraction: 0, wallRunSide: 0 };
 
   private level: BuiltLevel;
   private player: PlayerState;
@@ -150,8 +181,19 @@ export class Game {
   private pipes: ReadonlySet<string> = new Set();
   /** Whether the player has muted the demo. */
   private muted = false;
+  /** What the player has chosen, and what everything reads. */
+  private settings: GameSettings;
+  /**
+   * The config as the *camera* sees it, with the motion setting applied.
+   *
+   * Only the head bob differs, but the copy is what keeps the setting from having
+   * to be consulted at every point that reads a bob amplitude.
+   */
+  private motionConfig: GameConfig;
   private readonly audioDirector: AudioDirector;
   private readonly audioOutput: AudioOutput;
+  /** Where the best time and the settings are kept. */
+  private readonly store: TimeStore | undefined;
 
   // Reused per-frame scratch objects: the render path allocates nothing.
   private readonly scratchFeet: Vec3 = vec3();
@@ -162,6 +204,9 @@ export class Game {
     this.config = options.config ?? DEFAULT_CONFIG;
     this.definition = options.level ?? DEMO_DISTRICT;
     this.log = options.logBuffer;
+    this.store = options.store;
+    this.settings = normaliseSettings(options.settings ?? readSettings(options.store));
+    this.motionConfig = withMotionScale(this.config, MOTION_SCALES[this.settings.motion]);
 
     this.accumulator = new FixedStepAccumulator(
       fixedStep(this.config),
@@ -198,6 +243,12 @@ export class Game {
 
     this.audioDirector = new AudioDirector(this.config);
     this.audioOutput = options.audio ?? new SilentAudio();
+
+    // A settings file that disagrees with the code is applied at boot, not on the
+    // first frame: these three are cheap and none of them needs a view.
+    this.options.input.setBindings(this.settings.bindings);
+    this.domInput.setBindings(this.settings.bindings);
+    this.audioOutput.setVolumes(this.settings.volumes);
 
     this.loop = new GameLoop({
       onFrame: (delta) => this.handleFrame(delta),
@@ -395,7 +446,7 @@ export class Game {
     return {
       world: this.level.world,
       config: this.config.player,
-      game: this.config,
+      game: this.motionConfig,
       climbableIds: this.climbables,
       pipeIds: this.pipes,
       checkpoints: this.definition.checkpoints,
@@ -422,6 +473,14 @@ export class Game {
   /** A landing, so the audio and the screen can react to how hard it was. */
   private handleLanding(impact: number, damage: number): void {
     this.audioDirector.landing(impact, damage);
+    // The camera answers the same fall the health bar does: 0 at the threshold, 1
+    // at the speed that would kill, so a landing that hurts is one that shows.
+    const { safeImpactSpeed, fatalImpactSpeed } = this.config.fallDamage;
+    const span = Math.max(1e-6, fatalImpactSpeed - safeImpactSpeed);
+    this.effects.land(
+      Math.min(1, Math.max(0, (impact - safeImpactSpeed) / span)),
+      this.config.cameraEffects,
+    );
     if (damage > 0) {
       this.options.ui.flashDamage(damage);
       this.log?.info('game', 'took fall damage', {
@@ -443,6 +502,9 @@ export class Game {
   private handleCheckpoint(index: number): void {
     const total = this.definition.checkpoints.length;
     this.log?.info('game', 'checkpoint reached', { checkpoint: index, total });
+    // Heard as well as read: the checkpoint radius is generous enough to cross
+    // without noticing, and a sound is what makes it land.
+    this.playCue({ kind: 'checkpoint' });
     this.options.ui.toast(`CHECKPOINT ${index + 1} / ${total}`);
     this.run.reachCheckpoint(index);
     this.updateGameHud();
@@ -488,6 +550,61 @@ export class Game {
   /** The run in progress: the clock, the pickups and the record. */
   get runSnapshot(): RunSnapshot {
     return this.run.snapshot();
+  }
+
+  /** What the player has chosen. */
+  get currentSettings(): GameSettings {
+    return this.settings;
+  }
+
+  /**
+   * Applies settings, in whole or in part.
+   *
+   * The one entry point for every setting, and it is deliberately total: a patch
+   * is merged over what is in force, normalised (so nothing out of range can be
+   * introduced from a slider or a URL), pushed to everything that reads it, saved,
+   * and reported back. Changing the field of view from the pause menu therefore
+   * takes effect on the frame it is changed, without a restart.
+   *
+   * @returns the settings actually in force, which may differ from the patch.
+   */
+  updateSettings(
+    patch: Partial<Omit<GameSettings, 'volumes'>> & { volumes?: Partial<VolumeSettings> },
+  ): GameSettings {
+    const next = normaliseSettings({
+      ...this.settings,
+      ...patch,
+      volumes: { ...this.settings.volumes, ...(patch.volumes ?? {}) },
+    });
+    this.settings = next;
+    this.motionConfig = withMotionScale(this.config, MOTION_SCALES[next.motion]);
+
+    this.options.input.setBindings(next.bindings);
+    this.domInput.setBindings(next.bindings);
+    this.audioOutput.setVolumes(next.volumes);
+    this.view?.setFov(next.fov);
+    this.view?.setQuality(QUALITY_PRESETS[next.quality]);
+
+    const stored = writeSettings(this.store, next);
+    this.log?.info('game', 'settings applied', {
+      quality: next.quality,
+      motion: next.motion,
+      fov: next.fov,
+      saved: stored,
+    });
+    this.options.onSettingsChange?.(next);
+    return next;
+  }
+
+  /**
+   * Puts every setting back to what the demo ships with.
+   *
+   * A reset that only reset the sliders would be a lie: the bindings are a setting
+   * too, and the reason to reach for this button is that the game has stopped
+   * responding the way the player expects.
+   */
+  resetSettings(): GameSettings {
+    return this.updateSettings(DEFAULT_SETTINGS);
   }
 
   private updateGameHud(): void {
@@ -604,6 +721,10 @@ export class Game {
 
     try {
       this.view = this.options.createView(canvas, this.definition, this.config);
+      // Settings outlive views - a restart builds a new one - so every view is
+      // told what the player chose the moment it exists.
+      this.view.setFov(this.settings.fov);
+      this.view.setQuality(QUALITY_PRESETS[this.settings.quality]);
     } catch (error) {
       canvas.remove();
       throw error instanceof GraphicsUnavailableError
@@ -712,7 +833,10 @@ export class Game {
     const pointer = this.options.input.consumePointerDelta();
     if (pointer.dx !== 0 || pointer.dy !== 0) {
       applyLook(this.player, pointer.dx, pointer.dy, {
-        sensitivity: this.config.camera.sensitivity,
+        // A multiplier rather than an absolute: the tuned base is a good default,
+        // and "twice as fast as the tuned base" survives the base being retuned.
+        sensitivity: this.config.camera.sensitivity * this.settings.sensitivity,
+        invertY: this.settings.invertY,
         maxPitch: this.config.camera.maxPitch,
       });
     }
@@ -751,6 +875,7 @@ export class Game {
       this.updateTriggers();
     });
 
+    this.updateEffects(simulated);
     this.effectsSeconds += simulated;
     this.updateAudio(simulated);
     this.trackMotion();
@@ -774,6 +899,35 @@ export class Game {
       if (this.player.groundId === ride.id) carryRider(this.player, ride.deltaY);
       this.view?.setLift(ride.id, ride.topY);
     }
+  }
+
+  /**
+   * Describes the body to the camera effects, once a frame.
+   *
+   * Read from the *player's* own state rather than from a count of events, so the
+   * effects follow a wall run or a slide for as long as it lasts without anybody
+   * having to say when it started and stopped.
+   */
+  private updateEffects(dt: number): void {
+    // The pose is derived first: the camera's lean is one of the things it says.
+    describePose(this.player, this.config, this.scratchPose);
+    const sample = this.scratchSample;
+    const speed = Math.hypot(this.player.velocity.x, this.player.velocity.z);
+    sample.speedFraction = speed / Math.max(1e-6, this.config.player.sprintSpeed);
+    sample.crouching = this.player.crouching;
+    sample.slideFraction = this.player.sliding ? 1 : 0;
+    sample.wallRunFraction =
+      this.player.wallId === null
+        ? 0
+        : Math.min(
+            1,
+            this.player.wallRunElapsed / Math.max(1e-6, this.config.maneuver.wallRun.maxSeconds),
+          );
+    // The lean wants the same answer the body's does, so it is taken from the pose
+    // rather than worked out a second way - two derivations of "which side" is one
+    // more than can be kept consistent.
+    sample.wallRunSide = this.scratchPose.wallSide;
+    this.effects.update(dt, sample, this.config.cameraEffects, MOTION_SCALES[this.settings.motion]);
   }
 
   /**
@@ -824,9 +978,29 @@ export class Game {
     const feet = interpolatePlayerPosition(this.player, this.accumulator.alpha, this.scratchFeet);
     // Eye height follows the stance and the head bob, so crouching visibly drops
     // the camera and running visibly rocks it.
-    eyePosition(this.player, this.config, this.scratchEye, feet);
+    eyePosition(this.player, this.motionConfig, this.scratchEye, feet);
 
-    this.view.render(this.scratchEye, this.player);
+    // The camera effects are a *view* offset on top of that: they never move the
+    // player, so a shake cannot be mistaken for the body moving.
+    const frame = this.effects.current;
+    this.scratchEye.x += frame.offsetX;
+    this.scratchEye.y += frame.offsetY;
+    this.scratchEye.z += frame.offsetZ;
+
+    this.scratchOrientation.yaw = this.player.yaw;
+    this.scratchOrientation.pitch = this.player.pitch;
+    this.scratchOrientation.roll = frame.roll;
+
+    // The field of view is the setting plus whatever the effects are doing with it,
+    // and `setFov` ignores a value it already has - so a frame that changes nothing
+    // does not touch the projection matrix.
+    this.view.setFov(this.settings.fov + frame.fov);
+
+    // The body goes where the *interpolated* player is, not where the last
+    // simulation step left them, or it would jitter against the camera.
+    this.view.setPlayerBody(feet, this.player.yaw, describePose(this.player, this.config, this.scratchPose));
+
+    this.view.render(this.scratchEye, this.scratchOrientation);
   }
 
   /** The play HUD lives next to the health and the checkpoints, not the debug rows. */
@@ -911,3 +1085,4 @@ export class Game {
     }
   }
 }
+

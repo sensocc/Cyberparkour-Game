@@ -14,9 +14,12 @@ import { clamp01 } from '../core/math.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
+import type { PlayerPose } from '../game/pose.js';
 import { applyAnisotropy } from './assets.js';
+import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.js';
 import { buildScene, type BuiltScene } from './sceneBuilder.js';
 import { pickupPose, smokePose } from './effects.js';
+import { QUALITY_PRESETS, type QualityPreset } from '../core/settings.js';
 import { GraphicsUnavailableError, NO_ASSETS, type GameViewLike, type SceneAssets } from './types.js';
 
 export { GraphicsUnavailableError };
@@ -31,6 +34,48 @@ export type { GameViewLike };
  * see.
  */
 const MAX_ANISOTROPY = 16;
+
+/**
+ * The drawing-buffer scale a preset asks for.
+ *
+ * Capped by the device's own ratio: a 3x display at a 3x cap is twice the pixels of
+ * a 2x display, and rendering more than the screen can show is work nobody sees.
+ */
+function drawingRatio(preset: QualityPreset): number {
+  return Math.min(globalThis.devicePixelRatio || 1, preset.pixelRatioCap);
+}
+
+/** The GPU's own anisotropic ceiling, or 1 when it cannot be asked. */
+function maxAnisotropy(renderer: THREE.WebGLRenderer): number {
+  try {
+    return renderer.capabilities.getMaxAnisotropy();
+  } catch {
+    return 1;
+  }
+}
+
+/**
+ * Applies a fraction to a list by *striding* through it.
+ *
+ * A prefix would erase whichever items happen to be last - every plume but the
+ * first, or the lamps on one side of the district. A fixed stride thins the list
+ * evenly, and because it is arithmetic rather than random, applying the same setting
+ * twice leaves the same items lit.
+ */
+function applyEvenScale(count: number, scale: number, apply: (index: number, visible: boolean) => void): void {
+  const keep = Math.max(0, Math.min(count, Math.round(count * Math.min(1, Math.max(0, scale)))));
+  for (let index = 0; index < count; index += 1) {
+    if (keep === 0) {
+      apply(index, false);
+      continue;
+    }
+    // Each kept item owns an equal share of the list; `index` falls in a kept share
+    // when the bracket it belongs to is one of them.
+    const bracket = Math.floor((index * keep) / count);
+    const next = Math.floor(((index + 1) * keep) / count);
+    apply(index, next !== bracket);
+  }
+}
 
 export interface GameViewOptions {
   readonly canvas: HTMLCanvasElement;
@@ -51,6 +96,11 @@ export class GameView implements GameViewLike {
   private readonly doorAngles: ReadonlyMap<string, number>;
   private readonly liftThickness: ReadonlyMap<string, number>;
   private readonly pickupHome: ReadonlyMap<string, ReadonlyVec3>;
+  /** Borrowed, not owned: the loader disposes them, and settings re-filter them. */
+  private readonly assets: SceneAssets;
+  private quality: QualityPreset = QUALITY_PRESETS.high;
+  private readonly body: PlayerBody;
+  private readonly config: GameConfig;
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -71,12 +121,18 @@ export class GameView implements GameViewLike {
       );
     }
 
-    this.renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(drawingRatio(this.quality));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // `PCFSoftShadowMap` was removed from three.js in r186: setting it logs a warning
+    // and silently falls back to `PCFShadowMap`, so the demo spent a version asking
+    // for soft shadows it was not getting. `VSMShadowMap` is the soft option that is
+    // left, and it bleeds light through thin geometry - which this district is made
+    // of - so the honest choice is hard PCF with a shadow map sized by the graphics
+    // preset, where resolution is something the player can turn up.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.setClearColor(new THREE.Color(options.definition.environment.skyColor), 1);
 
     // Filtering has to be decided before the first frame: three.js applies it when
@@ -98,7 +154,14 @@ export class GameView implements GameViewLike {
     // rolling as the player turns.
     this.camera.rotation.order = 'YXZ';
 
-    this.built = buildScene(options.definition, options.assets ?? NO_ASSETS);
+    this.assets = options.assets ?? NO_ASSETS;
+    this.config = options.config;
+    this.built = buildScene(options.definition, this.assets);
+
+    // The player's own body: in the world, casting a shadow, and visible when the
+    // player looks down at themselves.
+    this.body = buildPlayerBody();
+    this.built.scene.add(this.body.root);
     this.doorAngles = new Map(
       (options.definition.doors ?? []).map((door) => [door.id, door.openAngle] as const),
     );
@@ -146,7 +209,7 @@ export class GameView implements GameViewLike {
     const safeWidth = Math.max(1, Math.floor(width));
     const safeHeight = Math.max(1, Math.floor(height));
 
-    this.renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
+    this.renderer.setPixelRatio(drawingRatio(this.quality));
     this.renderer.setSize(safeWidth, safeHeight, false);
 
     this.camera.aspect = safeWidth / safeHeight;
@@ -158,7 +221,10 @@ export class GameView implements GameViewLike {
     if (this.disposed) return;
 
     this.camera.position.set(eye.x, eye.y, eye.z);
-    this.camera.rotation.set(orientation.pitch, orientation.yaw, 0);
+    // Roll is in degrees on the way in (it comes from the settings-facing effect
+    // values) and radians on the way out, which is the one conversion the renderer
+    // does for the game.
+    this.camera.rotation.set(orientation.pitch, orientation.yaw, ((orientation.roll ?? 0) * Math.PI) / 180);
 
     this.renderer.render(this.built.scene, this.camera);
   }
@@ -220,11 +286,88 @@ export class GameView implements GameViewLike {
     }
   }
 
+  /** Places and poses the player's body. */
+  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose): void {
+    if (this.disposed) return;
+    this.body.root.position.set(feet.x, feet.y, feet.z);
+    this.body.root.rotation.y = yaw;
+    posePlayerBody(this.body, pose, this.config);
+  }
+
+  /** Sets the vertical field of view. */
+  setFov(fov: number): void {
+    if (this.disposed) return;
+    if (!Number.isFinite(fov) || fov <= 0) return;
+    this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * Applies a graphics preset.
+   *
+   * Every knob a preset owns is set here, and all of it is safe to apply at any time
+   * - including in the middle of a run, because the settings screen is reachable
+   * from the pause menu.
+   *
+   * Two need care:
+   *
+   *  - **Shadows.** Toggling `renderer.shadowMap.enabled` changes which shader a
+   *    material compiles to, and three.js recompiles nothing by itself, so every
+   *    material has to be marked dirty or the scene carries on with the old program.
+   *  - **Shadow resolution.** Setting `mapSize` on a light whose shadow map already
+   *    exists does nothing: the render target has to be thrown away so it is
+   *    rebuilt at the new size.
+   */
+  setQuality(preset: QualityPreset): void {
+    if (this.disposed) return;
+    const previous = this.quality;
+    this.quality = preset;
+
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.renderer.setPixelRatio(drawingRatio(preset));
+    this.renderer.setSize(size.x, size.y, false);
+
+    const shadowsChanged = previous.shadows !== preset.shadows;
+    this.renderer.shadowMap.enabled = preset.shadows;
+    if (shadowsChanged) {
+      this.renderer.shadowMap.needsUpdate = true;
+      for (const material of this.built.materials.values()) material.needsUpdate = true;
+    }
+
+    if (preset.shadows) {
+      const sun = this.built.sun;
+      if (sun.shadow.mapSize.width !== preset.shadowMapSize) {
+        sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
+        sun.shadow.map?.dispose();
+        sun.shadow.map = null;
+      }
+    }
+
+    // Filtering belongs to the texture and is applied when it is uploaded.
+    applyAnisotropy(this.assets, Math.min(maxAnisotropy(this.renderer), preset.anisotropy));
+    applyEvenScale(this.built.smoke.length, preset.smokeScale, (index, visible) => {
+      const mesh = this.built.smoke[index];
+      if (mesh) mesh.sprite.visible = visible;
+    });
+    applyEvenScale(this.built.lamps.length, preset.lightScale, (index, visible) => {
+      const lamp = this.built.lamps[index];
+      if (lamp) lamp.visible = visible;
+    });
+
+    logger.info('render', 'quality applied', {
+      quality: preset.label,
+      shadows: preset.shadows,
+      shadowMapSize: preset.shadowMapSize,
+      parts: [...this.built.meshes.values()].reduce((total, list) => total + list.length, 0),
+    });
+  }
+
   /** Releases the GPU context and all scene resources. */
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
 
+    this.body.dispose();
     this.built.dispose();
     this.renderer.setAnimationLoop(null);
     this.renderer.dispose();

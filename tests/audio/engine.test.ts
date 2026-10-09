@@ -9,6 +9,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
+import { DEFAULT_SETTINGS } from '../../src/core/settings.js';
+
 import { SilentAudio, WebAudio, createAudio, type AudioOutput } from '../../src/audio/engine.js';
 import type { AudioCue } from '../../src/audio/director.js';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
@@ -187,13 +189,44 @@ describe('WebAudio', () => {
       const wind = gains[gains.length - 1];
       engine.setWind(0.5);
       expect(wind?.events).toBeGreaterThan(0);
-      expect(wind?.value).toBeCloseTo(0.25, 6);
+      // Half intensity on a bus that is halved again... and then scaled by the
+      // player's effects volume, because the wind *is* an effect.
+      expect(wind?.value).toBeCloseTo(0.5 * 0.5 * DEFAULT_SETTINGS.volumes.effects, 6);
 
       // Out-of-range values are clamped.
       engine.setWind(5);
-      expect(wind?.value).toBeCloseTo(0.5, 6);
+      expect(wind?.value).toBeCloseTo(0.5 * DEFAULT_SETTINGS.volumes.effects, 6);
       engine.setWind(-2);
       expect(wind?.value).toBe(0);
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it('scales the wind with the effects volume, and silences it at zero', () => {
+    const { engine, gains } = makeEngine();
+    try {
+      const wind = gains[gains.length - 1];
+      engine.setVolumes({ master: 1, music: 1, effects: 1 });
+      engine.setWind(1);
+      expect(wind?.value).toBeCloseTo(0.5, 6);
+
+      engine.setVolumes({ master: 1, music: 1, effects: 0 });
+      expect(wind?.value).toBe(0);
+    } finally {
+      engine.dispose();
+    }
+  });
+
+  it('mutes everything through the master, whatever the other volumes say', () => {
+    const { engine } = makeEngine();
+    try {
+      engine.setVolumes({ master: 1, music: 1, effects: 1 });
+      engine.setMuted(true);
+      expect(engine.isMuted).toBe(true);
+      // Unmuting restores what the volumes were, rather than a hard-coded 1.
+      engine.setMuted(false);
+      expect(engine.isMuted).toBe(false);
     } finally {
       engine.dispose();
     }

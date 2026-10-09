@@ -14,6 +14,7 @@
 import './style.css';
 
 import { DEFAULT_CONFIG } from './core/config.js';
+import { DEFAULT_SETTINGS, normaliseSettings, readSettings, type GameSettings } from './core/settings.js';
 import { logger, type LogBuffer } from './core/log.js';
 import { APP_VERSION, DEMO_LABEL } from './core/version.js';
 import {
@@ -65,6 +66,10 @@ interface Shell {
   readonly reporter: CrashReporter;
   /** Where the best time is kept. Shared with the crash reporter's storage. */
   readonly store: KeyValueStore;
+  /** The one audio backend, shared by the game and the menus. */
+  readonly audio: AudioOutput;
+  /** What the player chose, read once at boot and applied by the game. */
+  readonly settings: GameSettings;
   /** Assigned once the game exists; the UI callbacks read it lazily. */
   readonly holder: { game: Game | null };
 }
@@ -84,7 +89,13 @@ function createShell(): Shell {
   const canvasHost = requireElement('canvas-host');
   const uiRoot = requireElement('ui-root');
 
-  const input = new InputState();
+  const store = resolveStore();
+  // Read once, before anything that needs them: the input layer, the camera and the
+  // mixer are all constructed from what the player chose last time.
+  const settings = readSettings(store);
+
+  const input = new InputState(settings.bindings);
+  const audio = createAudioBackend();
 
   // The game and the UI reference each other, so the game is published through
   // a holder that the UI callbacks read lazily.
@@ -94,7 +105,6 @@ function createShell(): Shell {
   const gameHud = new GameHud();
   uiRoot.append(gameHud.element);
 
-  const store = resolveStore();
   const storageSink = new StorageCrashSink(store, CRASH_STORAGE_KEY, 10);
   const memorySink = new MemoryCrashSink(50);
 
@@ -105,6 +115,7 @@ function createShell(): Shell {
     root: uiRoot,
     version: APP_VERSION,
     levelName: DEMO_DISTRICT.name,
+    settings,
     callbacks: {
       onStart: () => holder.game?.start(),
       onResume: () => holder.game?.resume(),
@@ -128,6 +139,16 @@ function createShell(): Shell {
       onDownloadRecovered: () => {
         const ok = downloadReports(recovered, 'cyberparkour-crash-reports.json');
         ui.toast(ok ? 'Recovered reports downloaded.' : 'The browser blocked the download.');
+      },
+      // The game is the one that clamps, applies and stores, so the screen is
+      // redrawn from its answer rather than from what was asked for.
+      onSettingsChange: (patch) => {
+        if (holder.game) holder.game.updateSettings(patch);
+        else ui.setSettings(normaliseSettings({ ...settings, ...patch }));
+      },
+      onSettingsReset: () => {
+        if (holder.game) holder.game.resetSettings();
+        else ui.setSettings(DEFAULT_SETTINGS);
       },
     },
   });
@@ -177,9 +198,20 @@ function createShell(): Shell {
   reporter.install();
   logger.info('app', `${DEMO_LABEL} booting`);
 
+  // Menu sounds. The game cannot do this: it is not the thing being clicked, and a
+  // button that makes no noise is a button the player is not sure they pressed.
+  uiRoot.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('button')) return;
+    // The first click of a session is also the gesture that lets the audio context
+    // start, which is why this resumes rather than assuming.
+    audio.resume();
+    audio.play({ kind: 'ui-click' });
+  });
+
   ui.showStart();
 
-  return { app, canvasHost, input, hud, gameHud, ui, reporter, store, holder };
+  return { app, canvasHost, input, hud, gameHud, ui, reporter, store, settings, audio, holder };
 }
 
 /** Loads the flat textures, degrading to flat colours rather than failing. */
@@ -208,7 +240,9 @@ function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
     config: DEFAULT_CONFIG,
     level: DEMO_DISTRICT,
     store: shell.store,
-    audio: createAudioBackend(),
+    settings: shell.settings,
+    onSettingsChange: (next) => shell.ui.setSettings(next),
+    audio: shell.audio,
     createView: (canvas, definition, config) =>
       new GameView({ canvas, definition, config, assets }),
     onStatusChange: (status) => {

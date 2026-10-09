@@ -5,58 +5,66 @@
 A low-poly, Quake-styled **first-person parkour game** set in a cyberpunk city,
 in the spirit of *Mirror's Edge*.
 
-This repository currently contains **V0.5.1**. V0.3 made the roof a route, and V0.4
-took the route indoors. V0.5 made it a **level**: nine roofs on two levels, joined
-by two lifts so the district closes into a loop rather than running out at one end,
-with eight pickups strung along the way, a finish line that only opens when the
-route is behind you, and a clock. The air has fog and drifting smoke in it, the sky
-has stars in it, and the neon is on the buildings as well as the signs.
+This repository currently contains **V0.6**. V0.3 made the roof a route, V0.4 took
+the route indoors, and V0.5 made it a **level**: nine roofs on two levels, joined by
+two lifts so the district closes into a loop rather than running out at one end, with
+eight pickups strung along the way, a finish line that only opens when the route is
+behind you, and a clock.
 
-V0.5.1 is a **bugfix release on top of that**: it repairs a test that CI ran out of
-time for, a clock that ticked ten times a second instead of sixty, and a handful of
-ways the run could be finished, timed or labelled wrongly — and softens the head bob
-significantly. No new feature, and nothing from V0.6.
+V0.6 is the **polish pass**. It gives the player a body — chest, arms, legs, and a
+shadow on the roof — a settings screen that remembers what you chose, a camera that
+answers the running instead of only following it, and the two windows of forgiveness
+that make a jump land when you meant it. It also fixed what actually *running* the
+game turned up: a star field that looked like a shower of dashes, a shadow filter
+three.js had removed out from under the demo, a debug overlay on by default, a title
+screen that insisted it was a different version, and a hundred and sixty vertex
+buffers that were byte-identical to one another.
 
 ---
 
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.5.1 fixes](#what-v051-fixes)
-3. [What V0.5 delivers](#what-v05-delivers)
+2. [What V0.6 delivers](#what-v06-delivers)
+3. [What V0.5 delivered](#what-v05-delivered)
 4. [Quick start](#quick-start)
 5. [Controls](#controls)
 6. [What you should see](#what-you-should-see)
-7. [Locomotion](#locomotion)
-8. [The movement state machine](#the-movement-state-machine)
-9. [The manoeuvre bands](#the-manoeuvre-bands)
-10. [Wall running](#wall-running)
-11. [Wall jumping](#wall-jumping)
-12. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-13. [The landing roll](#the-landing-roll)
-14. [Pipe climbing](#pipe-climbing)
-15. [Interiors and doors](#interiors-and-doors)
-16. [Lifts](#lifts)
-17. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-18. [Checkpoints and respawn](#checkpoints-and-respawn)
-19. [The district](#the-district)
-20. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-21. [Neon](#neon)
-22. [Fall damage and health](#fall-damage-and-health)
-23. [Models and surfaces](#models-and-surfaces)
-24. [Sound](#sound)
-25. [How the textures are made](#how-the-textures-are-made)
-26. [Architecture](#architecture)
-27. [How a frame works](#how-a-frame-works)
-28. [Collision](#collision)
-29. [Crash reporting](#crash-reporting)
-30. [The HUDs](#the-huds)
-31. [Testing](#testing)
-32. [Continuous integration](#continuous-integration)
-33. [Project layout](#project-layout)
-34. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-35. [Out of scope for V0.5](#out-of-scope-for-v05)
-36. [Roadmap](#roadmap)
+7. [Settings](#settings)
+8. [Camera effects](#camera-effects)
+9. [Feel](#feel)
+10. [Your body](#your-body)
+11. [Optimisation](#optimisation)
+12. [Locomotion](#locomotion)
+13. [The movement state machine](#the-movement-state-machine)
+14. [The manoeuvre bands](#the-manoeuvre-bands)
+15. [Wall running](#wall-running)
+16. [Wall jumping](#wall-jumping)
+17. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+18. [The landing roll](#the-landing-roll)
+19. [Pipe climbing](#pipe-climbing)
+20. [Interiors and doors](#interiors-and-doors)
+21. [Lifts](#lifts)
+22. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+23. [Checkpoints and respawn](#checkpoints-and-respawn)
+24. [The district](#the-district)
+25. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+26. [Neon](#neon)
+27. [Fall damage and health](#fall-damage-and-health)
+28. [Models and surfaces](#models-and-surfaces)
+29. [Sound](#sound)
+30. [How the textures are made](#how-the-textures-are-made)
+31. [Architecture](#architecture)
+32. [How a frame works](#how-a-frame-works)
+33. [Collision](#collision)
+34. [Crash reporting](#crash-reporting)
+35. [The HUDs](#the-huds)
+36. [Testing](#testing)
+37. [Continuous integration](#continuous-integration)
+38. [Project layout](#project-layout)
+39. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+40. [Out of scope for V0.6](#out-of-scope-for-v06)
+41. [Roadmap](#roadmap)
 
 ---
 
@@ -64,140 +72,93 @@ significantly. No new feature, and nothing from V0.6.
 
 | | |
 | --- | --- |
-| Version | `0.5.1` |
+| Version | `0.6.0` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 950 across 35 files |
+| Tests | 1047 across 39 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.5 is finished and frozen, and V0.5.1 fixes the bugs found in it. Nothing from
-V0.6 onward is implemented, and none of it is stubbed.
+V0.6 is finished and frozen. Nothing from V0.7 onward is implemented, and none of it
+is stubbed.
+
+**The version on the title screen is read from `package.json` at runtime**, and that
+is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
+a server left running since V0.1 served `v0.1.0` for ever, however many versions were
+released under it. Importing the file instead puts it in the module graph, where
+changing it is something the server notices.
 
 ---
 
-## What V0.5.1 fixes
+## What V0.6 delivers
 
-V0.5.1 adds nothing. It fixes what V0.5 got wrong, and it is the first release whose
-*first* CI run on `main` came back red — so the worst of these was found by a
-machine, in public, and the rest by re-reading V0.5 line by line afterwards.
-
-**The texture test ran out of time on CI.** `tests/render/textures.test.ts > the
-committed texture set > is deterministic` failed on Node 22 with `Test timed out in
-5000ms`, having passed every time locally, where the machine is faster and Node is
-newer. The cause was V0.5's own skybox: the faces went from 256² to 512², and that
-test regenerates the whole texture set **twice** — several million pixels, each
-leaning on half a dozen transcendental functions. The generated images are now cached
-for the life of the file, so the four separate tests that want the 2048×512 skyline
-build it once between them, and the two tests that genuinely *are* made of pixel work
-are given an explicit 30-second budget instead of Vitest's five-second default for an
-ordinary unit test. A budget that says "this finished" rather than "this finished
-quickly" is the right shape for work that is heavy by nature — and it still catches a
-hang.
-
-**The clock ticked ten times a second.** The run timer advanced in visible 0.1 s
-steps: hundredths were *displayed*, but only decided ten times a second, which made
-the headline feature of the release read as broken rather than as precise. The play
-HUD is now refreshed every frame, and only the debug overlay keeps its 10 Hz budget,
-because only it is a dozen rows of measured text. The HUD also writes each text node
-only when its value actually changed, so refreshing it every frame costs nothing.
-
-**A dead player could still finish.** Falling to your death *through* the finish line
-completed the run, from mid-air, and the death was never resolved because the results
-screen replaced it. Pickups and the goal are now ignored entirely unless the player is
-alive: dying is a setback, not a shortcut.
-
-**A zero-second record.** A run that finished with the clock never started stored a
-best of `0.000`, and because the record only ever improves, **no later run could ever
-beat it** — the one thing in the game that outlives the session, permanently ruined by
-the first odd run. `RunState.finish` now only records a run that had a time on the
-clock.
-
-**Splits were indexed by checkpoint.** A checkpoint can be skipped, and the splits
-were stored *by* checkpoint index, which left holes: the results screen printed a time
-against a checkpoint the run had never touched, and `-:--.--` against ones it had. A
-split now carries its own checkpoint index, so the list is dense and every label is one
-the route actually reached.
-
-**`E` worked outside a run.** A stray interact keypress on the title screen, or from
-behind the results screen, could swing a door somewhere off-camera. The interact
-action is now only read while the game is playing.
-
-**The recovered-report banner wore alarm red.** Good news on the title screen — "a
-report from a previous session was saved" — rendered in the same red-bordered box as a
-fault. It now uses the `--ok` colour, which had been defined in the stylesheet and
-never used, which is a fair sign it was always meant to be.
-
-**Pickup buffers were keyed by index.** Every pickup past the tenth cached its own
-buffer, all of them the same sound. The cache key is the pitch *step* now, shared with
-`renderPickup` so the two cannot disagree about where the pitch stops rising.
-
-**Two lit plates on one plane.** The canyon sign hung directly across the middle lit
-band of the facade at exactly the same standoff — two lit faces at the same depth
-covering the same pixels, which is the one arrangement a depth buffer cannot resolve:
-the depth test ties, rounding decides, and the pair speckles and crawls as the camera
-moves. The sign now hangs in the gap between two bands, and a level test holds every
-mounted plate to a plane of its own. (A plate a few millimetres in front of the wall
-behind it is *not* the same thing: its rear face points away from the camera and is
-culled, so that gap is a look decision rather than a bug.)
-
-And three changes that are not fixes but were asked for. All of them are about the
-same thing, which is what the demo feels like while you are moving through it:
-
-**Head bob, softened significantly.** From 3.4 cm vertical and 1.7 cm lateral settling
-at 4.5/s to **1.7 cm vertical and 0.8 cm lateral**, settling at 3.2/s and falling off
-harder with speed, on a slightly longer stride — a rise and fall of 3.4 cm peak to
-peak at a walk and 1.9 cm at a sprint. The camera is the player's whole view of the
-world: a bob the eye has to *track* stops being atmosphere and becomes noise, and the
-works level — long drops onto a narrow deck — is exactly where that stops reading as
-running and starts reading as being shaken.
-
-**Texture shimmer, taken out with anisotropic filtering.** This is the one that
-matters most, and it is the largest single change in how the demo *looks*: the demo
-was rendering with four samples of anisotropic filtering on the object surfaces and
-**none on the skyline, the skybox or the smoke**. A player running across a roof is
-looking at it at a grazing angle, where a tiled texture covers hundreds of texels
-along the view direction for every one it covers across it — so no single mip level is
-right for both, trilinear sampling picks one that is wrong for the pair, and what the
-eye sees is sparkle and crawl over every surface and along the horizon whenever the
-camera moves. Every scene texture now asks for whatever the GPU reports, capped at
-sixteen: one texture parameter, no extra pass, and the hardware does the work.
-
-**A cheaper, exactly-rounded star test.** The skybox generator measured the distance
-from a pixel to a star with `Math.hypot`, which is not a correctly-rounded operation
-and is implemented differently by different JavaScript engines. `Math.sqrt(dx*dx +
-dy*dy)` is exactly rounded under IEEE 754, so that comparison's arithmetic cannot
-differ between engines, and it does less work — which is worth something at half a
-million pixels a face. The committed textures are byte-identical afterwards, which is
-what made it safe to change.
-
-Every one of these has a regression test. Two are worth pointing at specifically
-because they were written by reproducing the bug first: the dead player
-(`tests/game/game.test.ts`) fails against V0.5's code and passes against this one, and
-so does the zero-second record (`tests/game/run.test.ts`).
-
----
-
-## What V0.5 delivers
-
-Every item from the V0.5 section of the project roadmap, and where it lives:
+Every item from the V0.6 section of the project roadmap, and where it lives:
 
 | Feature | Where |
 | --- | --- |
-| A complete small district | `levelData.ts` — nine roofs on two levels, joined into a loop |
-| Elevators | `level/elevators.ts` (`ElevatorSystem`, `carryRider`), `CollisionWorld` moving a collider |
-| Emissive neon | `models.ts` (`neon-strip`), `levelData.ts` (bands and tower signs), `sceneBuilder.ts` (emissive materials) |
-| Fog and smoke | `levelData.ts` (`environment` fog, `smoke` plumes), `render/effects.ts` (`smokePose`) |
-| A better skybox | `tools/textures/skybox.ts` — a star field, a city-glow band, two cloud layers |
-| Collectibles | `levelData.ts` (`collectibles`), `game.ts` (`updateTriggers`), `render/effects.ts` (`pickupPose`) |
-| Level completion | `game.ts` (`completeRun`), `ui/screens.ts` (`showComplete`), `game/run.ts` (`RunState.armed`) |
-| Time trials | `game/run.ts` (`RunState`, `formatRunTime`, the stored record), `ui/gameHud.ts` (the clock) |
+| Feel | `core/config.ts` (`feel`), `game/player.ts` (`updateJumpWindows`) — coyote time and a jump buffer |
+| Camera effects | `game/camera.ts` (`CameraEffects`), `game/game.ts` (`updateEffects`, the render path) — speed FOV, lean, landing dip and shake |
+| Animations | `render/playerModel.ts` (`posePlayerBody`), `game/pose.ts` (the pose the body is given) |
+| Lighting | `render/view.ts` (`PCFShadowMap`, shadow map sized by the graphics preset) |
+| Audio | `audio/synth.ts` (a checkpoint chime, a menu click), `audio/engine.ts` (one gain per bus, three volumes) |
+| Models | `render/playerModel.ts` — a body rather than a capsule, built from the same parts-and-surfaces system as the district |
+| UI | `ui/settingsScreen.ts`, `ui/screens.ts` (Settings on the title and pause menus), `ui/hud.ts` (hidden by default) |
+| Optimisation | `render/sceneBuilder.ts` (`geometryCache`), `render/view.ts` (`setQuality`) |
+| Settings | `core/settings.ts` — sensitivity, FOV, graphics, volumes, camera motion and keybinds, all persisted |
+| Player model | `render/playerModel.ts` — visible from the chest down, and casting a shadow |
 
-Everything V0.1-V0.4 built is still here, and V0.5 builds *with* it rather than
-beside it: the lifts are a new kind of collider in the existing collision world,
-the pickups reuse the trigger test the checkpoints already had, and the run state
-is driven by the checkpoint events the game was already handling.
+### And what running it turned up
+
+The roadmap item that is not on any list is "play the thing". V0.6 was built with a
+real browser pointed at the dev server throughout, and these all came out of that
+rather than out of a plan:
+
+**The star field looked like a shower of dashes.** Each star was two or three texels
+across, and a radial falloff quantised onto a texel grid makes a plus sign, which the
+face projection then stretched. Stars are now smaller than a texel, so the sampler
+rounds them into points, with the brightness skewed so most are faint and a few are
+bright. The whole skybox dropped from 383 KiB to 321 KiB in the process.
+
+**Shadows were not the shadows the demo asked for.** `THREE.PCFSoftShadowMap` was
+removed in three.js r186: setting it logs a warning and silently falls back to hard
+PCF. The demo had been asking for soft shadows it had never been getting. It now uses
+`PCFShadowMap` deliberately, at a resolution the graphics preset controls — which is
+better than a filter that quietly means something else.
+
+**The debug overlay was on by default.** Developer information, in front of every
+frame of a technical demo, until F3 was pressed. It is off by default now, and the
+controls screen says so.
+
+**The menus were silent.** Every button, every slider, no feedback. There is a click
+now, and the click is also what resumes the audio context, which is why the first
+press of a session is what starts the sound.
+
+**And the two hardest bugs of the version were both physics:**
+
+- Coyote time doubled the height of every jump, because the forgiveness window it
+  opened was still open in the instant *after* a jump — so a held jump fired twice.
+  A jump taken from the ground now closes the window behind it, and there is a
+  regression test named after exactly that.
+- The coyote branch skipped gravity for its twelve hundredths of a second, which let
+  a player float off the roof and *clear a canyon they should have fallen into*. The
+  integration test that walks off every edge of the deck caught it, which is what
+  that test is for.
+
+---
+
+## What V0.5 delivered
+
+V0.5 made the district a level: nine roofs on two levels joined by two lifts into a
+loop, eight pickups, a finish line that has to be earned, and a clock that is kept
+between sessions. V0.5.1 then fixed what V0.5 got wrong — including the first red CI
+run on `main`, which was a texture test that regenerated several million pixels
+twice and ran out of Vitest's five-second budget on a slower runner.
+
+Everything V0.1-V0.5 built is still here, and V0.6 builds *with* it rather than beside
+it: the settings drive the camera and the audio the game already had, the body is
+posed from the state machine the movement already uses, and the quality presets turn
+knobs the renderer already owned.
 
 ---
 
@@ -268,6 +229,172 @@ in the corner of the screen and a **record** kept between sessions.
 In the air itself: fog that pulls the skyline into the haze, plumes of **smoke**
 drifting off the plant, and a sky with **stars**, two layers of cloud and a warm
 glow along the horizon where the city's light pools.
+
+---
+
+## Settings
+
+Everything the player can change lives in one file, `core/settings.ts`, and it is
+data: the input layer, the camera, the renderer and the mixer are all handed their
+numbers from it rather than reading `DEFAULT_CONFIG`.
+
+| Setting | Range | Applies |
+| --- | --- | --- |
+| Mouse sensitivity | 0.25× – 3× the tuned base | The next mouse movement |
+| Invert vertical look | on/off | The next mouse movement |
+| Field of view | 65° – 110° | The frame it is set |
+| Camera motion | Full · Reduced · Off | The next frame |
+| Graphics | Low · Medium · High | Immediately, mid-run |
+| Master / Music / Effects volume | 0 – 1 | Immediately |
+| 12 key bindings | any key | Immediately, including rebinding mid-run |
+
+Two things about it are worth more than the list.
+
+**Normalise, never trust.** What comes back from storage is a JSON blob that a
+different version — or a curious player — wrote. Every value is clamped into range,
+every enum checked against its list, a missing binding falls back to its default
+rather than leaving an action unreachable, and anything unusable falls back to the
+whole defaults. A corrupt settings file cannot stop the game from starting, and there
+is a test per way that could go wrong.
+
+**One patch, applied everywhere.** `Game.updateSettings` is the only way settings
+change. It merges the patch over what is in force, normalises the result, pushes it to
+the input layer, the camera, the renderer and the audio, saves it, and reports back
+what it settled on. The settings screen draws *the answer* rather than the patch, so a
+slider that asked for an impossible value shows the value it got.
+
+### Graphics presets
+
+A preset is a table of numbers, not a chain of `if (quality === 'low')` in the
+renderer:
+
+| | Low | Medium | High |
+| --- | --- | --- | --- |
+| Drawing buffer | 1× | 1.5× | up to 2× |
+| Shadows | off | on | on |
+| Shadow map | — | 2048² | 4096² |
+| Anisotropic filtering | 2× | 8× | 16× |
+| Smoke plumes | 35% | 70% | all |
+| Lamps | 40% | 75% | all |
+
+Two of those need care, and both are in `view.ts` with a comment saying why. Toggling
+`renderer.shadowMap.enabled` changes which shader a material compiles to, and three.js
+recompiles nothing by itself, so every material has to be marked dirty. And setting a
+shadow map's size on a light whose map already exists does nothing at all — the render
+target has to be thrown away so it is rebuilt.
+
+The thinning of smoke and lamps strides through the list rather than taking a prefix,
+so a low preset thins every plume in the district instead of erasing whichever ones
+happened to be declared last, and applying the same setting twice leaves the same
+things lit.
+
+### Key bindings
+
+Codes are `KeyboardEvent.code` values, so the layout stays physical: WASD is under the
+same fingers on an AZERTY or Dvorak keyboard. The settings screen shows them as a
+player would say them — `Space`, `Left Ctrl + C`, `↑` — and rebinding *takes the key
+off whatever else had it*, so one key cannot quietly end up doing two jobs. (Sharing
+is possible and reported rather than prevented: taking both of a two-key binding would
+leave that action unreachable, so in that case the key is shared and the screen says
+so.)
+
+---
+
+## Camera effects
+
+The camera does four things because of what the body is doing, and all four live in
+`game/camera.ts` as data:
+
+- **Speed opens the field of view** by up to 4.5°, and crouching closes it by 3°.
+  Both are *approached* rather than set, so running and stopping is a swell.
+- **A landing dips the camera** and rings it: the dip is proportional to the same
+  impact the health bar measures, so a landing that hurts is a landing that shows.
+- **A slide leans, and a wall run leans into the wall** — which side the wall is on
+  is worked out in the player's own frame, so running the same wall the other way
+  leans the other way, as it should.
+- **Everything decays.** No effect is left at a value somebody has to remember to
+  clear; a respawn, a pause and turning the setting off all leave the view level.
+
+The Camera motion setting multiplies the lot — and it is a real reduction rather than
+a token one, because a bob the eye has to *track* is the difference, for some players,
+between playing and not playing. `Off` is zero: the head bob, the FOV kick, the dip,
+the shake and the lean all stop, and the camera is exactly where the player put it.
+
+---
+
+## Feel
+
+Two windows of forgiveness, both in `core/config.ts`, both about the gap between what
+the player pressed and what the simulation could know.
+
+**Coyote time (0.12 s).** Walk off an edge and jump a tenth of a second later and it
+still counts. Long enough to cover a player who was watching their feet rather than
+the edge; short enough that it never reads as flight.
+
+**Jump buffering (0.15 s).** Press jump just before landing and the game holds it
+until there is something to jump from. Holding the key keeps the buffer open, which is
+what makes holding jump hop on every landing rather than only on the first.
+
+Both are counted in seconds and both are closed by the thing they forgive: the coyote
+window opens when the ground is left, and a buffered press is spent when it is used.
+
+The subtlety that cost a day is that a jump taken *from* the ground is not a coyote
+jump. Leaving the window open behind a jump meant a held key fired again in the same
+instant the ground was left, which doubled the apex of every jump in the game — a
+bug that no unit test noticed because every test pressed jump once. There is one now.
+
+---
+
+## Your body
+
+The player has a body. You see it when you look down — chest, arms, legs, feet — and
+it casts a shadow on the roof, so the district has a person in it rather than a
+floating camera.
+
+It is built the same way the district is: a handful of boxes, the same surface
+materials, no skeleton, no animation file, no artist. `game/pose.ts` derives a *pose*
+from the player state each frame — a gait phase, how much stride to apply, which way
+the arms should be reaching, a lean — and `render/playerModel.ts` turns that into
+angles. The split is what makes the animation testable in Node: the decisions are
+pure, and the renderer only has to know what "reach" looks like.
+
+The pose is derived, not keyframed, which has two consequences worth having:
+
+- **The walk is a function of distance travelled**, because the gait phase is. The
+  legs therefore cannot slide against the ground at any speed or frame rate.
+- **The special cases are answers, not animations.** A vault reaches forward with
+  both hands; a wall run drives the leg on the wall's side into it; a body that has
+  stopped being alive is limp. Each is one line in the pose, and each has a test.
+
+The proportions are chosen against the camera rather than against a photograph: the
+eye is at 1.65 m and the shoulders at 1.40, which leaves the chest 25 cm below the
+camera — close enough that looking down finds it immediately, far enough that it does
+not fill the screen the way a chest does when the camera is inside it. The lit patch
+on the chest is deliberately small, because it is the nearest thing to the camera when
+the player looks down, and anything larger turns the whole view cyan.
+
+---
+
+## Optimisation
+
+V0.6's optimisation work started from a measurement rather than an assumption.
+
+**Geometry is shared exactly when it is identical.** The district is 637 meshes built
+from parts, and parts repeat: every trim on a 0.6 m slab is the same box with the same
+texture scale on every prop that has one. Each part used to get its own vertex buffer —
+637 geometries for 637 meshes. The scene builder now keys a cache on the exact tuple
+that determines a box (size, tile size, UV scale), which merges **637 meshes onto 476
+geometries** — a quarter of the vertex buffers, for geometry that renders identically
+by construction. The materials were already shared, at 57 for the whole district.
+
+**The shadow map is sized by the graphics preset.** It was a fixed 2048² over a 220 m
+shadow volume: 10.7 cm per texel, which is the difference between a chunky shadow edge
+and a clean one. A preset can now spend 4096² on it, or nothing at all.
+
+**And the frame path still allocates nothing.** The camera effects own one frame object
+and rewrite it; the pose is written into a scratch object; the eye and the feet are
+reused vectors. The one thing that does allocate per frame is nothing, which is worth
+saying out loud because it is easy to lose.
 
 ---
 
@@ -669,7 +796,16 @@ cannot drift from what ships.
 - **`src/audio/engine.ts`** is the only Web Audio code, and degrades to
   `SilentAudio` rather than breaking the game. `M` mutes.
 
-V0.5 adds two sounds to the bank. A **pickup** is a short bell that rises two
+V0.6 adds two more, and gives the mixer three volumes. A **checkpoint** is two notes
+rising — the most important event in a run had been silent, which is a thing to read
+rather than a thing to hear. A **menu click** is deliberately the quietest cue in the
+game: it is feedback that the press landed, and it plays on every button.
+
+The mixer is now one gain per bus — master, effects, music — and *one* method writes
+any of them. Mute used to be re-applied by hand in three places, which is how a muted
+game ended up with the wind still audible after a volume change.
+
+V0.5 added two sounds to the bank. A **pickup** is a short bell that rises two
 semitones with each one taken — the rising pitch is the sound's whole job, because
 it tells the player how many they have without them reading the counter. The
 **finish** is a major chord that blooms rather than strikes: four voices on one
@@ -765,8 +901,11 @@ Game.handleFrame
         ├─ swing any door that is moving, and hand the fraction to the view
         ├─ animate the smoke and the pickups
         ├─ FrameStats.push(dt)
-        ├─ render the interpolated eye position, stance height and head bob
-        └─ update the HUDs (throttled to 10 Hz)
+        ├─ derive the body's pose, and advance the camera effects
+        ├─ render: interpolated eye + stance height + head bob + effect offsets,
+        │          with the field of view the effects ask for and the roll they
+        │          want, and the body placed at the interpolated feet
+        └─ update the HUDs (the play HUD every frame, the debug overlay at 10 Hz)
 ```
 
 Two details worth knowing:
@@ -777,6 +916,10 @@ Two details worth knowing:
 - **The loop keeps running while paused**, and a finished run is paused in the same
   sense: the results screen is up, the world is frozen behind it, and the loop is
   still there to be restarted.
+- **The play HUD is updated every frame and the debug overlay ten times a second.**
+  The clock has to move every frame — a timer showing hundredths that is only decided
+  ten times a second reads as broken — and the overlay is a dozen rows of measured
+  text, which does not. The HUD writes each text node only when its value changed.
 
 ---
 
@@ -835,6 +978,12 @@ lives under its own key, `cyberparkour.best-time.v1`.
 
 ## The HUDs
 
+**The debug overlay starts hidden.** It was on by default until V0.6, which made a
+technical demo look like a development build; F3 (or the backtick) brings it back, and
+the controls screen says so. A hidden overlay is not updated at all — that is the point
+of hiding it — so the numbers resume from the truth whenever it is shown.
+
+
 **The play HUD** (`src/ui/gameHud.ts`) is the one a player is meant to read:
 
 - **Health**, as a banded bar scaled with a compositor transform.
@@ -884,7 +1033,7 @@ cyberparkour.logs.entries()
 npm test
 ```
 
-950 tests in 35 files, in five layers:
+1047 tests in 39 files, in five layers:
 
 - **Unit tests** — maths, the delta-time system, the game loop, the input state, the
   AABB helpers, the collision solver, every movement mode and their transitions, the
@@ -892,7 +1041,9 @@ npm test
   pipe climbing, the door system, the lift travel and its rider carry, the run
   clock, the splits, the record and its storage, the effect poses, models, level
   validation, the crash reporter/sinks/report builder, the audio synthesiser and
-  director, the play HUD, the debug HUD and every screen.
+  director, the play HUD, the debug HUD and every screen — and, from V0.6, the
+  settings model and its normalisation, the camera effects, the body's pose and the
+  angles it turns into, and the graphics presets.
 - **Traversal tests** (`tests/game/traversal.test.ts`) — the V0.3 moves against
   small, purpose-built worlds.
 - **Integration tests** (`tests/integration/simulation.test.ts`) — the real
@@ -1008,6 +1159,7 @@ slow runner proves the images *match*, not that the machine is quick.
     │   ├── loop.ts             GameLoop with error containment
     │   ├── log.ts              bounded log buffer + safe serialisation
     │   ├── math.ts             clamp, lerp, damp, angle helpers
+    │   ├── settings.ts         what the player chose, and how it is trusted
     │   ├── random.ts           the shared seeded PRNG
     │   ├── vec3.ts             allocation-conscious vector maths
     │   └── version.ts          build version
@@ -1020,6 +1172,8 @@ slow runner proves the images *match*, not that the machine is quick.
     │   ├── run.ts              the clock, the pickups, the splits, the record
     │   ├── movement.ts         the movement state machine + transition graph
     │   ├── look.ts             mouse-look maths
+    │   ├── camera.ts           camera effects: FOV, lean, landing dip, shake
+    │   ├── pose.ts             what the player's body is doing, as data
     │   ├── player.ts           movement modes, traversal moves, head bob, health
     │   ├── level
     │   │   ├── levelData.ts    the demo district, as plain data
@@ -1038,7 +1192,7 @@ slow runner proves the images *match*, not that the machine is quick.
     │   ├── crashSinks.ts       where reports go (console / memory / storage)
     │   └── stats.ts            frame-time statistics
     ├── input
-    │   ├── bindings.ts         the key map
+    │   ├── bindings.ts         the key map, and how a key is described
     │   ├── inputState.ts       pure input state (keys, motion, actions)
     │   └── domInput.ts         keyboard listeners + pointer lock
     ├── render
@@ -1046,12 +1200,14 @@ slow runner proves the images *match*, not that the machine is quick.
     │   ├── assets.ts           texture loading (non-fatal, injectable loaders)
     │   ├── effects.ts          the pure poses of smoke and pickups
     │   ├── view.ts             WebGLRenderer, camera, doors, lifts, animation
+    │   ├── playerModel.ts      the player's body, and its procedural animation
     │   └── sceneBuilder.ts     level geometry, lights, signs, lifts, skyline
     └── ui
         ├── dom.ts              small element helpers
         ├── gameHud.ts          the play HUD: health, checkpoints, the clock
         ├── hud.ts              the debug overlay
-        ├── screens.ts          title / controls / about / pause / results / ended / crash
+        ├── settingsScreen.ts   sliders, presets, volumes and key capture
+        ├── screens.ts          title / controls / about / settings / pause / results / ended / crash
         └── reportIO.ts         report download and clipboard export
 ```
 
@@ -1107,6 +1263,24 @@ not testable.
 context. It is verified by running the demo in a real browser, which is also how the
 skybox, the textures, the lighting and the movement abilities were checked.
 
+**The player's body is posed, not animated.** There is no skeleton and no animation
+file: the limbs are groups, and their angles come from the pose the game derives each
+frame. That is why the walk cannot slide against the ground at any speed or frame rate,
+and why a vault reaches forward with both hands without anybody having authored a vault.
+
+**Camera effects are a *view* offset.** They move the camera and never the player, so a
+landing shake cannot be mistaken for the body moving — and turning the setting off is
+zero rather than "less".
+
+**A jump from the ground closes the coyote window.** Otherwise the forgiveness that
+covers stepping off a ledge also covers the instant after a jump, and a held key
+doubles the apex. The window is `Infinity` when closed, which is a strange-looking
+value and exactly why the comment next to it is three sentences long.
+
+**Low quality is a real reduction.** No shadows at all, a fifth of the lamps, a third
+of the smoke. A preset that only lowered the resolution would be a preset nobody could
+see the point of.
+
 **The crash reporter is local-only.** Nothing is uploaded.
 
 **The texture tests are the slow ones.** Not a limitation of the demo, but of the
@@ -1119,13 +1293,10 @@ half.
 
 ---
 
-## Out of scope for V0.5
+## Out of scope for V0.6
 
 The roadmap continues past this demo. Nothing below is implemented, and none of it is
-stubbed — V0.5.1 changed no behaviour that is listed here:
-
-**V0.6** feel, camera effects, animations, lighting, audio, models, UI,
-optimisation, settings (sensitivity, FOV, graphics, keybinds), player model.
+stubbed:
 
 **V0.7** polish, and labelling the district as Level 1.
 
@@ -1142,9 +1313,15 @@ eight pickups along the way, a finish that has to be earned, and a clock that is
 between sessions. The air has fog and smoke in it, the sky has stars, and the neon is
 on the buildings.
 
-V0.5.1, this version, is the bugfix release for V0.5: the CI timeout, the ten-Hertz
-clock, finishing while dead, the unbreakable zero-second record, and a softer head
-bob. It is the release that makes the green badge true again.
+V0.5.1 was the bugfix release for V0.5: the CI timeout, the ten-Hertz clock, finishing
+while dead, the unbreakable zero-second record, and a softer head bob. It is the
+release that made the green badge true again.
 
-The next milestone is V0.6: feel, camera effects, animation, lighting, audio, models
-and optimisation — the polish pass that turns a level into a game.
+V0.6, this version, is the polish pass: settings that are remembered, a camera that
+answers the running, two windows of forgiveness around the jump, a body of your own
+with a shadow under it, a graphics preset that means something, three volume buses,
+and a measured quarter off the district's vertex buffers. It is the release that comes
+from *playing* the game — every one of its sharpest bugs was found with a browser
+pointed at the dev server rather than from a plan.
+
+The next milestone is V0.7: polish, and labelling the district as Level 1.

@@ -89,14 +89,37 @@ describe('buildScene geometry', () => {
     }
   });
 
-  it('gives each part its own geometry rather than sharing one unit cube', () => {
+  it('shares geometry between parts that are identical, and only between those', () => {
+    // The V0.2 concern was that parts might all share one *unit cube* and be scaled
+    // by the mesh transform, which would break the world-space UV repeat. The V0.6
+    // concern is the opposite one: a few hundred identical boxes each with their own
+    // vertex buffer. Both are the same invariant - geometry is shared exactly when
+    // the geometry would be identical.
     const built = buildScene(DEMO_DISTRICT);
     try {
-      const geometries = new Set(
-        [...built.meshes.values()].flatMap((list) => list.map((mesh) => mesh.geometry)),
-      );
-      const meshCount = [...built.meshes.values()].reduce((total, list) => total + list.length, 0);
-      expect(geometries.size).toBe(meshCount);
+      const parts = [...built.meshes.values()].flat();
+      const byGeometry = new Map<THREE.BufferGeometry, typeof parts>();
+
+      for (const mesh of parts) {
+        const box = mesh.geometry as THREE.BoxGeometry;
+        expect(box.parameters, 'every part is a box').toBeDefined();
+        const list = byGeometry.get(mesh.geometry) ?? [];
+        list.push(mesh);
+        byGeometry.set(mesh.geometry, list);
+      }
+
+      // Sharing happened: there are fewer geometries than parts.
+      expect(byGeometry.size).toBeLessThan(parts.length);
+
+      // ...and every part that shares is genuinely the same box, so nothing renders
+      // differently than it would have on its own.
+      for (const group of byGeometry.values()) {
+        const first = group[0]!.geometry as THREE.BoxGeometry;
+        for (const mesh of group) {
+          const box = mesh.geometry as THREE.BoxGeometry;
+          expect(box.parameters).toEqual(first.parameters);
+        }
+      }
     } finally {
       built.dispose();
     }

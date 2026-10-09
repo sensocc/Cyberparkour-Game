@@ -124,7 +124,14 @@ export class DebugHud {
   private readonly root: HTMLElement;
   private readonly list: HTMLElement;
   private readonly values = new Map<string, HTMLElement>();
-  private visible = true;
+  /**
+   * Hidden until asked for.
+   *
+   * V0.6's UI pass: the debug overlay was on by default, which made a technical
+   * demo look like a development build. F3 (or the backtick) brings it back, and the
+   * controls screen says so.
+   */
+  private visible = false;
 
   constructor(container: HTMLElement) {
     this.root = el('section', { className: 'hud', attrs: { 'aria-label': 'Debug info' } });
@@ -132,6 +139,9 @@ export class DebugHud {
     this.list = el('dl', { className: 'hud__list' });
 
     this.root.append(heading, this.list);
+    // Apply the starting state now rather than waiting for the first toggle, or the
+    // overlay would be on screen until something happened to hide it.
+    this.root.classList.toggle('hud--hidden', !this.visible);
     container.append(this.root);
 
     // Create the rows once; `update` only writes text.

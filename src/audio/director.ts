@@ -28,6 +28,10 @@ export type AudioCue =
   | { readonly kind: 'climb-tick'; readonly variant: number }
   | { readonly kind: 'land'; readonly intensity: 0 | 1 | 2 }
   | { readonly kind: 'grab' }
+  /** A checkpoint reached: rising, and the loudest thing in a run. */
+  | { readonly kind: 'checkpoint' }
+  /** A menu button, which is feedback rather than an event in the world. */
+  | { readonly kind: 'ui-click' }
   | { readonly kind: 'mantle' }
   | { readonly kind: 'pull-up' }
   | { readonly kind: 'slide-start' }

@@ -430,6 +430,57 @@ export function renderComplete(): Float32Array {
   return samples;
 }
 
+/**
+ * Reaching a checkpoint: two notes, rising.
+ *
+ * V0.6 added this because the most important event in a run was silent - a player
+ * could pass a checkpoint and only find out from the toast, which is a thing to read
+ * rather than a thing to hear. Rising, because progress in this game is always
+ * upwards or forwards.
+ */
+export function renderCheckpoint(): Float32Array {
+  const length = Math.round(SAMPLE_RATE * 0.62);
+  const samples = new Float32Array(length);
+
+  for (const [index, frequency] of [659.25, 987.77].entries()) {
+    const start = Math.round(SAMPLE_RATE * 0.09 * index);
+    const voice = decayingTone(length - start, frequency, frequency, 0.2);
+    const envelope = decayEnvelope(length - start, 0.008, 0.24);
+    for (let sample = 0; sample < voice.length; sample += 1) {
+      voice[sample] = (voice[sample] as number) * (envelope[sample] as number);
+    }
+    mixInto(samples, voice, start, index === 0 ? 0.7 : 0.55);
+  }
+
+  normalise(samples, 0.5);
+  return samples;
+}
+
+/**
+ * A menu button being pressed.
+ *
+ * Short, quiet and dull on purpose: it is feedback that the click *landed*, not an
+ * event in the world, and it plays every time the player touches anything.
+ */
+export function renderUiClick(): Float32Array {
+  const length = Math.round(SAMPLE_RATE * 0.07);
+  const samples = new Float32Array(length);
+
+  const tick = whiteNoise(length, 0x51ac);
+  lowpass(tick, 2600);
+  highpass(tick, 700);
+  const envelope = decayEnvelope(length, 0.002, 0.022);
+  for (let index = 0; index < length; index += 1) {
+    samples[index] = (tick[index] as number) * (envelope[index] as number);
+  }
+
+  const body = decayingTone(length, 420, 300, 0.02);
+  mixInto(samples, body, 0, 0.35);
+
+  normalise(samples, 0.28);
+  return samples;
+}
+
 /** A foot scraping onto a ledge, for the climb cadence. */
 export function renderClimbTick(variant: number): Float32Array {  const length = Math.round(SAMPLE_RATE * 0.22);
   const noise = whiteNoise(length, 0x6600 + variant * 17);

@@ -10,8 +10,10 @@
 import type { CubeTexture, Texture } from 'three';
 
 import type { GameConfig } from '../core/config.js';
+import type { QualityPreset } from '../core/settings.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
+import type { PlayerPose } from '../game/pose.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
 import type { SurfaceTextureId } from '../game/level/surfaces.js';
 
@@ -65,6 +67,30 @@ export interface GameViewLike {
    * clock and a dropped frame cannot accumulate drift.
    */
   animate(elapsedSeconds: number): void;
+  /**
+   * Places and poses the player's body.
+   *
+   * The body is in the world, not attached to the camera: it casts a shadow and it
+   * stays where the player is, which is what makes looking down at your own feet
+   * work. `feet` is the *interpolated* foot position, so the body does not jitter
+   * against the camera at a refresh rate the simulation does not share.
+   */
+  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose): void;
+  /**
+   * Sets the vertical field of view, in degrees.
+   *
+   * A setting rather than a constructor argument: the player can change it from the
+   * settings screen, and the projection matrix has to follow without a restart.
+   */
+  setFov(fov: number): void;
+  /**
+   * Applies a graphics preset.
+   *
+   * Every knob a preset owns - drawing-buffer scale, shadows, shadow resolution,
+   * texture filtering, how much smoke and how many lamps survive - is set from the
+   * one object, so "low" cannot mean five different things in five files.
+   */
+  setQuality(preset: QualityPreset): void;
   /** Releases every GPU resource. */
   dispose(): void;
 }

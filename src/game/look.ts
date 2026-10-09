@@ -12,6 +12,13 @@ import { vec3, type Vec3 } from '../core/vec3.js';
 export interface Orientation {
   yaw: number;
   pitch: number;
+  /**
+   * Camera roll, in degrees. Optional, and only the view ever sets it.
+   *
+   * Roll is a *camera effect* rather than a player input: the player's aim is yaw
+   * and pitch, and a lean into a wall run must not change where they are looking.
+   */
+  roll?: number;
 }
 
 export interface LookConfig {

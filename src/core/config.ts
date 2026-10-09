@@ -41,6 +41,53 @@ export interface PlayerConfig {
   readonly maxSpeed: number;
 }
 
+/**
+ * Feel: the timing windows that make an input forgiving.
+ *
+ * Neither of these is visible in the world - they are both about the gap between
+ * what the player pressed and what the simulation could know. A player who pressed
+ * jump a tenth of a second before touching down pressed it *on purpose*, and a
+ * game that answers "too early, nothing happens" is a game that feels broken
+ * rather than exact.
+ */
+export interface FeelConfig {
+  /** Seconds after walking off an edge during which a jump still counts (s). */
+  readonly coyoteSeconds: number;
+  /** Seconds a jump press is remembered while airborne (s). */
+  readonly jumpBufferSeconds: number;
+}
+
+/**
+ * Camera effects: what the view does in response to what the body is doing.
+ *
+ * All three are deliberately small numbers. The camera is the player's entire view
+ * of the world, so these are the difference between "you can feel the speed" and
+ * "the screen is wobbling" - and everything here is scaled by the player's Camera
+ * motion setting, which can take it to zero.
+ */
+export interface CameraEffectsConfig {
+  /** Extra field of view at full speed, in degrees. */
+  readonly speedFov: number;
+  /** Extra field of view while crouched, in degrees (negative narrows it). */
+  readonly crouchFov: number;
+  /** How quickly the field of view approaches its target (1/s). */
+  readonly fovApproach: number;
+  /** Degrees of view roll at full speed during a slide (degrees). */
+  readonly slideRoll: number;
+  /** Degrees of roll while wall running (degrees). */
+  readonly wallRunRoll: number;
+  /** How far the camera drops on a maximum-speed landing (m). */
+  readonly landingDip: number;
+  /** How quickly a landing dip springs back (1/s). */
+  readonly landingRecover: number;
+  /** Degrees of shake at a maximum-speed landing (degrees). */
+  readonly landingShake: number;
+  /** How quickly shake dies away (1/s). */
+  readonly shakeDecay: number;
+  /** Metres the camera moves with a full-strength shake (m). */
+  readonly shakeReach: number;
+}
+
 export interface WorldConfig {
   /** Physics steps per second. */
   readonly tickRate: number;
@@ -342,6 +389,8 @@ export interface GameConfig {
   readonly collectible: CollectibleConfig;
   readonly goal: GoalConfig;
   readonly headBob: HeadBobConfig;
+  readonly feel: FeelConfig;
+  readonly cameraEffects: CameraEffectsConfig;
   readonly fallDamage: FallDamageConfig;
   readonly respawn: RespawnConfig;
   readonly camera: CameraConfig;
@@ -525,6 +574,27 @@ export const DEFAULT_CONFIG: GameConfig = {
     settleRate: 3.2,
     speedFalloff: 0.45,
   },
+  feel: {
+    // Twelve hundredths of a second is about the length of a human's "oops" - long
+    // enough to cover a player who was watching their feet rather than the edge,
+    // short enough that it never looks like flight.
+    coyoteSeconds: 0.12,
+    // The other half of the same idea: press jump too early and the game holds it
+    // until there is something to jump from.
+    jumpBufferSeconds: 0.15,
+  },
+  cameraEffects: {
+    speedFov: 4.5,
+    crouchFov: -3,
+    fovApproach: 6,
+    slideRoll: 3.2,
+    wallRunRoll: 5.5,
+    landingDip: 0.11,
+    landingRecover: 9,
+    landingShake: 1.1,
+    shakeDecay: 7.5,
+    shakeReach: 0.035,
+  },
   fallDamage: {
     maxHealth: 100,
     // ~3 m under this gravity. Landing from the deck's own height never hurts.
@@ -558,4 +628,24 @@ export const DEFAULT_CONFIG: GameConfig = {
 /** Fixed simulation step, in seconds. */
 export function fixedStep(config: GameConfig): number {
   return 1 / config.world.tickRate;
+}
+
+/**
+ * The config with the camera's motion effects scaled.
+ *
+ * The head bob is a *config* value read by the step and the render path, so scaling
+ * the amplitudes here is what makes the "Camera motion" setting a real setting
+ * rather than a flag the bob has to check. `1` returns the same object, so nothing
+ * that never changes the setting pays for a copy.
+ */
+export function withMotionScale(config: GameConfig, scale: number): GameConfig {
+  if (!(scale >= 0) || scale === 1) return config;
+  return {
+    ...config,
+    headBob: {
+      ...config.headBob,
+      verticalAmplitude: config.headBob.verticalAmplitude * scale,
+      lateralAmplitude: config.headBob.lateralAmplitude * scale,
+    },
+  };
 }

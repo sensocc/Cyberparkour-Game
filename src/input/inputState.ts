@@ -22,7 +22,23 @@ export class InputState {
   private pointerDx = 0;
   private pointerDy = 0;
 
-  constructor(private readonly bindings: Bindings = DEFAULT_BINDINGS) {}
+  constructor(private bindings: Bindings = DEFAULT_BINDINGS) {}
+
+  /**
+   * Replaces the key table.
+   *
+   * Held keys are *not* cleared: a player who rebinds mid-run is holding keys whose
+   * meaning has just changed, and the next `keyUp` still has to release whichever
+   * action they now belong to.
+   */
+  setBindings(bindings: Bindings): void {
+    this.bindings = bindings;
+  }
+
+  /** The table in force, for anything that has to describe it. */
+  get currentBindings(): Bindings {
+    return this.bindings;
+  }
 
   /** A key went down. Repeat events are ignored for queued UI actions. */
   keyDown(code: string, repeat = false): void {

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { button, el, setHidden } from '../../src/ui/dom.js';
 import { buildCrashReport, emptyEnvironment, emptyGameState, type CrashReport } from '../../src/diagnostics/crashReport.js';
+import { DEFAULT_SETTINGS } from '../../src/core/settings.js';
 import { GameUi, type UiCallbacks } from '../../src/ui/screens.js';
 
 function createReport(overrides: Partial<Parameters<typeof buildCrashReport>[0]> = {}): CrashReport {
@@ -48,12 +49,15 @@ function createUi(version = '0.0.0'): Harness {
       captured = report;
     }),
     onDownloadRecovered: vi.fn(),
+    onSettingsChange: vi.fn(),
+    onSettingsReset: vi.fn(),
   };
 
   const ui = new GameUi({
     root,
     version,
     levelName: 'Rooftop — Technical Demo',
+    settings: DEFAULT_SETTINGS,
     callbacks: calls,
   });
 

@@ -87,6 +87,8 @@ const CLOUD_LOW = hexColor('#6a4a7d');
 const CITY_GLOW = hexColor('#c06a86');
 const CITY_COOL = hexColor('#4d6fa8');
 const STARLIGHT = hexColor('#eef2ff');
+/** The other half of a star field: bright stars read cool, faint ones warm. */
+const STARLIGHT_WARM = hexColor('#ffe6c4');
 
 /** Smoothstep, for band edges that do not look like band edges. */
 function smoothstep(edge0: number, edge1: number, value: number): number {
@@ -128,8 +130,29 @@ function hash2(a: number, b: number): number {
 const STAR_COLUMNS = 190;
 const STAR_ROWS = 95;
 
-/** Fraction of cells that hold a star at all. */
-const STAR_PRESENCE = 0.42;
+/**
+ * Fraction of cells that hold a star at all.
+ *
+ * Lowered in V0.6 along with the radius: the field was dense enough, and the stars
+ * large enough, that it read as static rather than as a sky.
+ */
+const STAR_PRESENCE = 0.34;
+
+/**
+ * A star's radius, as a fraction of its cell.
+ *
+ * Small enough that a star covers one texel or two at the skybox's resolution, and
+ * that is the whole point: any larger and the radial falloff quantises on the texel
+ * grid into a plus sign, which the face projection then stretches into a dash. That
+ * is what the V0.5 field looked like - a shower of dashes rather than stars - and
+ * why these numbers are roughly a third of what they were. Sub-texel stars are
+ * rounded off by the sampler instead, which is exactly what a point of light should
+ * look like.
+ */
+const STAR_RADIUS = { min: 0.07, max: 0.16 } as const;
+
+/** Peak brightness of a star, before the falloff and the haze take their share. */
+const STAR_PEAK = { min: 0.34, max: 1 } as const;
 
 /** Brightness of the star at `(u, v)`, both in `[0, 1)`. */
 function starBrightness(u: number, v: number): number {
@@ -139,7 +162,9 @@ function starBrightness(u: number, v: number): number {
 
   const cellWidth = 1 / STAR_COLUMNS;
   const cellHeight = 1 / STAR_ROWS;
-  const radius = (0.14 + hash2(column + 977, row + 613) * 0.2) * Math.min(cellWidth, cellHeight);
+  const radius =
+    (STAR_RADIUS.min + hash2(column + 977, row + 613) * (STAR_RADIUS.max - STAR_RADIUS.min)) *
+    cellWidth;
   const marginX = radius / cellWidth;
   const marginY = radius / cellHeight;
   const starU = (column + marginX + hash2(column + 31, row + 17) * (1 - 2 * marginX)) * cellWidth;
@@ -147,13 +172,18 @@ function starBrightness(u: number, v: number): number {
 
   const dx = u - starU;
   const dy = v - starV;
-  // `sqrt` rather than `hypot`: it is exactly rounded (so the field is identical
-  // on every engine, which matters because the result feeds a hard threshold) and
-  // several times faster, which matters because this is per pixel.
+  // `sqrt` rather than `hypot`: it is exactly rounded (so the field is identical on
+  // every engine, which matters because the result feeds a hard threshold) and does
+  // less work, which matters because this is per pixel.
   const distance = Math.sqrt(dx * dx + dy * dy);
   if (distance >= radius) return 0;
+
+  // Squared, so most stars are faint and a few are bright: a field of equally bright
+  // points reads as noise, and a real sky is overwhelmingly dim stars.
+  const roll = hash2(column + 5, row + 41);
+  const peak = STAR_PEAK.min + roll * roll * (STAR_PEAK.max - STAR_PEAK.min);
   const falloff = 1 - distance / radius;
-  return (0.22 + 0.5 * hash2(column + 5, row + 41)) * falloff * falloff;
+  return peak * falloff * falloff;
 }
 
 export interface SkyOptions {
@@ -245,7 +275,12 @@ export function skyColorAt(direction: Vec3, options: SkyOptions = {}): RgbaColor
     const visibility =
       smoothstep(0.06, 0.26, elevation) * smoothstep(0.98, 0.86, elevation) * (1 - cloudAmount * 0.85);
     const brightness = starBrightness(u, v) * visibility * density;
-    if (brightness > 0) colour = mixColors(colour, STARLIGHT, Math.min(1, brightness * 1.6));
+    if (brightness > 0) {
+      // Blue-white when bright, warmer when faint - the way a real sky sorts itself
+      // by magnitude, and the reason a dense field does not look like one colour.
+      const tint = brightness > 0.55 ? STARLIGHT : STARLIGHT_WARM;
+      colour = mixColors(colour, tint, Math.min(1, brightness * 1.7));
+    }
   }
 
   return colour;

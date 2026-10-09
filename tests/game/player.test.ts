@@ -899,3 +899,96 @@ describe('collision-world wiring', () => {
 });
 
 export type { MoveInput };
+
+describe('the windows that forgive an imprecise input', () => {
+  /** A small platform whose top is at Y = 0, so the player can walk off its edge. */
+  const PLATFORM = collider('platform', vec3(0, -0.5, 0), vec3(6, 1, 6), 'floor');
+
+  /**
+   * Runs off the platform, then presses jump `delay` steps after leaving the ground.
+   *
+   * The first step is spent landing on the platform - a fresh player starts with
+   * `grounded` false - so the window only opens once they have actually stood on
+   * something and then left it.
+   */
+  function jumpAfterLeaving(delay: number): boolean {
+    let leftAt: number | null = null;
+    let wasGrounded = false;
+    let rose = false;
+
+    run(world(PLATFORM), {
+      steps: 60,
+      input: (step, state) => {
+        if (state.grounded) wasGrounded = true;
+        else if (wasGrounded && leftAt === null) leftAt = step;
+        return input({
+          forward: 1,
+          sprint: true,
+          jump: leftAt !== null && step === leftAt + delay,
+        });
+      },
+      onStep: (state) => {
+        if (state.velocity.y > 0.5) rose = true;
+      },
+    });
+    return rose;
+  }
+
+  it('lets a jump taken just after the edge count', () => {
+    // The player was watching their feet, not the edge. Two steps is 33 ms.
+    expect(jumpAfterLeaving(2)).toBe(true);
+  });
+
+  it('stops counting once the window has closed', () => {
+    // Twelve steps is 200 ms, comfortably past the twelve-hundredths window - and
+    // past the point where a jump reads as flight rather than as a late press.
+    expect(jumpAfterLeaving(12)).toBe(false);
+  });
+
+  it('holds a jump pressed just before landing until there is something to jump from', () => {
+    let bounced = false;
+    run(world(FLOOR), {
+      steps: 90,
+      spawn: spawnAt(0, 4, 0),
+      // Pressed in the last few centimetres of the fall, which is under two steps.
+      input: (_step, state) => input({ jump: state.position.y < 0.4 }),
+      onStep: (state, step) => {
+        if (step > 10 && state.velocity.y > 0.5) bounced = true;
+      },
+    });
+    expect(bounced).toBe(true);
+  });
+
+  it('forgets a jump pressed long before landing', () => {
+    // Pressed at the *top* of the fall, when the ground is still half a second away:
+    // by the time there is something to jump from, the press is long forgotten.
+    let bounced = false;
+    run(world(FLOOR), {
+      steps: 90,
+      spawn: spawnAt(0, 4, 0),
+      input: (_step, state) => input({ jump: state.position.y > 3.9 }),
+      onStep: (state, step) => {
+        if (step > 10 && state.velocity.y > 0.5) bounced = true;
+      },
+    });
+    expect(bounced).toBe(false);
+  });
+
+  it('does not hand out a second jump when the first one left the ground', () => {
+    // Holding jump re-triggered through the newly-opened coyote window the instant
+    // the ground was left, which doubled the height of every jump in the game.
+    let apex = 0;
+    run(world(FLOOR), {
+      steps: 200,
+      // Held, so the player hops for the whole run: the apex of each hop is what
+      // this is about, not where they happen to be when it ends.
+      input: () => input({ jump: true }),
+      onStep: (current) => {
+        apex = Math.max(apex, current.position.y);
+      },
+    });
+
+    expect(apex).toBeGreaterThan(JUMP_APEX * 0.9);
+    expect(apex).toBeLessThan(JUMP_APEX * 1.15);
+  });
+});

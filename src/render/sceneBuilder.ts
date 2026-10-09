@@ -51,6 +51,23 @@ export interface BuiltScene {
   readonly collectibles: ReadonlyMap<string, THREE.Object3D>;
   /** Every smoke sprite, with its emitter, for the animation pass. */
   readonly smoke: readonly SmokeEmitterMesh[];
+  /**
+   * The scene's point lights.
+   *
+   * Kept so a graphics preset can drop some of them: they are the most expensive
+   * thing in the scene to leave on (each one is a per-pixel loop iteration in every
+   * lit fragment), and on a low preset the lamps are the first thing to go.
+   */
+  readonly lamps: readonly THREE.PointLight[];
+  /**
+   * Every material the scene owns, keyed by the surface (or part) that uses it.
+   *
+   * Exposed because a graphics change is not only a renderer change: switching
+   * shadows on or off alters which shader program a material compiles to, and
+   * three.js will happily keep using the old one until something marks each of
+   * these dirty.
+   */
+  readonly materials: ReadonlyMap<string, THREE.Material>;
   /** The city skyline, when one was built. */
   readonly backdrop: THREE.Mesh | null;
   dispose(): void;
@@ -65,7 +82,9 @@ const SUN_DISTANCE = 160;
  * V0.5 widened it from 62 to cover the whole district rather than only the home
  * roof: the works level runs out to x = 105, and a lift ride that crosses out of
  * the shadow volume is a shadow that disappears halfway. The cost is resolution -
- * 220 m across 2048 texels rather than 124 - which the soft shadow filter hides.
+ * 220 m across the shadow map - which is why the map is sized by the graphics
+ * preset rather than fixed: 2048 texels is 10.7 cm per texel, and 4096 is 5.4 cm,
+ * which is the difference between a chunky shadow edge and a clean one.
  */
 const SHADOW_EXTENT = 110;
 
@@ -88,8 +107,52 @@ export function buildScene(
     environment.fogFar,
   );
 
-  const geometries: THREE.BufferGeometry[] = [];
+  /** Geometries built outside the box cache (the goal pad and beam). */
+  const looseGeometries: THREE.BufferGeometry[] = [];
   const materials = new Map<string, THREE.Material>();
+  /**
+   * Box geometries, keyed by everything that determines one.
+   *
+   * V0.6's optimisation pass, and the largest single win available in this scene.
+   * A prop is built from parts, and parts repeat: every `band()` trim on a 0.6 m
+   * slab is the same box with the same texture scale, on every prop that has one.
+   * Building each one separately means hundreds of identical vertex buffers, each
+   * uploaded and held separately, for geometry that is *identical* - not merely
+   * similar. Keying the cache on the exact inputs (size, tile size, UV scale) makes
+   * sharing exact rather than approximate, so nothing renders differently.
+   *
+   * Because the key is the full tuple, this can only ever merge parts that would
+   * have produced byte-identical geometry.
+   */
+  const geometryCache = new Map<string, THREE.BufferGeometry>();
+
+  const boxGeometry = (
+    width: number,
+    height: number,
+    depth: number,
+    metresPerTile: number,
+    u: readonly number[],
+    v: readonly number[],
+  ): THREE.BufferGeometry => {
+    const key = `${width}|${height}|${depth}|${metresPerTile}|${u.join(',')}|${v.join(',')}`;
+    const cached = geometryCache.get(key);
+    if (cached) return cached;
+
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    scaleBoxUvs(geometry, metresPerTile, { u: u as number[], v: v as number[] });
+    geometryCache.set(key, geometry);
+    return geometry;
+  };
+
+  /** The UV scales a box of this size wants, in three.js's face order. */
+  const uvScales = (
+    width: number,
+    height: number,
+    depth: number,
+  ): { u: number[]; v: number[] } => ({
+    u: [depth, depth, width, width, width, width],
+    v: [height, height, depth, depth, height, height],
+  });
   const meshes = new Map<string, THREE.Mesh[]>();
 
   const materialFor = (surfaceId: string, tint: string): THREE.MeshLambertMaterial => {
@@ -144,12 +207,8 @@ export function buildScene(
 
       const surface = surfaceById(entry.surface);
       const metresPerTile = surface?.metresPerTile ?? 2;
-      const geometry = new THREE.BoxGeometry(width, height, depth);
-      scaleBoxUvs(geometry, metresPerTile, {
-        u: [depth, depth, width, width, width, width],
-        v: [height, height, depth, depth, height, height],
-      });
-      geometries.push(geometry);
+      const scales = uvScales(width, height, depth);
+      const geometry = boxGeometry(width, height, depth, metresPerTile, scales.u, scales.v);
 
       const mesh = new THREE.Mesh(geometry, materialFor(entry.surface, surface?.tint ?? '#8a8f99'));
       mesh.position.set(
@@ -183,15 +242,11 @@ export function buildScene(
       const tint = prop.tints?.[surfaceId] ?? surface?.tint ?? '#8a8f99';
       const metresPerTile = surface?.metresPerTile ?? 2;
 
-      const geometry = new THREE.BoxGeometry(width, height, depth);
       // Repeat the texture in *world* space by pre-scaling the UVs, so a texture
       // keeps a constant physical size however big the part is. UVs are stored
       // four vertices per face, in the order +X, -X, +Y, -Y, +Z, -Z.
-      scaleBoxUvs(geometry, metresPerTile, {
-        u: [depth, depth, width, width, width, width],
-        v: [height, height, depth, depth, height, height],
-      });
-      geometries.push(geometry);
+      const scales = uvScales(width, height, depth);
+      const geometry = boxGeometry(width, height, depth, metresPerTile, scales.u, scales.v);
 
       const mesh = new THREE.Mesh(geometry, materialFor(surfaceId, tint));
       mesh.position.set(
@@ -302,7 +357,7 @@ export function buildScene(
 
     const padGeometry = new THREE.BoxGeometry(2.6, 0.16, 2.6);
     const beamGeometry = new THREE.BoxGeometry(1.8, 6, 1.8);
-    geometries.push(padGeometry, beamGeometry);
+    looseGeometries.push(padGeometry, beamGeometry);
 
     const pad = new THREE.Mesh(padGeometry, padMaterial);
     pad.position.set(goal.position.x, goal.position.y + 0.08, goal.position.z);
@@ -394,12 +449,14 @@ export function buildScene(
   // ---------------------------------------------------------- scene lights
   // Interior lamps and sign glow. These cast no shadows: a point light shadow is
   // a cube map per light, and the demo's look does not need one.
+  const lamps: THREE.PointLight[] = [];
   for (const light of definition.lights ?? []) {
     const point = new THREE.PointLight(new THREE.Color(light.color), light.intensity, light.distance);
     point.position.set(light.position.x, light.position.y, light.position.z);
     point.name = light.id;
     point.castShadow = false;
     scene.add(point);
+    lamps.push(point);
   }
 
   // --------------------------------------------------------- city backdrop
@@ -422,10 +479,13 @@ export function buildScene(
     lifts,
     collectibles,
     smoke,
+    lamps,
+    materials,
     backdrop,
     dispose(): void {
       scene.clear();
-      for (const geometry of geometries) geometry.dispose();
+      for (const geometry of geometryCache.values()) geometry.dispose();
+      for (const geometry of looseGeometries) geometry.dispose();
       for (const material of materials.values()) material.dispose();
       disposeRenderable(grid);
       if (backdrop) disposeRenderable(backdrop);

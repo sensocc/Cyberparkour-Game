@@ -31,7 +31,9 @@ import {
   renderLanding,
   renderMusic,
   pitchStep,
+  renderCheckpoint,
   renderPickup,
+  renderUiClick,
   renderScrape,
   renderWhoosh,
   rmsOf,
@@ -164,6 +166,9 @@ describe('every sound is a usable buffer', () => {
     ['hurt', renderHurt],
     ['death', renderDeath],
     ['music', renderMusic],
+    ['complete', renderComplete],
+    ['checkpoint', renderCheckpoint],
+    ['ui click', renderUiClick],
   ];
 
   it.each(sounds)('%s is finite, in range and audible', (_name, render) => {

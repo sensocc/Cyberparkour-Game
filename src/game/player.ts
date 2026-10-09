@@ -188,6 +188,14 @@ export interface PlayerState {
   bobPhase: number;
   /** Head-bob amplitude multiplier, 0..1, faded in and out. */
   bobAmount: number;
+  /**
+   * Seconds since the player was last on the ground, for coyote time.
+   *
+   * `Infinity` closes the window, and is what a jump sets: see `updateJumpWindows`.
+   */
+  coyote: number;
+  /** Seconds a jump press stays remembered, counting down, for the jump buffer. */
+  jumpBuffer: number;
   /** The level's own spawn point, which never changes. */
   readonly spawn: { position: Vec3; yaw: number; pitch: number };
   /**
@@ -213,7 +221,7 @@ export interface PlayerStepOptions {
   readonly world: CollisionWorld;
   readonly config: PlayerConfig;
   /** The manoeuvre, head-bob, fall-damage and checkpoint tuning. */
-  readonly game: Pick<GameConfig, 'maneuver' | 'headBob' | 'fallDamage' | 'checkpoint'>;
+  readonly game: Pick<GameConfig, 'maneuver' | 'headBob' | 'fallDamage' | 'checkpoint' | 'feel'>;
   /** Checkpoints to watch for, in route order. */
   readonly checkpoints?: readonly CheckpointDefinition[];
   /** Ids of colliders that can be climbed. */
@@ -305,6 +313,11 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     peakFallSpeed: 0,
     bobPhase: 0,
     bobAmount: 0,
+    // Closed until the player has actually stood on something: a player who starts
+    // in mid-air has not "just left the ground", and must not be given a jump for
+    // it. The first step on a deck opens it.
+    coyote: Number.POSITIVE_INFINITY,
+    jumpBuffer: 0,
     spawn: { position: spawnPosition, yaw: spawn.yaw, pitch: spawn.pitch },
     respawn: {
       position: vec3(spawnPosition.x, spawnPosition.y, spawnPosition.z),
@@ -407,6 +420,8 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.peakFallSpeed = 0;
   state.bobPhase = 0;
   state.bobAmount = 0;
+  state.coyote = Number.POSITIVE_INFINITY;
+  state.jumpBuffer = 0;
   state.wallId = null;
   state.wallRunElapsed = 0;
   state.wallJumpId = null;
@@ -848,6 +863,34 @@ function tryPipe(state: PlayerState, input: MoveInput, options: PlayerStepOption
 
 // ---------------------------------------------------------------- locomotion
 
+/**
+ * Advances the coyote and jump-buffer windows.
+ *
+ * One rule, two directions: the buffer is *set* by a press and counts down, and the
+ * coyote window is *cleared* by the ground and counts up. A jump is allowed when
+ * both are open, which is what makes "pressed just before landing" and "pressed
+ * just after walking off" both work - and what makes them stop working the moment
+ * the player has clearly missed their chance.
+ */
+function updateJumpWindows(
+  state: PlayerState,
+  input: MoveInput,
+  dt: number,
+  feel: { coyoteSeconds: number; jumpBufferSeconds: number },
+): void {
+  if (state.grounded) state.coyote = 0;
+  // `Infinity` is the closed window: a player who left the ground by *jumping* has
+  // spent their jump, and must not be handed a second one by the same forgiveness
+  // that covers stepping off a ledge. (Doubling the apex of every jump is exactly
+  // what that mistake looks like.)
+  else state.coyote += dt;
+
+  // A held key keeps the buffer open, which is what makes holding jump hop on
+  // every landing rather than only on the first.
+  if (input.jump) state.jumpBuffer = feel.jumpBufferSeconds;
+  else state.jumpBuffer = Math.max(0, state.jumpBuffer - dt);
+}
+
 function stepLocomotion(
   state: PlayerState,
   input: MoveInput,
@@ -904,11 +947,28 @@ function stepLocomotion(
     }
   }
 
-  if (state.grounded && !state.sliding) {
-    if (state.velocity.y < 0) state.velocity.y = 0;
-    if (input.jump) state.velocity.y = config.jumpSpeed;
-  } else if (state.alive && tryWallJump(state, input, options)) {
+  // The two forgiveness windows. Both are seconds, and both are reset by the thing
+  // they forgive: the coyote window opens when the ground is left, and a buffered
+  // press is remembered until it is spent.
+  updateJumpWindows(state, input, dt, options.game.feel);
+
+  if (state.grounded && !state.sliding && state.velocity.y < 0) state.velocity.y = 0;
+
+  const jumpWanted = state.jumpBuffer > 0 && !state.sliding;
+  const jumpAllowed = state.grounded || state.coyote <= options.game.feel.coyoteSeconds;
+
+  if (!state.grounded && state.alive && tryWallJump(state, input, options)) {
+    // A wall kick wins over a coyote jump: the player is holding a wall, and that
+    // is the more specific thing they can possibly mean by pressing jump.
     started = 'wall-jump';
+  } else if (jumpWanted && jumpAllowed) {
+    state.velocity.y = config.jumpSpeed;
+    state.jumpBuffer = 0;
+    state.coyote = Number.POSITIVE_INFINITY;
+  } else if (state.grounded) {
+    // Standing on something and not jumping: the ground holds them up. This branch
+    // has to exist even though it does nothing, because falling into the gravity
+    // case below would push a standing player down through the floor every step.
   } else if (state.wallId !== null) {
     // Running a wall is still a fall, just a slow one: gravity at a fraction of
     // its strength, so a wall run carries you across a gap rather than holding
