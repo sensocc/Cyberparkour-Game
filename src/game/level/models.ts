@@ -34,6 +34,14 @@ export interface ModelDefinition {
   readonly id: string;
   /** Human-facing note about which way the model is oriented. */
   readonly note?: string;
+  /**
+   * Whether the model hangs on a wall rather than standing on something.
+   *
+   * A flag rather than a list of ids in every test that needs it: mounted props do
+   * not follow the "stacked on a top face" rule that the rest of the district does, so
+   * anything that checks that rule has to be able to ask.
+   */
+  readonly mounted?: boolean;
   readonly parts: readonly ModelPart[];
 }
 
@@ -305,6 +313,7 @@ const barrier: ModelDefinition = {
 
 const neonSign: ModelDefinition = {
   id: 'neon-sign',
+  mounted: true,
   note: 'A lit sign panel on a frame. The glowing face is +Z.',
   parts: [
     // The dark housing, so a sign is a solid object and not a floating plane.
@@ -315,6 +324,75 @@ const neonSign: ModelDefinition = {
     part([0.06, 0.06, 0.72], [0.94, 0.94, 1], 'neon'),
     // A bracket on the back, for mounting to a facade.
     part([0.36, 0.36, -0.22], [0.64, 0.64, 0], 'metal-dark'),
+  ],
+};
+
+/**
+ * A wide fascia light: one long tube in a slim housing with capped ends.
+ *
+ * `neon-sign` is a *panel*, and a district of panels is a district of the same sign
+ * at different sizes. V0.6.1 added this and the three below so the signage has
+ * silhouettes as well as colours: a bar for a shopfront, a blade for the corner of a
+ * building, a frame for a facade, a badge for a doorway.
+ */
+const neonBar: ModelDefinition = {
+  id: 'neon-bar',
+  mounted: true,
+  note: 'A wide light bar with capped ends. The glowing face is +Z.',
+  parts: [
+    part([0, 0, 0], [1, 1, 0.6], 'metal-dark'),
+    part([0.04, 0.24, 0.6], [0.96, 0.76, 0.92], 'neon'),
+    part([0, 0.08, 0.6], [0.04, 0.92, 1], 'metal'),
+    part([0.96, 0.08, 0.6], [1, 0.92, 1], 'metal'),
+    // Brackets, so the bar stands off the wall rather than being glued to it.
+    part([0.16, 0.34, -0.16], [0.26, 0.66, 0], 'metal-dark'),
+    part([0.74, 0.34, -0.16], [0.84, 0.66, 0], 'metal-dark'),
+  ],
+};
+
+/**
+ * A projecting blade: the tall sign on the corner of a building.
+ *
+ * The blade itself is inset in X, so a prop sized 2 x 6 m gives a 1.2 m blade standing
+ * a metre off the facade rather than a 2 m slab against it.
+ */
+const neonBlade: ModelDefinition = {
+  id: 'neon-blade',
+  mounted: true,
+  note: 'A tall projecting blade on a bracket. The glowing face is +Z.',
+  parts: [
+    part([0.2, 0, 0], [0.8, 1, 0.5], 'metal-dark'),
+    part([0.26, 0.05, 0.5], [0.74, 0.95, 0.74], 'neon'),
+    // The arm that carries it, reaching back to the wall.
+    part([0.34, 0.86, -0.42], [0.66, 1, 0], 'metal'),
+    part([0.28, 0.8, -0.12], [0.72, 1, 0.06], 'metal-dark'),
+  ],
+};
+
+/** A neon tube frame: four lit bars round a dark backing, so the wall shows through. */
+const neonFrame: ModelDefinition = {
+  id: 'neon-frame',
+  mounted: true,
+  note: 'A tube frame round a dark backing. The glowing face is +Z.',
+  parts: [
+    part([0, 0, 0], [1, 1, 0.34], 'metal-dark'),
+    part([0, 0, 0.34], [1, 0.14, 0.6], 'neon'),
+    part([0, 0.86, 0.34], [1, 1, 0.6], 'neon'),
+    part([0, 0.14, 0.34], [0.14, 0.86, 0.6], 'neon'),
+    part([0.86, 0.14, 0.34], [1, 0.86, 0.6], 'neon'),
+    part([0.44, 0.44, -0.16], [0.56, 0.56, 0], 'metal-dark'),
+  ],
+};
+
+/** A badge: a lit rim round a dark centre, for a doorway or a hatch. */
+const neonBadge: ModelDefinition = {
+  id: 'neon-badge',
+  mounted: true,
+  note: 'A small badge with a lit rim and a dark centre. The glowing face is +Z.',
+  parts: [
+    part([0, 0, 0], [1, 1, 0.4], 'metal-dark'),
+    part([0, 0, 0.4], [1, 1, 0.62], 'neon'),
+    part([0.18, 0.18, 0.62], [0.82, 0.82, 0.72], 'metal-dark'),
   ],
 };
 
@@ -337,6 +415,7 @@ const doorPanel: ModelDefinition = {
 
 const neonStrip: ModelDefinition = {
   id: 'neon-strip',
+  mounted: true,
   note: 'A neon tube on a slim housing: lit all round, so it works flat or on a wall.',
   parts: [
     part([0, 0, 0], [1, 1, 1], 'neon'),
@@ -391,6 +470,10 @@ const MODELS: readonly ModelDefinition[] = [
   skylight,
   barrier,
   neonSign,
+  neonBar,
+  neonBlade,
+  neonFrame,
+  neonBadge,
   doorPanel,
   neonStrip,
   liftPlatform,
@@ -398,6 +481,11 @@ const MODELS: readonly ModelDefinition[] = [
 ];
 
 const BY_ID = new Map(MODELS.map((model) => [model.id, model]));
+
+/** Whether a prop of this model hangs on a wall. */
+export function isMountedModel(id: string): boolean {
+  return BY_ID.get(id)?.mounted === true;
+}
 
 export function modelById(id: string): ModelDefinition | undefined {
   return BY_ID.get(id);

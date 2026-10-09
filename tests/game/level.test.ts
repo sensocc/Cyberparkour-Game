@@ -19,7 +19,7 @@ import {
   type PropDefinition,
 } from '../../src/game/level/levelData.js';
 import { standingSize } from '../../src/game/player.js';
-import { modelById } from '../../src/game/level/models.js';
+import { isMountedModel, modelById } from '../../src/game/level/models.js';
 import { surfaceById, ACOUSTIC_MATERIALS } from '../../src/game/level/surfaces.js';
 
 /** The manoeuvre bands, as the level design reasons about them. */
@@ -183,9 +183,7 @@ describe('the shipped demo roof', () => {
     // neither is stacked on anything. The flush-underside rule cannot see a wall:
     // a sign shares no *top* face with what holds it up.
     const mounted = new Set(
-      DEMO_DISTRICT.props
-        .filter((entry) => entry.model === 'neon-sign' || entry.model === 'neon-strip')
-        .map((entry) => entry.id),
+      DEMO_DISTRICT.props.filter((entry) => isMountedModel(entry.model)).map((entry) => entry.id),
     );
 
     const unsupported: string[] = [];
@@ -759,13 +757,26 @@ describe('the V0.4 interiors, doors, signage and pipes', () => {
   });
 
   it('hangs every sign on a surface that lights itself', () => {
-    const signs = DEMO_DISTRICT.props.filter((entry) => entry.model === 'neon-sign');
-    expect(signs.length).toBeGreaterThanOrEqual(3);
+    const signs = DEMO_DISTRICT.props.filter((entry) => isMountedModel(entry.model));
+    expect(signs.length).toBeGreaterThanOrEqual(8);
     for (const entry of signs) {
       const model = modelById(entry.model);
       const lit = (model?.parts ?? []).filter((part) => surfaceById(part.surface)?.emissive === true);
       expect(lit.length, entry.id).toBeGreaterThan(0);
     }
+  });
+
+  it('hangs signs in more than one shape', () => {
+    // V0.6.1: a district whose every sign is the same panel in a different colour is a
+    // district with one sign. The silhouettes have to differ, not just the tints.
+    const signs = DEMO_DISTRICT.props.filter((entry) => isMountedModel(entry.model));
+    const models = new Set(signs.map((entry) => entry.model));
+    const tints = new Set(signs.flatMap((entry) => Object.values(entry.tints ?? {})));
+    const sizes = new Set(signs.map((entry) => `${entry.size.x}x${entry.size.y}`));
+
+    expect(models.size, [...models].join(', ')).toBeGreaterThanOrEqual(4);
+    expect(tints.size, [...tints].join(', ')).toBeGreaterThanOrEqual(5);
+    expect(sizes.size).toBeGreaterThanOrEqual(6);
   });
 
   it('gives the pipe a roof to top out onto', () => {
@@ -903,10 +914,8 @@ describe('the V0.5 works level, lifts and the run', () => {
   });
 
   it('lights the district with bands and signs, not only the rooms', () => {
-    const lit = DEMO_DISTRICT.props.filter(
-      (entry) => entry.model === 'neon-sign' || entry.model === 'neon-strip',
-    );
-    expect(lit.length).toBeGreaterThanOrEqual(8);
+    const lit = DEMO_DISTRICT.props.filter((entry) => isMountedModel(entry.model));
+    expect(lit.length).toBeGreaterThanOrEqual(12);
 
     for (const entry of lit) {
       const model = modelById(entry.model);
@@ -923,37 +932,56 @@ describe('the V0.5 works level, lifts and the run', () => {
   });
 });
 
-describe('the mounted neon', () => {
+describe('surfaces that share a plane', () => {
   /**
-   * Two lit faces at the same depth and covering the same pixels are the one
-   * arrangement a depth buffer cannot resolve: the test is a tie, so which surface
-   * wins is decided by rounding, and the pair speckles and crawls as the camera
-   * moves. Every mounted plate therefore needs a standoff of its own.
+   * Two faces at the same depth, covering the same pixels, are the one arrangement a
+   * depth buffer cannot resolve: the test ties, rounding decides, and the pair shimmers
+   * whenever the camera moves. It is the flicker that is hardest to diagnose, because
+   * nothing is drawn wrongly - the surfaces are simply in the same place, and a level
+   * built out of boxes puts them in the same place constantly.
    *
-   * (A plate a few millimetres in front of the wall behind it is *not* a problem -
-   * its rear face points away from the camera and is culled - so the gap to the
-   * wall is a look decision. The gap to another plate is a bug.)
+   * The tolerance is the depth resolution at the far corner of the district: with a
+   * 0.1 m near plane and a 1200 m far plane, a 24-bit buffer separates about 1.3 cm at
+   * 150 m. Anything closer together than that, anywhere in the level, is a flicker
+   * waiting for a camera to move.
+   *
+   * Only the vertical axes are checked. Coincident *horizontal* faces are either
+   * facing down onto a floor or covered by a roof: the machine rooms' walls share
+   * their top plane with each other and with the roof over them, and none of that is
+   * ever on screen.
    */
-  const PLANE_TOLERANCE = 0.02;
+  const PLANE_TOLERANCE = 0.015;
 
   const spans = (a: number, b: number): readonly [number, number] => [a, b];
   const overlap = (a: readonly [number, number], b: readonly [number, number]): boolean =>
     a[0] < b[1] && b[0] < a[1];
+  const facesOverlap = (a: number, b: number, other: number, otherEnd: number): boolean =>
+    overlap(spans(a, b), spans(other, otherEnd));
 
-  it('hangs no two plates on the same plane', () => {
+  it('draws no two faces on the same plane, anywhere in the district', () => {
     const built = buildLevel(DEMO_DISTRICT, BUILD_OPTIONS);
-    const plates = built.colliders.filter((collider) => /^(sign|strip)-/.test(collider.id));
-    expect(plates.length).toBeGreaterThan(0);
+    expect(built.colliders.length).toBeGreaterThan(50);
 
     const clashes: string[] = [];
-    for (let i = 0; i < plates.length; i += 1) {
-      for (let j = i + 1; j < plates.length; j += 1) {
-        const a = plates[i]!;
-        const b = plates[j]!;
-        if (!overlap(spans(a.box.min.x, a.box.max.x), spans(b.box.min.x, b.box.max.x))) continue;
-        if (!overlap(spans(a.box.min.y, a.box.max.y), spans(b.box.min.y, b.box.max.y))) continue;
-        if (Math.abs(a.box.max.z - b.box.max.z) < PLANE_TOLERANCE) {
-          clashes.push(`${a.id} and ${b.id} both light the plane z=${a.box.max.z.toFixed(3)}`);
+    for (let i = 0; i < built.colliders.length; i += 1) {
+      for (let j = i + 1; j < built.colliders.length; j += 1) {
+        const a = built.colliders[i]!;
+        const b = built.colliders[j]!;
+        // Only pairs that are beside each other in plan: two props at opposite ends of
+        // the district cannot flicker against each other whatever their faces do.
+        if (!facesOverlap(a.box.min.y, a.box.max.y, b.box.min.y, b.box.max.y)) continue;
+
+        for (const axis of ['x', 'z'] as const) {
+          const other = axis === 'x' ? ('z' as const) : ('x' as const);
+          if (!facesOverlap(a.box.min[other], a.box.max[other], b.box.min[other], b.box.max[other])) continue;
+
+          const gap = Math.min(
+            Math.abs(a.box.max[axis] - b.box.max[axis]),
+            Math.abs(a.box.min[axis] - b.box.min[axis]),
+          );
+          if (gap < PLANE_TOLERANCE) {
+            clashes.push(`${a.id} and ${b.id} share a ${axis} plane (${(gap * 1000).toFixed(1)} mm)`);
+          }
         }
       }
     }

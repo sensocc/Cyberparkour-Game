@@ -5,66 +5,69 @@
 A low-poly, Quake-styled **first-person parkour game** set in a cyberpunk city,
 in the spirit of *Mirror's Edge*.
 
-This repository currently contains **V0.6**. V0.3 made the roof a route, V0.4 took
+This repository currently contains **V0.6.1**. V0.3 made the roof a route, V0.4 took
 the route indoors, and V0.5 made it a **level**: nine roofs on two levels, joined by
 two lifts so the district closes into a loop rather than running out at one end, with
 eight pickups strung along the way, a finish line that only opens when the route is
 behind you, and a clock.
 
-V0.6 is the **polish pass**. It gives the player a body — chest, arms, legs, and a
-shadow on the roof — a settings screen that remembers what you chose, a camera that
-answers the running instead of only following it, and the two windows of forgiveness
-that make a jump land when you meant it. It also fixed what actually *running* the
-game turned up: a star field that looked like a shower of dashes, a shadow filter
-three.js had removed out from under the demo, a debug overlay on by default, a title
-screen that insisted it was a different version, and a hundred and sixty vertex
-buffers that were byte-identical to one another.
+V0.6 was the **polish pass**: a body of your own with a shadow under it, a settings
+screen that remembers what you chose, a camera that answers the running, and the two
+windows of forgiveness that make a jump land when you meant it.
+
+**V0.6.1 fixes three things that playing it turned up.** The body's animation was
+jerky, because every pose change snapped from one angle to another in a single frame.
+Neon signage was one panel in six colours, so the district had one sign rather than
+five kinds of sign. And a handful of surfaces were drawn on each other's planes —
+two faces at one depth, which is the one thing a depth buffer cannot resolve — so the
+level shimmered wherever they overlapped.
 
 ---
 
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.6 delivers](#what-v06-delivers)
-3. [What V0.5 delivered](#what-v05-delivered)
-4. [Quick start](#quick-start)
-5. [Controls](#controls)
-6. [What you should see](#what-you-should-see)
-7. [Settings](#settings)
-8. [Camera effects](#camera-effects)
-9. [Feel](#feel)
-10. [Your body](#your-body)
-11. [Optimisation](#optimisation)
-12. [Locomotion](#locomotion)
-13. [The movement state machine](#the-movement-state-machine)
-14. [The manoeuvre bands](#the-manoeuvre-bands)
-15. [Wall running](#wall-running)
-16. [Wall jumping](#wall-jumping)
-17. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-18. [The landing roll](#the-landing-roll)
-19. [Pipe climbing](#pipe-climbing)
-20. [Interiors and doors](#interiors-and-doors)
-21. [Lifts](#lifts)
-22. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-23. [Checkpoints and respawn](#checkpoints-and-respawn)
-24. [The district](#the-district)
-25. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-26. [Neon](#neon)
-27. [Fall damage and health](#fall-damage-and-health)
-28. [Models and surfaces](#models-and-surfaces)
-29. [Sound](#sound)
-30. [How the textures are made](#how-the-textures-are-made)
-31. [Architecture](#architecture)
-32. [How a frame works](#how-a-frame-works)
-33. [Collision](#collision)
-34. [Crash reporting](#crash-reporting)
-35. [The HUDs](#the-huds)
-36. [Testing](#testing)
-37. [Continuous integration](#continuous-integration)
-38. [Project layout](#project-layout)
-39. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-40. [Out of scope for V0.6](#out-of-scope-for-v06)
-41. [Roadmap](#roadmap)
+2. [What V0.6.1 fixes](#what-v061-fixes)
+3. [What V0.6 delivers](#what-v06-delivers)
+4. [What V0.5 delivered](#what-v05-delivered)
+5. [Quick start](#quick-start)
+6. [Controls](#controls)
+7. [What you should see](#what-you-should-see)
+8. [Settings](#settings)
+9. [Camera effects](#camera-effects)
+10. [Feel](#feel)
+11. [Your body](#your-body)
+12. [Optimisation](#optimisation)
+13. [Locomotion](#locomotion)
+14. [The movement state machine](#the-movement-state-machine)
+15. [The manoeuvre bands](#the-manoeuvre-bands)
+16. [Wall running](#wall-running)
+17. [Wall jumping](#wall-jumping)
+18. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+19. [The landing roll](#the-landing-roll)
+20. [Pipe climbing](#pipe-climbing)
+21. [Interiors and doors](#interiors-and-doors)
+22. [Lifts](#lifts)
+23. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+24. [Checkpoints and respawn](#checkpoints-and-respawn)
+25. [The district](#the-district)
+26. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+27. [Neon](#neon)
+28. [Fall damage and health](#fall-damage-and-health)
+29. [Models and surfaces](#models-and-surfaces)
+30. [Sound](#sound)
+31. [How the textures are made](#how-the-textures-are-made)
+32. [Architecture](#architecture)
+33. [How a frame works](#how-a-frame-works)
+34. [Collision](#collision)
+35. [Crash reporting](#crash-reporting)
+36. [The HUDs](#the-huds)
+37. [Testing](#testing)
+38. [Continuous integration](#continuous-integration)
+39. [Project layout](#project-layout)
+40. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+41. [Out of scope for V0.6.1](#out-of-scope-for-v061)
+42. [Roadmap](#roadmap)
 
 ---
 
@@ -72,15 +75,15 @@ buffers that were byte-identical to one another.
 
 | | |
 | --- | --- |
-| Version | `0.6.0` |
+| Version | `0.6.1` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1047 across 39 files |
+| Tests | 1053 across 39 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.6 is finished and frozen. Nothing from V0.7 onward is implemented, and none of it
+V0.6.1 is finished and frozen. Nothing from V0.7 onward is implemented, and none of it
 is stubbed.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
@@ -88,6 +91,54 @@ is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *start
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.6.1 fixes
+
+**The body moved like a slideshow.** Every angle in `render/playerModel.ts` was set
+outright each frame, so a change of pose was a cut: an arm snapped from a walk swing
+to a vault reach in one frame, and the hip bob rode `|sin|`, whose kink at the bottom
+of every step is a jolt through the whole body. Angles are now *targets* that each
+joint travels towards — eased, and capped at a top speed — which makes a change of
+mode continuous and gives the limbs weight. The ceilings are ordered the way a body
+is: hips settle fastest, then the torso, then the limbs out to the hands.
+
+The stride was slowed by about a fifth at the same time (6.4 m at a walk rather than
+5, 8.6 at a sprint), which is a leg cycle of 1.2 Hz rather than 1.5 — the difference
+between a run and a scuttle at the speed this game moves. The camera's bob rides the
+same stride, so that calmed with it.
+
+**Surfaces were drawn on each other's planes.** Two faces at the same depth, covering
+the same pixels, are the one arrangement a depth buffer cannot resolve: the test ties,
+rounding decides, and the pair shimmers whenever the camera moves. The district had
+**thirty** of them, in four families, and each is fixed where it was authored rather
+than by nudging the result:
+
+| Where | What it was | The fix |
+| --- | --- | --- |
+| The machine rooms | The back wall spanned the room's whole outside, so its outer face was on exactly the same plane as each side wall's — a flickering seam down both outer corners | The back wall now fits *between* the side walls. The room is identical; the corner is formed by the side walls |
+| Every doorway | The jambs were the same thickness as the wall, so the two front faces shared a plane along the whole reveal | The jambs are 6 cm thinner, which is both what a doorway does and 3 cm a side of clearance |
+| The stacked crates | Two crates of exactly the same footprint put all four side faces on each other's planes | The upper one is 6 cm smaller, as a crate on top of a crate is |
+| The works level | Duct supports that were the same width as the duct, two pipe runs ending exactly on a deck edge, and the climbable pipe finishing exactly level with the machine room's roof | Supports are 4 cm narrower and tucked in past the duct's ends; the pipe run stops short of the deck edge; the pipe's head stands 4 cm *proud* of the roof rather than level with it |
+
+That last one had a false start worth recording: shortening the pipe by 4 cm fixes the
+flicker and *breaks the climb*, because the top-out step has to land on a surface at
+the pipe's own head — with the head below the roof there is nothing to stand on up
+there and the climber is left hanging. Proud rather than short, and the note is in the
+level data so the next person does not shorten it again.
+
+The test that guards all this is `surfaces that share a plane`, and it is general: no
+two faces anywhere in the district may be within the depth buffer's resolution at the
+level's far corner. It is what found the thirty, and it will find the thirty-first.
+
+**Every sign was the same sign.** Six panels in three colours at three sizes, and the
+district read as though everything had been bought in one order. There are now five
+shapes — the original panel, a wide fascia **bar**, a projecting **blade**, a tube
+**frame** that lets the wall show through, and a small **badge** — hung at ten
+positions in six colours and seven size combinations. The lit part of each is
+emissive in its own tint, which a test now checks per sign rather than per model, so
+a new sign whose glowing face is not actually glowing fails rather than shipping.
 
 ---
 
@@ -357,6 +408,11 @@ from the player state each frame — a gait phase, how much stride to apply, whi
 the arms should be reaching, a lean — and `render/playerModel.ts` turns that into
 angles. The split is what makes the animation testable in Node: the decisions are
 pure, and the renderer only has to know what "reach" looks like.
+
+Every angle is a *target* that the joint travels towards, eased and capped at a top
+speed, so a change of pose is a movement rather than a cut and the limbs carry weight.
+The caps are ordered the way a body is: hips fastest, then the torso, then the legs and
+out to the hands.
 
 The pose is derived, not keyframed, which has two consequences worth having:
 
@@ -727,9 +783,11 @@ V0.4 had signs. V0.5 puts the district's light on the *buildings* as well:
 - **Lit bands** (`neon-strip`) across the canyon facade, along a machine room's
   front, and along a works roof — a neon tube on a slim housing, lit all round, so
   it works flat on a deck or mounted on a wall.
-- **Signs on the towers north of the district** (`neon-sign`), which is a
-  constraint worth knowing: a sign glows out of its front face, so only a facade
-  facing back towards the roofs will read.
+- **Signs on the towers north of the district**, in five shapes: a lit panel, a wide
+  fascia bar with capped ends, a tall projecting blade on a bracket, a tube frame round
+  a dark backing, and a small badge with a lit rim. One constraint governs them all,
+  and it is worth knowing before adding another: a sign glows out of its front face, so
+  only a facade facing back towards the roofs will read.
 - A **dim point light** beside each, so a sign lights the wall it is on rather than
   being a glowing rectangle on a black one.
 
@@ -754,9 +812,12 @@ off the level, so it gets the same overlay and respawn.
 
 ## Models and surfaces
 
-Every prop is an instance of a model from `src/game/level/models.ts` — twenty-four
-of them now, from a five-part `crate` to a ten-part `pipe-vertical`, plus the V0.5
-`neon-strip`, `lift-platform` and `data-shard`.
+Every prop is an instance of a model from `src/game/level/models.ts` — twenty-nine of
+them now, from a five-part `crate` to a ten-part `pipe-vertical`: the V0.5
+`neon-strip`, `lift-platform` and `data-shard`, and the four sign silhouettes V0.6.1
+added (`neon-bar`, `neon-blade`, `neon-frame`, `neon-badge`). A model can also declare
+itself `mounted` rather than stacked, which is how the level's "nothing floats" rule
+knows that a sign hangs on a wall instead of standing on something.
 
 Parts are expressed in **normalised** coordinates: `[0, 1]` across the prop's own
 bounding box, with `y` from its underside to its top. Any model fits any prop size.
@@ -1293,7 +1354,7 @@ half.
 
 ---
 
-## Out of scope for V0.6
+## Out of scope for V0.6.1
 
 The roadmap continues past this demo. Nothing below is implemented, and none of it is
 stubbed:
@@ -1323,5 +1384,9 @@ with a shadow under it, a graphics preset that means something, three volume bus
 and a measured quarter off the district's vertex buffers. It is the release that comes
 from *playing* the game — every one of its sharpest bugs was found with a browser
 pointed at the dev server rather than from a plan.
+
+V0.6.1 fixed the three things playing V0.6 turned up: a body that moved in cuts, a
+district whose surfaces shared planes and shimmered for it, and six signs that were
+one sign.
 
 The next milestone is V0.7: polish, and labelling the district as Level 1.

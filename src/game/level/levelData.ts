@@ -435,15 +435,25 @@ function room(spec: {
   const props: PropDefinition[] = [
     panel('wall-w', cx - sideX, cz, [wall, spec.height, sideDepth], spec.bottom),
     panel('wall-e', cx + sideX, cz, [wall, spec.height, sideDepth], spec.bottom),
-    panel('wall-back', cx, backZ, [width + wall * 2, spec.height, wall], spec.bottom),
+    // The back wall fits *between* the side walls rather than spanning the whole
+    // outside. Both ways draw the same room, but the wider one puts the outer face of
+    // the back wall on exactly the same plane as the outer face of each side wall -
+    // two surfaces at one depth, which is a seam that flickers whenever the camera
+    // moves. V0.6.1 moved it inside, and the corner is now formed by the side walls.
+    panel('wall-back', cx, backZ, [width, spec.height, wall], spec.bottom),
     panel('wall-front-l', cx - openingHalf - frontSegment / 2, frontZ, [frontSegment, spec.height, wall], spec.bottom),
     panel('wall-front-r', cx + openingHalf + frontSegment / 2, frontZ, [frontSegment, spec.height, wall], spec.bottom),
     // The jambs stop at the door head, and the lintel then rests on them - which
     // is both how a real doorway is built and what keeps the level's "nothing
     // floats" rule satisfied, since a lintel supported only by the wall beside it
     // shares no top face with anything.
-    panel('jamb-l', cx - doorWidth / 2 - jamb / 2, frontZ, [jamb, doorHeight, wall], spec.bottom),
-    panel('jamb-r', cx + doorWidth / 2 + jamb / 2, frontZ, [jamb, doorHeight, wall], spec.bottom),
+    // The jambs are 6 cm thinner than the wall they sit in, which is both what a
+    // doorway does and what keeps the two front faces off each other's plane: a jamb
+    // flush with its wall flickers along the whole reveal, and 3 cm a side is more
+    // than a depth buffer needs to tell two surfaces apart at any distance in the
+    // district.
+    panel('jamb-l', cx - doorWidth / 2 - jamb / 2, frontZ, [jamb, doorHeight, wall - 0.06], spec.bottom),
+    panel('jamb-r', cx + doorWidth / 2 + jamb / 2, frontZ, [jamb, doorHeight, wall - 0.06], spec.bottom),
     panel('lintel', cx, frontZ, [openingHalf * 2, spec.height - doorHeight, wall], spec.bottom + doorHeight),
     // The roof: its top is the room's roof, which is walkable like any other.
     panel('roof', cx, cz, [width + wall * 2 + overhang, ceiling, sideDepth + overhang], top),
@@ -467,15 +477,28 @@ function sign(spec: {
   readonly at: readonly [number, number, number];
   readonly size: readonly [number, number];
   readonly tint: string;
+  /**
+   * Which sign model to hang.
+   *
+   * V0.6.1 added four more, because a district whose every sign is the same panel in
+   * a different colour is not a district with signage, it is a district with one sign.
+   * Defaults to the panel, which is the plainest of them.
+   */
+  readonly model?: NeONSignModel;
+  /** Mounting depth, for the models that are not 0.25 m thick. */
+  readonly depth?: number;
 }): PropDefinition {
   return box(spec.id, {
     at: [spec.at[0], spec.at[2]],
     bottom: spec.at[1],
-    size: [spec.size[0], spec.size[1], 0.25],
-    model: 'neon-sign',
+    size: [spec.size[0], spec.size[1], spec.depth ?? 0.25],
+    model: spec.model ?? 'neon-sign',
     tints: { neon: spec.tint },
   });
 }
+
+/** The sign silhouettes. All of them glow out of their +Z face. */
+type NeONSignModel = 'neon-sign' | 'neon-bar' | 'neon-blade' | 'neon-frame' | 'neon-badge';
 
 /** The two walk-in rooms, so their props and doors are authored together. */
 const EAST_ROOM = room({
@@ -605,7 +628,8 @@ export const DEMO_DISTRICT: LevelDefinition = {
     // bands rather than across one: two plates on the same plane are two faces at
     // the same depth, which is the one arrangement a depth buffer cannot resolve,
     // and the pair speckles and crawls as the camera moves.
-    sign({ id: 'sign-canyon', at: [78, 4.2, -11.05], size: [4.4, 1.6], tint: '#57e0ff' }),
+    sign({ id: 'sign-canyon', at: [78, 4.2, -11.05], size: [4.4, 2], tint: '#57e0ff', model: 'neon-frame' }),
+
 
     // ------------------------------------------------------------- home roof
     box('penthouse', {
@@ -628,7 +652,9 @@ export const DEMO_DISTRICT: LevelDefinition = {
     box('duct-support-south', { at: [4, 2.3], size: [1.2, 1.4, 0.6], model: 'support-post' }),
     box('crate-home-a', { at: [2, 4], size: [1.4, 1.4, 1.4], model: 'crate' }),
     box('crate-home-b', { at: [3.7, 4.8], size: [1.4, 1.4, 1.4], model: 'crate' }),
-    box('crate-home-c', { at: [2, 4], bottom: 1.4, size: [1.4, 1.4, 1.4], model: 'crate' }),
+    // 4 cm smaller than the one under it: two crates of *exactly* the same footprint
+    // put all four side faces on each other's planes, and the whole stack shimmers.
+    box('crate-home-c', { at: [2, 4], bottom: 1.4, size: [1.34, 1.4, 1.34], model: 'crate' }),
     box('skylight', { at: [10, -6], size: [5, 0.5, 4], model: 'skylight' }),
     box('ac-unit-home-a', { at: [-6, -4], size: [3.2, 1.7, 2.4], model: 'ac-unit' }),
     box('ac-unit-home-b', { at: [-2.4, -4], size: [3.2, 1.7, 2.4], model: 'ac-unit' }),
@@ -655,10 +681,18 @@ export const DEMO_DISTRICT: LevelDefinition = {
     // a door you open with E, fittings inside, a sign on the back wall, and a pipe
     // up the outside that reaches the roof.
     ...EAST_ROOM.props,
-    box('pipe-east', { at: [40, -1], bottom: 1.2, size: [0.4, 3.45, 0.4], model: 'pipe-vertical', pipe: true }),
+    // The head stands 4 cm *proud* of the roof rather than exactly level with it. Level
+    // was the original, and it put the pipe's cap on the same plane as the roof it
+    // juts past - two upward faces at one depth over the strip where they overlap,
+    // which flickers. Proud rather than short, because the climb's top-out step has to
+    // land on a surface *at* the pipe's head: a pipe whose head is below the roof has
+    // nothing free up there to stand on, and the climber is left hanging.
+    box('pipe-east', { at: [40, -1], bottom: 1.2, size: [0.4, 3.49, 0.4], model: 'pipe-vertical', pipe: true }),
     box('junction-east-inner', { at: [34, -2.6], size: [1.4, 1.6, 1.4], model: 'junction-box', bottom: 1.2 }),
     box('crate-east-inner', { at: [38.4, -2.4], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
-    sign({ id: 'sign-east-room', at: [36, 2.9, -3.35], size: [3.2, 1], tint: '#ff4fd8' }),
+    // A badge over the doorway: small, square, and a different colour to the room
+    // beside it, so two machine rooms do not look like the same machine room.
+    sign({ id: 'sign-east-room', at: [36, 2.7, -3.315], size: [1.7, 1.7], tint: '#a06bff', model: 'neon-badge' }),
 
     // -------------------------------------------------------------- high roof
     box('water-tank-high', { at: [56, 4], size: [3.2, 3.4, 3.2], model: 'water-tank', bottom: 3.6 }),
@@ -694,7 +728,7 @@ export const DEMO_DISTRICT: LevelDefinition = {
     ...FAR_ROOM.props,
     box('junction-far-inner', { at: [92, -1.8], size: [1.4, 1.6, 1.4], model: 'junction-box', bottom: 1.2 }),
     box('crate-far-inner', { at: [95.6, -1.4], size: [1.4, 1.4, 1.4], model: 'crate', bottom: 1.2 }),
-    sign({ id: 'sign-far-room', at: [94, 2.8, -5.35], size: [3, 1], tint: '#ffc247' }),
+    sign({ id: 'sign-far-room', at: [94, 2.6, -5.335], size: [3, 0.9], tint: '#ffc247', model: 'neon-bar' }),
 
     // ---------------------------------------------------- V0.5: the works
     // A second level of the district: the service side, six metres below the
@@ -713,8 +747,10 @@ export const DEMO_DISTRICT: LevelDefinition = {
 
     // Plant on works-1, so the roof you land on is clearly a working one.
     box('duct-works-1', { at: [95, 22.5], bottom: -3.6, size: [1.4, 1.4, 12], model: 'duct' }),
-    box('duct-works-1-support-n', { at: [95, 16.8], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5 }),
-    box('duct-works-1-support-s', { at: [95, 28.2], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5 }),
+    // 4 cm narrower than the duct and tucked 3 cm in from its ends, so no face of a
+    // support lies on a face of the duct it carries.
+    box('duct-works-1-support-n', { at: [95, 16.84], size: [1.32, 1.4, 0.6], model: 'support-post', bottom: -5 }),
+    box('duct-works-1-support-s', { at: [95, 28.16], size: [1.32, 1.4, 0.6], model: 'support-post', bottom: -5 }),
     box('vent-stack-works-1', { at: [89, 30], size: [1.8, 3, 1.8], model: 'vent-stack', bottom: -5, climbable: true }),
     box('pipe-works-1', { at: [102, 28], bottom: -5, size: [0.5, 4.2, 0.5], model: 'pipe-vertical', pipe: true }),
     box('barrier-works-1', { at: [90, 18], size: [0.5, 1.1, 5], model: 'barrier', bottom: -5 }),
@@ -723,15 +759,15 @@ export const DEMO_DISTRICT: LevelDefinition = {
 
     // Works-2 carries the big plant: a water tank, a cable run and a rail.
     box('tank-works-2', { at: [66, 29], size: [3.2, 3.4, 3.2], model: 'water-tank', bottom: -4.2 }),
-    box('pipe-run-works-2', { at: [78, 27], bottom: -4.2, size: [0.6, 0.6, 10], model: 'pipe-run' }),
+    box('pipe-run-works-2', { at: [78, 26.9], bottom: -4.2, size: [0.6, 0.6, 9.8], model: 'pipe-run' }),
     box('vent-stack-works-2', { at: [78, 29], size: [1.8, 3.2, 1.8], model: 'vent-stack', bottom: -4.2, climbable: true }),
     box('barrier-works-2', { at: [66, 18], size: [0.5, 1.1, 5], model: 'barrier', bottom: -4.2 }),
     box('cable-spool-works-2', { at: [63, 22], size: [2, 2, 2], model: 'cable-spool', bottom: -4.2 }),
 
     // Works-3 is the low point, with a gantry duct and a climbable riser.
     box('duct-works-3', { at: [47, 24], bottom: -4.2, size: [1.4, 1.4, 12], model: 'duct' }),
-    box('duct-works-3-support-n', { at: [47, 18.3], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5.6 }),
-    box('duct-works-3-support-s', { at: [47, 29.7], size: [1.4, 1.4, 0.6], model: 'support-post', bottom: -5.6 }),
+    box('duct-works-3-support-n', { at: [47, 18.34], size: [1.32, 1.4, 0.6], model: 'support-post', bottom: -5.6 }),
+    box('duct-works-3-support-s', { at: [47, 29.66], size: [1.32, 1.4, 0.6], model: 'support-post', bottom: -5.6 }),
     box('riser-works-3', { at: [55, 30], bottom: -5.6, size: [0.7, 5, 0.7], model: 'pipe-vertical', pipe: true }),
     box('junction-works-3', { at: [42, 19], size: [1.6, 1.8, 1.6], model: 'junction-box', bottom: -5.6 }),
     box('crate-works-3', { at: [49, 19], size: [1.4, 1.4, 1.4], model: 'crate', bottom: -5.6 }),
@@ -753,9 +789,13 @@ export const DEMO_DISTRICT: LevelDefinition = {
     box('strip-works-1', { at: [95, 31.4], bottom: -5, size: [18, 0.4, 0.5], model: 'neon-strip', tints: { neon: '#57e0ff' } }),
     // Big signs on the towers *north* of the district, because a sign glows out of
     // its front face: only a facade facing back towards the roofs will read.
-    sign({ id: 'sign-tower-a', at: [-58, 8, -41.87], size: [6, 2.2], tint: '#ff4fd8' }),
-    sign({ id: 'sign-tower-b', at: [124, 6, -47.87], size: [5.5, 2], tint: '#57e0ff' }),
-    sign({ id: 'sign-tower-e', at: [40, 5, -70.87], size: [6, 2.2], tint: '#ffc247' }),
+    sign({ id: 'sign-tower-a', at: [-58, 8, -41.87], size: [7, 1.4], tint: '#ff4fd8', model: 'neon-bar' }),
+    sign({ id: 'sign-tower-a-badge', at: [-64, 14, -41.87], size: [2.2, 2.2], tint: '#7dff9b', model: 'neon-badge' }),
+    sign({ id: 'sign-tower-b', at: [124, 6, -47.87], size: [5, 3], tint: '#57e0ff', model: 'neon-frame' }),
+    sign({ id: 'sign-tower-b-bar', at: [118, 12, -47.87], size: [4, 0.9], tint: '#a06bff', model: 'neon-bar' }),
+    sign({ id: 'sign-tower-b-blade', at: [130, 20, -47.89], size: [2.2, 6], tint: '#7dff9b', model: 'neon-blade' }),
+    sign({ id: 'sign-tower-e', at: [40, 5, -70.87], size: [2.2, 6], tint: '#ffc247', model: 'neon-blade' }),
+    sign({ id: 'sign-tower-e-frame', at: [47, 4, -70.87], size: [3, 2], tint: '#eaf6ff', model: 'neon-frame' }),
 
     // ---------------------------------------------------- background massing
     box('tower-a', {

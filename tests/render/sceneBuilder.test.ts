@@ -13,7 +13,7 @@ import { buildScene } from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
 import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
 import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
-import { modelById } from '../../src/game/level/models.js';
+import { isMountedModel, modelById } from '../../src/game/level/models.js';
 import { propBounds } from '../../src/game/level/level.js';
 import type { PropDefinition } from '../../src/game/level/levelData.js';
 
@@ -323,20 +323,31 @@ describe('buildScene V0.4 content', () => {
     }
   });
 
-  it('lights a neon sign from the inside', () => {
-    // An emissive surface glows: the tint becomes the emissive colour and the
-    // sign texture becomes the emissive map, so only the glyphs light up.
+  it('lights every kind of sign from the inside, in its own colour', () => {
+    // An emissive surface glows: the tint becomes the emissive colour and the sign
+    // texture becomes the emissive map, so only the glyphs light up. Every sign model
+    // has to do it - V0.6.1 added four more, and a sign whose lit part is not actually
+    // emissive is a sign that is merely pale.
     const built = buildScene(DEMO_DISTRICT, assetTextures());
     try {
-      const parts = partsOf(built, 'sign-east-room');
-      const neon = parts.find((mesh) => {
-        const material = mesh.material as THREE.MeshLambertMaterial;
-        return material.emissive !== undefined && material.emissive.getHex() !== 0;
-      });
-      expect(neon).toBeDefined();
-      const material = (neon as THREE.Mesh).material as THREE.MeshLambertMaterial;
-      expect(material.emissive.getHex()).toBe(new THREE.Color('#ff4fd8').getHex());
-      expect(material.emissiveMap).not.toBeNull();
+      const signs = DEMO_DISTRICT.props.filter((entry) => isMountedModel(entry.model));
+      expect(signs.length).toBeGreaterThanOrEqual(8);
+
+      for (const prop of signs) {
+        const lit = partsOf(built, prop.id).filter((mesh) => {
+          const material = mesh.material as THREE.MeshLambertMaterial;
+          return material.emissive !== undefined && material.emissive.getHex() !== 0;
+        });
+        expect(lit.length, prop.id).toBeGreaterThan(0);
+
+        // The glow is the sign's own tint, not a colour baked into the model.
+        const tint = prop.tints?.neon;
+        expect(tint, prop.id).toBeDefined();
+        expect((lit[0]!.material as THREE.MeshLambertMaterial).emissive.getHex(), prop.id).toBe(
+          new THREE.Color(tint as string).getHex(),
+        );
+        expect((lit[0]!.material as THREE.MeshLambertMaterial).emissiveMap, prop.id).not.toBeNull();
+      }
     } finally {
       built.dispose();
     }

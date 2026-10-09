@@ -46,7 +46,7 @@ class FakeView implements GameViewLike {
   readonly pickups: { id: string; visible: boolean }[] = [];
   readonly animations: number[] = [];
   readonly fovs: number[] = [];
-  readonly bodies: { feet: ReadonlyVec3; yaw: number; pose: PlayerPose }[] = [];
+  readonly bodies: { feet: ReadonlyVec3; yaw: number; pose: PlayerPose; dt: number }[] = [];
   readonly qualities: QualityPreset[] = [];
   disposed = false;
 
@@ -78,8 +78,8 @@ class FakeView implements GameViewLike {
     this.fovs.push(fov);
   }
 
-  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose): void {
-    this.bodies.push({ feet: { ...feet }, yaw, pose });
+  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose, dt: number): void {
+    this.bodies.push({ feet: { ...feet }, yaw, pose, dt });
   }
 
   setQuality(preset: QualityPreset): void {

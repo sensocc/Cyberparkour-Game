@@ -560,7 +560,11 @@ export const DEFAULT_CONFIG: GameConfig = {
     // strides are long: at a realistic 0.9 m step a walk would be a 4 Hz buzz
     // rather than a run. Sprint strides are longer still, so the cadence rises
     // with speed without needing a separate timer.
-    strideLength: { walk: 5, sprint: 6.8, crouch: 3 },
+    // Lengthened in V0.6.1, which slows the cadence by about a fifth: one leg cycle
+    // per 6.4 m at a walk is 1.2 Hz rather than 1.5, and at sprint speed the legs stop
+    // reading as a scuttle. The camera's bob rides the same stride, so this is also
+    // what calmed the last of the head movement.
+    strideLength: { walk: 6.4, sprint: 8.6, crouch: 3.8 },
     // Softened again in 0.5.1, to roughly half what 0.3 settled on. The camera is
     // the player's whole view of the world, and a bob the eye has to *track* stops
     // being atmosphere and becomes noise - especially on the works level, where

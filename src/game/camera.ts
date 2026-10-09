@@ -20,7 +20,7 @@
  *    which can take it to zero.
  */
 
-import { damp } from '../core/math.js';
+import { easeToward } from '../core/math.js';
 import type { CameraEffectsConfig } from '../core/config.js';
 
 /** What the body is doing, as far as the camera cares. */
@@ -153,7 +153,7 @@ export class CameraEffects {
     const fovTarget =
       (clamp01(sample.speedFraction) * config.speedFov + (sample.crouching ? config.crouchFov : 0)) *
       scale;
-    this.fovOffset = approach(this.fovOffset, fovTarget, config.fovApproach, step);
+    this.fovOffset = easeToward(this.fovOffset, fovTarget, config.fovApproach, step);
     frame.fov = this.fovOffset;
 
     // ------------------------------------------------------------------- lean
@@ -161,12 +161,12 @@ export class CameraEffects {
       (clamp01(sample.slideFraction) * config.slideRoll +
         clamp01(sample.wallRunFraction) * config.wallRunRoll * sample.wallRunSide) *
       scale;
-    this.roll = approach(this.roll, rollTarget, ROLL_RATE, step);
+    this.roll = easeToward(this.roll, rollTarget, ROLL_RATE, step);
     frame.roll = this.roll;
 
     // ------------------------------------------------------------------- dip
     // Back to level, always: the dip is a push that the ground gives back.
-    this.dip = approach(this.dip, 0, config.landingRecover, step);
+    this.dip = easeToward(this.dip, 0, config.landingRecover, step);
 
     // ----------------------------------------------------------------- shake
     // A decaying oscillation on two axes at different rates, which reads as an
@@ -188,17 +188,6 @@ export class CameraEffects {
     if (frame.offsetZ === 0) frame.offsetZ = 0;
     return frame;
   }
-}
-
-/**
- * Exponential approach towards a target, with the rate constant in 1/s.
- *
- * `damp` takes a *per-second fraction*, not a rate constant, so the conversion
- * lives here rather than being spelled out at four call sites - getting it wrong
- * means the effect is applied twice as fast as it should be at any frame rate.
- */
-function approach(current: number, target: number, rate: number, dt: number): number {
-  return damp(current, target, 1 - Math.exp(-rate), dt);
 }
 
 function clamp01(value: number): number {

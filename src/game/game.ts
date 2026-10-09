@@ -883,7 +883,7 @@ export class Game {
     for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
     this.view?.animate(this.effectsSeconds);
     this.stats.push(delta);
-    this.renderFrame();
+    this.renderFrame(delta);
     this.updateHud();
   }
 
@@ -972,7 +972,7 @@ export class Game {
     }
   }
 
-  private renderFrame(): void {
+  private renderFrame(dt = 0): void {
     if (!this.view) return;
 
     const feet = interpolatePlayerPosition(this.player, this.accumulator.alpha, this.scratchFeet);
@@ -998,7 +998,12 @@ export class Game {
 
     // The body goes where the *interpolated* player is, not where the last
     // simulation step left them, or it would jitter against the camera.
-    this.view.setPlayerBody(feet, this.player.yaw, describePose(this.player, this.config, this.scratchPose));
+    this.view.setPlayerBody(
+      feet,
+      this.player.yaw,
+      describePose(this.player, this.config, this.scratchPose),
+      dt,
+    );
 
     this.view.render(this.scratchEye, this.scratchOrientation);
   }

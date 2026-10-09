@@ -287,11 +287,11 @@ export class GameView implements GameViewLike {
   }
 
   /** Places and poses the player's body. */
-  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose): void {
+  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose, dt: number): void {
     if (this.disposed) return;
     this.body.root.position.set(feet.x, feet.y, feet.z);
     this.body.root.rotation.y = yaw;
-    posePlayerBody(this.body, pose, this.config);
+    posePlayerBody(this.body, pose, this.config, dt);
   }
 
   /** Sets the vertical field of view. */

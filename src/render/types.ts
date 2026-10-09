@@ -75,7 +75,7 @@ export interface GameViewLike {
    * work. `feet` is the *interpolated* foot position, so the body does not jitter
    * against the camera at a refresh rate the simulation does not share.
    */
-  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose): void;
+  setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose, dt: number): void;
   /**
    * Sets the vertical field of view, in degrees.
    *

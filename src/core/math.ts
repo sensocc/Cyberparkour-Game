@@ -45,6 +45,17 @@ export function damp(current: number, target: number, rate: number, dt: number):
   return current + (target - current) * t;
 }
 
+/**
+ * Exponential approach towards a target, with the rate constant in 1/s.
+ *
+ * `damp` takes a per-second *fraction*, not a rate constant, so the conversion lives
+ * here rather than being spelled out at every call site - getting it wrong makes the
+ * motion run at the wrong speed at every frame rate but one.
+ */
+export function easeToward(current: number, target: number, rate: number, dt: number): number {
+  return damp(current, target, 1 - Math.exp(-rate), dt);
+}
+
 export function approxEquals(a: number, b: number, epsilon = 1e-6): boolean {
   return Math.abs(a - b) <= epsilon;
 }
