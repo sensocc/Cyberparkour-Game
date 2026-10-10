@@ -34,6 +34,15 @@ export interface PropDefinition {
   /** Whether the player can climb this prop's face. */
   readonly climbable?: boolean;
   /**
+   * What the prop's collider is.
+   *
+   * `box` - the default - is one box around the whole prop, which is right for a slab and wrong
+   * for anything with air in it. A tower crane is a lattice mast, a jib and a counterweight inside
+   * a fifty-metre bounding box, and a box collider makes the air between them solid: the parts
+   * collide with `parts`, and `none` is for a prop that is decoration.
+   */
+  readonly collide?: 'box' | 'parts' | 'none';
+  /**
    * Whether this prop is a *pipe* the player can climb up and down.
    *
    * Separate from `climbable` because a pipe is two-way: a face is only ever

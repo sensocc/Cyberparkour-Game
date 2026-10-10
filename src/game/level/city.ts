@@ -563,6 +563,7 @@ function make(
     readonly size: readonly [number, number, number];
     readonly model: string;
     readonly kind?: PropDefinition['kind'];
+    readonly collide?: PropDefinition['collide'];
     readonly tints?: Record<string, string>;
     readonly climbable?: boolean;
   },
@@ -574,6 +575,7 @@ function make(
     position: { x: spec.at[0], y: spec.bottom + spec.size[1] / 2, z: spec.at[1] },
     size: { x: spec.size[0], y: spec.size[1], z: spec.size[2] },
     ...(spec.tints ? { tints: spec.tints } : {}),
+    ...(spec.collide ? { collide: spec.collide } : {}),
     ...(spec.climbable ? { climbable: true } : {}),
   };
 }
@@ -1160,6 +1162,10 @@ function constructionSite(
       // an overlapping building with a hook on it.
       size: [footprint * 2, craneHeight - floor, 4],
       model: 'crane',
+      // **Its parts, not its box.** A crane is a lattice with air in it, and a box collider the
+      // size of the whole prop makes that air solid - four posts, a jib and a counterweight
+      // inside fifty metres of invisible wall.
+      collide: 'parts',
       tints: { hazard: '#e8b23c' },
     }),
   );

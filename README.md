@@ -41,58 +41,59 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
-3. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
-4. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
-5. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
-6. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
-7. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-8. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-9. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-10. [What V0.7.2 fixes](#what-v072-fixes)
-11. [What V0.7.1 optimises](#what-v071-optimises)
-12. [What V0.7 delivers](#what-v07-delivers)
-13. [What V0.6.1 fixes](#what-v061-fixes)
-14. [What V0.6 delivers](#what-v06-delivers)
-15. [What V0.5 delivered](#what-v05-delivered)
-16. [Quick start](#quick-start)
-17. [Controls](#controls)
-18. [What you should see](#what-you-should-see)
-19. [Settings](#settings)
-20. [Camera effects](#camera-effects)
-21. [Feel](#feel)
-22. [Your body](#your-body)
-23. [Optimisation](#optimisation)
-24. [Locomotion](#locomotion)
-25. [The movement state machine](#the-movement-state-machine)
-26. [The manoeuvre bands](#the-manoeuvre-bands)
-27. [Wall running](#wall-running)
-28. [Wall jumping](#wall-jumping)
-29. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-30. [The landing roll](#the-landing-roll)
-31. [Pipe climbing](#pipe-climbing)
-32. [Interiors and doors](#interiors-and-doors)
-33. [Lifts](#lifts)
-34. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-35. [Checkpoints and respawn](#checkpoints-and-respawn)
-36. [The district](#the-district)
-37. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-38. [Neon](#neon)
-39. [Fall damage and health](#fall-damage-and-health)
-40. [Models and surfaces](#models-and-surfaces)
-41. [Sound](#sound)
-42. [How the textures are made](#how-the-textures-are-made)
-43. [Architecture](#architecture)
-44. [How a frame works](#how-a-frame-works)
-45. [Collision](#collision)
-46. [Crash reporting](#crash-reporting)
-47. [The HUDs](#the-huds)
-48. [Testing](#testing)
-49. [Continuous integration](#continuous-integration)
-50. [Project layout](#project-layout)
-51. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-52. [Out of scope for V0.7](#out-of-scope-for-v07)
-53. [Roadmap](#roadmap)
+2. [What V0.7.11 fixes: the frame, and the crane's collision](#what-v0711-fixes-the-frame-and-the-cranes-collision)
+3. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
+4. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
+5. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
+6. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
+7. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+8. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+9. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+10. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+11. [What V0.7.2 fixes](#what-v072-fixes)
+12. [What V0.7.1 optimises](#what-v071-optimises)
+13. [What V0.7 delivers](#what-v07-delivers)
+14. [What V0.6.1 fixes](#what-v061-fixes)
+15. [What V0.6 delivers](#what-v06-delivers)
+16. [What V0.5 delivered](#what-v05-delivered)
+17. [Quick start](#quick-start)
+18. [Controls](#controls)
+19. [What you should see](#what-you-should-see)
+20. [Settings](#settings)
+21. [Camera effects](#camera-effects)
+22. [Feel](#feel)
+23. [Your body](#your-body)
+24. [Optimisation](#optimisation)
+25. [Locomotion](#locomotion)
+26. [The movement state machine](#the-movement-state-machine)
+27. [The manoeuvre bands](#the-manoeuvre-bands)
+28. [Wall running](#wall-running)
+29. [Wall jumping](#wall-jumping)
+30. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+31. [The landing roll](#the-landing-roll)
+32. [Pipe climbing](#pipe-climbing)
+33. [Interiors and doors](#interiors-and-doors)
+34. [Lifts](#lifts)
+35. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+36. [Checkpoints and respawn](#checkpoints-and-respawn)
+37. [The district](#the-district)
+38. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+39. [Neon](#neon)
+40. [Fall damage and health](#fall-damage-and-health)
+41. [Models and surfaces](#models-and-surfaces)
+42. [Sound](#sound)
+43. [How the textures are made](#how-the-textures-are-made)
+44. [Architecture](#architecture)
+45. [How a frame works](#how-a-frame-works)
+46. [Collision](#collision)
+47. [Crash reporting](#crash-reporting)
+48. [The HUDs](#the-huds)
+49. [Testing](#testing)
+50. [Continuous integration](#continuous-integration)
+51. [Project layout](#project-layout)
+52. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+53. [Out of scope for V0.7](#out-of-scope-for-v07)
+54. [Roadmap](#roadmap)
 
 ---
 
@@ -100,21 +101,62 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.10` |
+| Version | `0.7.11` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1121 across 42 files |
+| Tests | 1122 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.10 is finished and frozen, with one thing in it that is implemented and not yet working.
+V0.7.11 is finished and frozen: the lamps are lit, and the crane is a lattice.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.11 fixes: the frame, and the crane's collision
+
+### 545 point lights, which is why it ran at fifteen frames a second
+
+The frame was measured before anything was guessed, and the number was not subtle:
+
+| | before | after |
+| --- | --- | --- |
+| Point lights lit | **545** | **12** |
+| Shadow casters | 396 | 132 |
+| Triangles in the shadow pass | 930k | 265k |
+| Triangles drawn | 984k | 752k |
+| Chunk meshes | 134 | 512 |
+
+**A point light is not a cheap thing in a forward renderer.** Every lit fragment of every surface
+runs the loop over every light in the scene, so a kilometre of city - about two lamps per building,
+from interiors, sign glows and rooftop signage - came to five hundred and forty-five of them, and
+each pixel of each surface evaluated all of them. Twelve are lit now, chosen per frame by how close
+they are, and the graphics preset's share counts as a cap rather than a pattern. Nothing else in
+this version comes close to that: it is one shader loop multiplied by the whole screen.
+
+**The shadow pass was asking the wrong question.** A caster was kept if its *centre* was within
+reach of the player, so with 500 m chunks nearly the whole city stayed in a pass whose map is 140 m
+across: 930k triangles for a shadow that covers one street. It is asked of the chunk's own extent
+now, which is what the shadow camera is really asking.
+
+**And V0.7.9's chunk size was the wrong trade.** 500 m gave 134 draw calls and *submitted the whole
+city every frame* - a million triangles, which is what a machine at fifteen frames a second was
+genuinely paying for alongside the lights. 250 m keeps the draw calls in the hundreds and gives the
+distance and shadow culls something to bite on.
+
+### The crane was solid air
+
+A prop's collider is one box around the whole prop, which is right for a slab and wrong for a
+tower crane: four lattice posts, a jib and a counterweight inside a box 57 m across and 73 m tall,
+with the air between them as solid as the steel. A prop can ask for its **parts** as colliders now -
+`collide: 'parts'` - and the crane does: **65 colliders, one per part, and no box**, so what stops
+you is the crane and not the volume it happens to live in.
 
 ---
 
@@ -2102,5 +2144,8 @@ architecture for two thousand more props, and the frame is cheaper than before e
 
 V0.7.10 fixed a volume control that had never been connected and a crane that had never been
 finished, and it ends with one rule half-delivered and said so.
+
+V0.7.11 was the version where the frame was measured instead of reasoned about, and the answer was
+one number: five hundred and forty-five lights.
 
 The next milestone is V0.8: the height lead, polish, and the graphics pass.

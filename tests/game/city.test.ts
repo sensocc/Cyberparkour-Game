@@ -823,3 +823,31 @@ describe('the roofs, which are furnished', () => {
     }
   });
 });
+
+describe('the crane, which is a lattice and not a slab', () => {
+  const city = buildCity(DEMO_DISTRICT);
+
+  it('collides as its parts, with no box around the air between them', () => {
+    // The complaint: a crane behaved as a solid rectangle, and the parts with nothing in them
+    // collided. It is one box collider by default - fifty-seven metres across, seventy tall -
+    // which makes the air between the mast, the jib and the counterweight solid. A prop can now
+    // ask for its *parts* as colliders instead, and the crane does.
+    const crane = city.props.find((prop) => prop.model === 'crane');
+    expect(crane).toBeDefined();
+    expect(crane?.collide, 'the crane must not use a box').toBe('parts');
+
+    const built = buildLevel(city, BUILD);
+    const parts = built.colliders.filter((collider) => collider.id.startsWith(`${crane?.id}#`));
+    expect(parts.length, 'one collider per model part').toBeGreaterThan(20);
+    // ...and no collider the size of the whole prop.
+    expect(built.colliders.some((collider) => collider.id === crane?.id)).toBe(false);
+
+    // Every part is a real part of a crane rather than the box: the widest is the jib, and none
+    // of them is seventy metres tall and fifty-seven wide at once.
+    const box = (crane?.size.x ?? 0) * (crane?.size.z ?? 0);
+    for (const part of parts) {
+      const area = (part.box.max.x - part.box.min.x) * (part.box.max.z - part.box.min.z);
+      expect(area, part.id).toBeLessThan(box * 0.6);
+    }
+  });
+});

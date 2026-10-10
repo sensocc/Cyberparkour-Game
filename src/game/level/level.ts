@@ -95,17 +95,35 @@ export function toColliders(definition: LevelDefinition): Collider[] {
     }
   }
 
-  const colliders: Collider[] = definition.props.filter((prop) => !gateIds.has(prop.id)).map((prop) => {
-    const model = modelById(prop.model);
-    const acoustic = model ? acousticForSurface(topSurface(model) ?? '') : undefined;
+  const colliders: Collider[] = definition.props
+    .filter((prop) => !gateIds.has(prop.id))
+    .flatMap((prop) => {
+      const model = modelById(prop.model);
+      const acoustic = model ? acousticForSurface(topSurface(model) ?? '') : undefined;
+      const surface = acoustic ? { surface: acoustic } : {};
 
-    return {
-      id: prop.id,
-      kind: colliderKindFor(prop),
-      box: propBounds(prop),
-      ...(acoustic ? { surface: acoustic } : {}),
-    };
-  });
+      // A prop whose collider is its *parts* rather than its box. A tower crane is the reason
+      // this exists: four posts, a jib and a counterweight inside a bounding box fifty metres
+      // across, and one box collider makes all the air between them solid.
+      if (prop.collide === 'parts') {
+        return resolvePropParts(prop).map((part, index) => ({
+          id: `${prop.id}#${index}`,
+          kind: colliderKindFor(prop),
+          box: { min: { ...part.min }, max: { ...part.max } },
+          ...surface,
+        }));
+      }
+      if (prop.collide === 'none') return [];
+
+      return [
+        {
+          id: prop.id,
+          kind: colliderKindFor(prop),
+          box: propBounds(prop),
+          ...surface,
+        },
+      ];
+    });
 
   // Doors are colliders too, but they are not props: they have no model parts of
   // their own (the scene builder swings the leaf) and the game may switch them

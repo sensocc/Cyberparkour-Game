@@ -21,6 +21,7 @@ import {
   buildScene,
   shadowReachFor,
   updateChunkVisibility,
+  updateLamps,
   updateShadowCasters,
   type BuiltScene,
 } from './sceneBuilder.js';
@@ -129,6 +130,12 @@ export class GameView implements GameViewLike {
   private casters = 0;
   /** How many chunks are being drawn this frame, after the distance cull. */
   private chunksDrawn = 0;
+  /** How many of the level's lamps are lit this frame. */
+  private lampsOn = 0;
+  /** The last place the lamp selection was made for. */
+  private lampCell = '';
+  /** The graphics preset's share of the lamps, applied to the cap. */
+  private lightScale = 1;
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -223,6 +230,7 @@ export class GameView implements GameViewLike {
       chunks: this.built.chunks.length,
       casters: this.casters,
       drawn: this.chunksDrawn,
+      lamps: this.lampsOn,
     });
   }
 
@@ -267,6 +275,7 @@ export class GameView implements GameViewLike {
     if (this.disposed) return;
 
     this.followWithShadow(eye);
+    this.followLamps(eye);
 
     this.camera.position.set(eye.x, eye.y, eye.z);
     // Roll is in degrees on the way in (it comes from the settings-facing effect
@@ -367,6 +376,20 @@ export class GameView implements GameViewLike {
    * frame. Snapping the volume to a whole number of texels is the standard fix: the
    * shadows stay where they are on the ground and the volume steps along with the player.
    */
+  /**
+   * Switches the nearest lamps on, and the rest off.
+   *
+   * Re-evaluated when the player has moved far enough for a different set to be nearest rather
+   * than every frame: the selection is over five hundred lights, and the answer does not change
+   * between two steps.
+   */
+  private followLamps(eye: ReadonlyVec3): void {
+    const cell = `${Math.round(eye.x / 24)}|${Math.round(eye.z / 24)}`;
+    if (cell === this.lampCell) return;
+    this.lampCell = cell;
+    this.lampsOn = updateLamps(this.built.lamps, eye, Math.max(4, Math.round(12 * this.lightScale)));
+  }
+
   private followWithShadow(eye: ReadonlyVec3): void {
     const sun = this.built.sun;
     const shadow = sun.shadow;
@@ -448,10 +471,10 @@ export class GameView implements GameViewLike {
       const mesh = this.built.smoke[index];
       if (mesh) mesh.sprite.visible = visible;
     });
-    applyEvenScale(this.built.lamps.length, preset.lightScale, (index, visible) => {
-      const lamp = this.built.lamps[index];
-      if (lamp) lamp.visible = visible;
-    });
+    // The preset's share of the lamps is a *cap* now, not a fixed pattern: which ones are lit is
+    // decided per frame by how close they are - see `followLamps`.
+    this.lightScale = preset.lightScale;
+    this.lampCell = '';
 
     logger.info('render', 'quality applied', {
       quality: preset.label,

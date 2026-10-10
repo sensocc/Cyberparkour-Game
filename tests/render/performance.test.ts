@@ -70,10 +70,12 @@ describe('the cost of a frame', () => {
       // One mesh per part was 41,915 meshes. Merged by chunk and material it is
       // about 1,100, which is the difference between a frame the browser can
       // submit and one it cannot.
-      // 134, and that is the number this version is about: at 128 m chunks the same city came
-      // out as 1,578 chunk meshes and a street view asked for 663 draw calls. Chunks are a
-      // draw-call budget now, not a culling unit.
-      expect(built.chunks.length).toBeLessThan(400);
+      // 512 at 250 m. V0.7.9 took this to 500 m and got 134 mesh at the cost of submitting the
+      // *whole* city every frame - a million triangles, which is what a machine at fifteen
+      // frames a second was actually paying for. 250 m keeps the draw calls in the hundreds and
+      // gives the distance and shadow culls something to bite on.
+      expect(built.chunks.length).toBeGreaterThan(200);
+      expect(built.chunks.length).toBeLessThan(900);
 
       const parts = city.props.length;
       expect(built.chunks.length).toBeLessThan(parts / 3);
@@ -174,11 +176,20 @@ describe('the cost of a frame', () => {
       // A shadow map 220 m across has no use for a chunk 400 m away: it would be
       // clipped, but only after its vertices were transformed. A handful of chunks
       // is a shadow pass of a handful of draw calls.
+      // 132 from the middle of the map and 290 from a street at the edge - the number moves with
+      // where you stand, so what is asserted is that it is a *subset*: the invariant that matters
+      // is the per-chunk one above, that a chunk the volume cannot reach is not in the pass.
       expect(casting).toBeGreaterThan(0);
-      expect(casting).toBeLessThan(520);
+      expect(casting).toBeLessThan(built.chunks.length);
 
+      // Asked of the chunk's own extent, not its centre: the shadow camera covers `reach` metres
+      // around the player and clips the rest, so a chunk it does not touch casts nothing worth
+      // drawing. V0.7.9 asked the centre, four hundred chunks stayed in the pass, and the shadow
+      // map 140 m across was fed a million triangles.
       for (const mesh of built.chunks) {
-        if (Math.abs(mesh.position.x - eye.x) > reach || Math.abs(mesh.position.z - eye.z) > reach) {
+        const nearX = Math.abs(mesh.position.x - eye.x) - 125;
+        const nearZ = Math.abs(mesh.position.z - eye.z) - 125;
+        if (nearX > reach || nearZ > reach) {
           expect(mesh.castShadow, mesh.name).toBe(false);
         }
       }

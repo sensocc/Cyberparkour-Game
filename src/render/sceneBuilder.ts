@@ -121,7 +121,7 @@ export interface BuiltScene {
  * against 358k. Draw calls are what a browser runs out of first, and the GPU does not notice
  * three quarters of a million triangles.
  */
-const CHUNK = 500;
+const CHUNK = 250;
 
 /**
  * A growable buffer of box geometry, in one chunk's local space.
@@ -277,6 +277,56 @@ export function shadowReachFor(extent: number): number {
  * authority, and this only ever takes casting away.
  */
 /**
+ * How many of the level's point lights are switched on at once.
+ *
+ * **This is the frame.** A point light is not a cheap thing in a forward renderer: every lit
+ * fragment of every surface runs the loop over every light in the scene, so 545 of them - which
+ * is what a kilometre of city generates, two lamps per building - is 545 iterations of a shader
+ * per pixel. That is not a slow frame, it is a slideshow, and it measured as one.
+ *
+ * Only the nearest handful can be told apart anyway: a lamp forty metres away through three walls
+ * contributes a colour nobody can see. Twelve are on, the rest are off, and the switch is
+ * re-evaluated when the player has moved far enough for it to matter.
+ */
+export function updateLamps(
+  lamps: readonly THREE.PointLight[],
+  eye: ReadonlyVec3,
+  limit: number,
+): number {
+  if (lamps.length === 0) return 0;
+  if (lamps.length <= limit) {
+    for (const lamp of lamps) if (!lamp.visible) lamp.visible = true;
+    return lamps.length;
+  }
+
+  // A selection rather than a sort: an insertion into a small array of the nearest, which is
+  // O(n * limit) and allocates nothing.
+  const best: number[] = [];
+  const distanceTo = (lamp: THREE.PointLight): number =>
+    (lamp.position.x - eye.x) * (lamp.position.x - eye.x) +
+    (lamp.position.y - eye.y) * (lamp.position.y - eye.y) +
+    (lamp.position.z - eye.z) * (lamp.position.z - eye.z);
+
+  for (let index = 0; index < lamps.length; index += 1) {
+    const distance = distanceTo(lamps[index] as THREE.PointLight);
+    let at = best.length;
+    while (at > 0 && distanceTo(lamps[best[at - 1] as number] as THREE.PointLight) > distance) at -= 1;
+    if (at < limit) {
+      best.splice(at, 0, index);
+      if (best.length > limit) best.pop();
+    }
+  }
+
+  const lit = new Set(best);
+  for (let index = 0; index < lamps.length; index += 1) {
+    const on = lit.has(index);
+    const lamp = lamps[index] as THREE.PointLight;
+    if (lamp.visible !== on) lamp.visible = on;
+  }
+  return best.length;
+}
+
+/**
  * How far a chunk stays drawn, in metres.
  *
  * The fog runs from 260 m to 1150, and by 420 m a chunk is a fifth of the way to opaque -
@@ -331,9 +381,14 @@ export function updateShadowCasters(
   let casting = 0;
   for (const mesh of chunks) {
     if (mesh.userData.castsChunk !== true) continue;
-    const dx = mesh.position.x - eye.x;
-    const dz = mesh.position.z - eye.z;
-    const wanted = Math.abs(dx) < reach && Math.abs(dz) < reach;
+    // **Does the shadow volume overlap this chunk at all?** Asked of the chunk's own extent,
+    // because that is the question the shadow camera is really asking: it covers `reach` metres
+    // around the player and clips everything else, so a chunk it does not touch contributes
+    // nothing but vertices. Asked of the *centre* instead, four hundred of the city's five
+    // hundred chunks stayed in the pass and put a million triangles into a map 140 m across.
+    const nearX = Math.abs(mesh.position.x - eye.x) - CHUNK / 2;
+    const nearZ = Math.abs(mesh.position.z - eye.z) - CHUNK / 2;
+    const wanted = nearX < reach && nearZ < reach;
     if (mesh.castShadow !== wanted) mesh.castShadow = wanted;
     if (wanted) casting += 1;
   }
@@ -353,7 +408,7 @@ const SUN_DISTANCE = 160;
  * preset rather than fixed: 2048 texels is 10.7 cm per texel, and 4096 is 5.4 cm,
  * which is the difference between a chunky shadow edge and a clean one.
  */
-const SHADOW_EXTENT = 110;
+const SHADOW_EXTENT = 70;
 
 /** Radial segments in the skyline cylinder; enough to read as round. */
 const BACKDROP_SEGMENTS = 96;
@@ -612,6 +667,13 @@ export function buildScene(
     // shadow volume cannot reach, and has to know which ones were casting to begin
     // with. See `BuiltScene.chunks`.
     mesh.userData.castsChunk = bucket.cast;
+    // The chunk's own extent, so the shadow pass can ask whether the shadow *volume* overlaps it
+    // rather than whether its centre is near - which, at these sizes, is the difference between
+    // one chunk in the pass and four hundred.
+    mesh.userData.minX = (bucket.cx + 0.5) * CHUNK - CHUNK / 2;
+    mesh.userData.maxX = (bucket.cx + 0.5) * CHUNK + CHUNK / 2;
+    mesh.userData.minZ = (bucket.cz + 0.5) * CHUNK - CHUNK / 2;
+    mesh.userData.maxZ = (bucket.cz + 0.5) * CHUNK + CHUNK / 2;
     mesh.matrixAutoUpdate = false;
     mesh.updateMatrix();
     geometry.computeBoundingSphere();
