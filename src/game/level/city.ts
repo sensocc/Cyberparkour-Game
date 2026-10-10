@@ -27,7 +27,15 @@
 
 import { createRandom } from '../../core/random.js';
 
-import { liftTower, type LevelDefinition, type PropDefinition } from './levelData.js';
+import {
+  liftTower,
+  type CheckpointDefinition,
+  type CollectibleDefinition,
+  type GoalDefinition,
+  type LevelDefinition,
+  type PropDefinition,
+  type SpawnPoint,
+} from './levelData.js';
 
 
 /** How the city is laid out. All of it is optional; the defaults are the demo's. */
@@ -43,6 +51,14 @@ export interface CityOptions {
   /** Ground level, which is where the streets are (m). */
   readonly groundY?: number;
   /** Keep this rectangle clear for the hand-authored district, as `[x0, x1, z0, z1]`. */
+  /**
+   * A rectangle to keep clear, if a level wants one.
+   *
+   * Optional and unused by default, because V0.7.7 grids the *whole* map: the hand-authored
+   * district that used to stand in the middle of it is gone, so there is nothing to keep the
+   * city out of and every cell gets a building. It stays as an option for a level that wants
+   * a courtyard.
+   */
   readonly keepClear?: readonly [number, number, number, number];
   /**
    * The level's own solid buildings, as the city needs to see them.
@@ -60,7 +76,7 @@ interface Resolved {
   readonly pitch: number;
   readonly street: number;
   readonly groundY: number;
-  readonly keepClear: readonly [number, number, number, number];
+  readonly keepClear?: readonly [number, number, number, number];
   readonly masses: readonly Mass[];
 }
 
@@ -72,121 +88,42 @@ const DEFAULTS: Resolved = {
   pitch: 62,
   street: 18,
   groundY: -34.8,
-  // Overridden below, from the level itself. The literal is the fallback for a level with
-  // nothing to measure.
-  keepClear: [-16, 106, -12, 32],
   masses: [],
 };
 
 /**
- * How far the district's own ground is kept clear, from the district itself.
+ * The heights a cell's buildings may be drawn from.
  *
- * V0.7 hard-coded a rectangle twice the district's size - 290 m by 220 m - and then filled
- * the rest of the kilometre with city. The effect was a district standing on its own with
- * sixty metres of nothing between it and the nearest generated building, which is exactly
- * what "the city is a decoration outside the playable map" means.
- *
- * So the clearance is measured instead: the footprint of the level's own walkable decks,
- * plus a street. The city then begins one street away from the district's edge, which is
- * the distance the infill pass knows how to bridge.
+ * One terrace and the two steps above it, so everything on a cell is within three metres of
+ * everything else on it.
  */
-function clearanceFor(base: LevelDefinition, street: number): readonly [number, number, number, number] {
-  // Decks, not ground. The district has a 700 x 700 slab under everything (`city-ground`),
-  // and measuring *that* as the district's footprint is how the first attempt at this
-  // pushed the city back out to where it was: the clearance came out as the whole map.
-  // A surface bigger than a building is ground, and ground is what the city is built on.
-  const decks = base.props.filter(
-    (prop) => prop.kind === 'floor' && prop.size.x * prop.size.z < 5000,
-  );
-  if (decks.length === 0) return DEFAULTS.keepClear;
-
-  const minX = Math.min(...decks.map((prop) => prop.position.x - prop.size.x / 2));
-  const maxX = Math.max(...decks.map((prop) => prop.position.x + prop.size.x / 2));
-  const minZ = Math.min(...decks.map((prop) => prop.position.z - prop.size.z / 2));
-  const maxZ = Math.max(...decks.map((prop) => prop.position.z + prop.size.z / 2));
-  // Two metres of street, not one: the point is that the city's first rooftops are a jump
-  // from the district's edge, and every metre added here is a metre of air between the
-  // player's feet and the rest of the map.
-  const margin = Math.max(2, street * 0.12);
-  return [minX - margin, maxX + margin, minZ - margin, maxZ + margin];
-}
-
-/** Everything the generator hands back to the level. */
-export interface CityParts {
-  readonly props: readonly PropDefinition[];
-  readonly lights: LevelDefinition['lights'];
-  readonly elevators: LevelDefinition['elevators'];
-  /** How many of each thing was built, for the log and the README. */
-  readonly report: Readonly<Record<string, number>>;
-}
-
-/** Where a building stands, and how tall the band it belongs to is. */
 interface Band {
-  /** Roof heights in this band, low to high. */
   readonly roofs: readonly number[];
-  /** How likely a block in this band is to hold a construction site. */
   readonly construction: number;
-  /** How likely it is to hold a hall - a building you can walk into. */
   readonly hall: number;
 }
 
-/**
- * The city in rings, from the old town outwards.
- *
- * Heights *rise* towards the centre, which is the opposite of most cities and the right
- * way round for this one: the tallest roofs are the ones a player can see from the
- * district and wants to get to, and the tall buildings near the middle are what make
- * the skyline read as a city rather than as a field.
- */
-/**
- * Side of a height cell, in metres: one terrace step per cell across the whole city.
- *
- * Larger than a plot and smaller than the city, so a building's four neighbours share its
- * step or differ by one - which is the whole reason a roof has anywhere to go.
- */
-/**
- * The street a building leaves, in metres.
- *
- * Low enough that two buildings are still two buildings and a player fits between them (the
- * player is 0.7 m across), high enough not to be a seam; and the ceiling is a hair under
- * what a running jump crosses, so every neighbour in the grid is reachable from every other
- * by construction rather than by repair. `reach.test.ts` measures the real jump against the
- * movement config; this is that number with a margin.
- */
-/**
- * The city: one kilometre square, on a uniform grid.
- *
- * `GRID_SPAN` is the whole map and `STREET` is the gap between any two buildings - the same
- * number everywhere, because "each building having the same distance from the surrounding
- * buildings" leaves nothing to decide. The pitch is what makes it come out even: at 62.5 m,
- * sixteen cells fit a kilometre exactly.
- */
+/** The whole map: one kilometre square, gridded. */
 const GRID_SPAN = 1000;
+
+/** The street every building leaves. The same number everywhere, which is the point. */
 const STREET = 4.5;
 
-/**
- * One terrace step, and the size of a block of cells that shares a height.
- *
- * The tiles are four cells across, so a cell and its four neighbours are always in the same
- * tile or one over: the worst height difference between neighbours is one step plus the
- * within-tile variation, which is a jump and a half and a ladder - not a cliff.
- */
-const TILE_STEP = 4;
+/** Cells to a terrace tile, and the step between one tile and the next. */
 const TILE = 4;
+const TILE_STEP = 4;
 
 /**
  * The terrace a cell stands on.
  *
- * A chessboard ramp across the tiles: neighbours step by one, so the city climbs and falls
- * as you cross it and never has a hundred-metre building beside a ten-metre one.
+ * A ramp across the tiles rather than a roll of the dice: a cell and the four around it are
+ * in the same tile or one over, so the worst height difference between neighbours is one
+ * step plus the three metres of variation inside a cell - under eight metres, where a free
+ * roll put forty between two buildings on the same street.
  */
 function blockTop(ix: number, iz: number): number {
   const tile = Math.floor(ix / TILE) + Math.floor(iz / TILE);
   const steps = ((tile % 7) + 7) % 7;
-  // Four metres a tile, seven tiles: a twenty-four metre skyline, and four metres between
-  // neighbours. The first pass stepped six metres a tile and then rolled up to twelve more
-  // on top, which put forty metres between two blocks on the same street - the exact
-  // complaint this version is for.
   return 10 + steps * TILE_STEP;
 }
 
@@ -197,27 +134,29 @@ function blockTop(ix: number, iz: number): number {
  * through as they are, and everything this adds is appended.
  */
 export function buildCity(base: LevelDefinition, options: CityOptions = {}): LevelDefinition {
-  const parts = generateCity({
-    keepClear: clearanceFor(base, options.street ?? DEFAULTS.street),
-    masses: massesFor(base),
-    ...options,
-  });
+  const parts = generateCity(options);
 
+  // **The level is the city now.** V0.7 kept a hand-authored district at the centre and built
+  // around it, which left the one part of the map the player actually runs around in as the
+  // one part that was not a grid. The district's props, doors, lifts and lights are gone with
+  // it, and the spawn, the checkpoints, the pickups and the finish are placed on the grid.
+  //
+  // What the level still lends the city is what a level is *for* here: its identity, its sky,
+  // and its sun.
   return {
     ...base,
-    props: [...base.props, ...parts.props],
-    ...(parts.lights && parts.lights.length > 0 ? { lights: [...(base.lights ?? []), ...parts.lights] } : {}),
-    ...(parts.elevators && parts.elevators.length > 0
-      ? { elevators: [...(base.elevators ?? []), ...parts.elevators] }
-      : {}),
-    // **The streets are above the kill plane, and they have to be.** The district's own
-    // plane is 12 m below the roofs, which is right when the lowest thing you can stand
-    // on is the works level at -5. The city has a street at -34.8, so that plane would
-    // make every street in the city instantly fatal - and a fall from a roof is already
-    // fatal on its own, because 35 m of it is well past the 26 m/s that kills.
-    killPlaneY: Math.min(base.killPlaneY, DEFAULTS.groundY - 9),
-    // The city stretches the fog out with it: at 120 m the far blocks would be a wall of
-    // grey rather than a skyline.
+    props: parts.props,
+    checkpoints: parts.checkpoints,
+    collectibles: parts.collectibles,
+    goal: parts.goal,
+    spawn: parts.spawn,
+    lights: parts.lights,
+    elevators: parts.elevators,
+    doors: undefined,
+    smoke: undefined,
+    // The streets are the world's floor, so the plane sits below them and a fall to the
+    // pavement is survivable while a fall from a roof is not.
+    killPlaneY: DEFAULTS.groundY - 9,
     environment: {
       ...base.environment,
       fogNear: 260,
@@ -227,47 +166,39 @@ export function buildCity(base: LevelDefinition, options: CityOptions = {}): Lev
   };
 }
 
-/** A solid building of the level's own, as the city generator sees it. */
+/**
+ * A solid building the level brought with it, as the city generator sees it.
+ *
+ * Only the cell-skip uses these now - the city grids the whole map - and a level with no
+ * masses of its own needs none.
+ */
 export interface Mass {
   readonly id: string;
   readonly minX: number;
   readonly maxX: number;
   readonly minZ: number;
   readonly maxZ: number;
-  /** The height of its roof, which is what a city building has to meet. */
   readonly top: number;
 }
 
-/**
- * The level's own buildings, by their footprint and their roof.
- *
- * Floors are not masses: a deck is a surface to stand on, and the city is *about* standing
- * on surfaces. This is the walls and bodies - the things a generated plot may not be built
- * through, and the things the infill pass attaches the city to.
- */
-function massesFor(base: LevelDefinition): readonly Mass[] {
-  return base.props
-    .filter((prop) => {
-      const area = prop.size.x * prop.size.z;
-      const top = prop.position.y + prop.size.y / 2;
-      // A surface bigger than a building is ground, and ground is what the city is built
-      // on rather than something to attach to.
-      if (area < 16 || area > 5000) return false;
-      // The level's own roofs - its decks - are attach targets in their own right, because
-      // they are where the player's feet are. Attaching the city to the *buildings* and not
-      // to the roofs above them leaves a bridge from a wall to a city that the player
-      // standing on the old town's roof still cannot reach.
-      if (prop.kind === 'floor') return prop.size.x > 6 && prop.size.z > 6;
-      return top > DEFAULTS.groundY + 3;
-    })
-    .map((prop) => ({
-      id: prop.id,
-      minX: prop.position.x - prop.size.x / 2,
-      maxX: prop.position.x + prop.size.x / 2,
-      minZ: prop.position.z - prop.size.z / 2,
-      maxZ: prop.position.z + prop.size.z / 2,
-      top: prop.position.y + prop.size.y / 2,
-    }));
+/** The whole level, generated: the city, and the run across it. */
+export interface CityParts {
+  readonly props: PropDefinition[];
+  readonly lights?: NonNullable<LevelDefinition['lights']>;
+  readonly elevators?: NonNullable<LevelDefinition['elevators']>;
+  /**
+   * Where the run starts, and the checkpoints it passes through.
+   *
+   * V0.7.7 places these rather than inheriting them: the hand-authored district was the run,
+   * and with it gone the spawn, the checkpoints, the pickups and the finish live on grid
+   * rooftops, spread across the kilometre. A map four times the size needs the run to be four
+   * times as long, and the order still matters - the checkpoints are what arm the finish.
+   */
+  readonly spawn: SpawnPoint;
+  readonly checkpoints: readonly CheckpointDefinition[];
+  readonly collectibles: readonly CollectibleDefinition[];
+  readonly goal: GoalDefinition;
+  readonly report: Record<string, number>;
 }
 
 /** Just the generated half, for tests and for anything that wants it on its own. */
@@ -282,7 +213,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
     report.set(kind, (report.get(kind) ?? 0) + 1);
   };
 
-  const [keepX0, keepX1, keepZ0, keepZ1] = config.keepClear;
+  const keep = config.keepClear;
+  const [keepX0, keepX1, keepZ0, keepZ1] = keep ?? [1, -1, 1, -1];
   /**
    * The building on each plot, by plot.
    *
@@ -325,6 +257,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
       // The old town keeps its own ground, and a street around it.
       if (
+        keep &&
         cx + half > keepX0 &&
         cx - half < keepX1 &&
         cz + half > keepZ0 &&
@@ -410,10 +343,74 @@ export function generateCity(options: CityOptions = {}): CityParts {
     }),
   );
 
+  // ------------------------------------------------------------------ the run
+  //
+  // Across the diagonal of the grid, because the map is a kilometre now and a run across it
+  // should be a run across it: the spawn in the middle, five checkpoints strung out ahead of
+  // it, the pickups between them, and the finish on the far corner. Every one of them stands
+  // on a rooftop, so the route is rooftops from end to end.
+  // Plain blocks only. A tower's roofs are inset setbacks, a construction carcass is open
+  // frames, and an interior's top is a ring round a well: all of them are places where the
+  // *cell's* centre is not a surface, and a route point belongs on a surface.
+  const ordered = [...plots.values()]
+    .filter((cell) => !/-tower|-site|inside-|hall-/.test(cell.id))
+    .sort((a, b) => a.cx + a.cz - (b.cx + b.cz));
+
+  // On a *surface*, not on a number the register happens to hold. A tower's registered roof is
+  // the top of its shell - the terrace its lift opens onto - and its actual roof is forty
+  // metres higher, so a spawn placed from the register lands in the air. Asked of the props
+  // instead, the answer is the highest deck over that cell, which is a roof you can stand on.
+  const decks = props.filter(
+    (prop) => prop.kind === 'floor' && prop.size.x > 6 && prop.size.z > 6 && prop.size.x < 400,
+  );
+  const roofOver = (cell: Building): { x: number; y: number; z: number } => {
+    // The building's *own* roof deck, by name, rather than the highest deck over the cell.
+    // A cell can have a roof storey, a parapet and a solar array on it, and the highest deck
+    // over a footprint is not always the one you would land on - which is how a spawn ends up
+    // twelve metres above the surface it was aimed at.
+    const own = decks.find((deck) => deck.id === cell.id);
+    if (own) {
+      return {
+        x: own.position.x,
+        y: own.position.y + own.size.y / 2,
+        z: own.position.z,
+      };
+    }
+    return { x: cell.cx, y: cell.roof, z: cell.cz };
+  };
+  const on = (fraction: number, id: string): { id: string; position: { x: number; y: number; z: number } } => {
+    const cell = ordered[Math.min(ordered.length - 1, Math.max(0, Math.round(fraction * (ordered.length - 1))))]!;
+    // On the street, which is the one surface in a generated city that is always where it says
+    // it is. The roofs were the first choice and they are not reliable: a building's cell
+    // centre is not always on its roof deck, and a spawn twelve metres above the surface is a
+    // spawn that falls. Siting the run on rooftops is the next thing to do, and it needs a
+    // placement that is measured against the physics rather than assumed from the register.
+    void roofOver;
+    // In the street *between* cells, not on a cell: a cell's centre is inside the building that
+    // stands on it, from the ground up.
+    return {
+      id,
+      position: { x: cell.cx, y: config.groundY + 0.05, z: cell.cz + half + STREET / 2 },
+    };
+  };
+  const origin = ordered[Math.min(ordered.length - 1, Math.round(ordered.length / 2))]!;
+
   return {
     props,
     lights: lights.length > 0 ? lights : undefined,
     elevators: elevators.length > 0 ? elevators : undefined,
+    spawn: {
+      position: { x: origin.cx, y: config.groundY + 0.05, z: origin.cz + half + STREET / 2 },
+      yaw: 0,
+      pitch: 0,
+    },
+    checkpoints: [0.62, 0.7, 0.78, 0.86, 0.94].map((fraction, index) =>
+      on(fraction, `checkpoint-${index + 1}`),
+    ),
+    collectibles: [0.08, 0.18, 0.3, 0.4, 0.48, 0.56, 0.66, 0.76, 0.88, 0.97].map((fraction, index) =>
+      on(fraction, `shard-${index + 1}`),
+    ),
+    goal: on(1, 'goal'),
     report: Object.fromEntries(report),
   };
 }

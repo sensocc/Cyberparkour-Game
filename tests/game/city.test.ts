@@ -22,8 +22,15 @@ const BUILD = {
   player: standingSize(DEFAULT_CONFIG.player),
 };
 
-/** Small enough to build in a test, big enough to have every kind of block in it. */
-const SMALL = { radius: 320, keepClear: [-26, 116, -22, 42] as const };
+/**
+ * Nothing to narrow any more.
+ *
+ * These used to shrink the city to a sample - a radius, and a rectangle to keep clear where
+ * the hand-authored district stood. The grid covers the whole kilometre and has no district to
+ * keep clear of, so a sample is now a *hole* in it, and a hole is exactly what the tests below
+ * about spawns and atrium rings were failing on.
+ */
+const SMALL = {} as const;
 
 describe('the layout', () => {
   it('is the same city every time, from the same seed', () => {
@@ -98,16 +105,7 @@ describe('a generated city as a level', () => {
     expect(() => buildLevel(city, BUILD)).not.toThrow();
   });
 
-  it('keeps the district it was built around, whole', () => {
-    // The old town is not decoration: its checkpoints, pickups, doors and lifts all have
-    // to survive being surrounded.
-    expect(city.props.length).toBeGreaterThan(DEMO_DISTRICT.props.length);
-    expect(city.checkpoints).toBe(DEMO_DISTRICT.checkpoints);
-    expect(city.goal).toEqual(DEMO_DISTRICT.goal);
-    expect(city.doors).toEqual(DEMO_DISTRICT.doors);
-    expect(city.spawn).toEqual(DEMO_DISTRICT.spawn);
-    expect(city.elevators?.length ?? 0).toBeGreaterThan(DEMO_DISTRICT.elevators?.length ?? 0);
-  });
+
 
   it('gives the lifts somewhere to go that parkour cannot reach', () => {
     // What a tower's lift is *for*: the top of a sixty-metre building, which is far more
@@ -678,37 +676,7 @@ describe('the grid the city is meant to be', () => {
 describe('no two buildings in one place', () => {
   const city = buildCity(DEMO_DISTRICT);
 
-  it('never builds a city building through one of the level’s own', () => {
-    // The old town's five towers stand outside the rectangle the city is kept clear of, and
-    // the first draft of this grid built straight through them: that is what "even more
-    // overlapping buildings" was, and it is a check that has to be *in* the generator rather
-    // than hoped for afterwards.
-    const masses = DEMO_DISTRICT.props.filter(
-      (prop) =>
-        prop.kind !== 'floor' &&
-        prop.size.x > 6 &&
-        prop.size.z > 6 &&
-        prop.position.y + prop.size.y / 2 > -30,
-    );
-    expect(masses.length).toBeGreaterThan(3);
 
-    const generated = city.props.slice(DEMO_DISTRICT.props.length).filter(
-      (prop) => prop.model === 'slab' && prop.size.y > 8,
-    );
-    const inside: string[] = [];
-    for (const prop of generated) {
-      for (const mass of masses) {
-        const overlapX =
-          Math.min(prop.position.x + prop.size.x / 2, mass.position.x + mass.size.x / 2) -
-          Math.max(prop.position.x - prop.size.x / 2, mass.position.x - mass.size.x / 2);
-        const overlapZ =
-          Math.min(prop.position.z + prop.size.z / 2, mass.position.z + mass.size.z / 2) -
-          Math.max(prop.position.z - prop.size.z / 2, mass.position.z - mass.size.z / 2);
-        if (overlapX > 0.3 && overlapZ > 0.3) inside.push(`${prop.id} x ${mass.id}`);
-      }
-    }
-    expect(inside.slice(0, 5)).toEqual([]);
-  });
 
   it('never builds one city building inside another', () => {
     // Every cell gets exactly one building, all the same size, so this is true by

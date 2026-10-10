@@ -41,54 +41,55 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
-3. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-4. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-5. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-6. [What V0.7.2 fixes](#what-v072-fixes)
-7. [What V0.7.1 optimises](#what-v071-optimises)
-8. [What V0.7 delivers](#what-v07-delivers)
-9. [What V0.6.1 fixes](#what-v061-fixes)
-10. [What V0.6 delivers](#what-v06-delivers)
-11. [What V0.5 delivered](#what-v05-delivered)
-12. [Quick start](#quick-start)
-13. [Controls](#controls)
-14. [What you should see](#what-you-should-see)
-15. [Settings](#settings)
-16. [Camera effects](#camera-effects)
-17. [Feel](#feel)
-18. [Your body](#your-body)
-19. [Optimisation](#optimisation)
-20. [Locomotion](#locomotion)
-21. [The movement state machine](#the-movement-state-machine)
-22. [The manoeuvre bands](#the-manoeuvre-bands)
-23. [Wall running](#wall-running)
-24. [Wall jumping](#wall-jumping)
-25. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-26. [The landing roll](#the-landing-roll)
-27. [Pipe climbing](#pipe-climbing)
-28. [Interiors and doors](#interiors-and-doors)
-29. [Lifts](#lifts)
-30. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-31. [Checkpoints and respawn](#checkpoints-and-respawn)
-32. [The district](#the-district)
-33. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-34. [Neon](#neon)
-35. [Fall damage and health](#fall-damage-and-health)
-36. [Models and surfaces](#models-and-surfaces)
-37. [Sound](#sound)
-38. [How the textures are made](#how-the-textures-are-made)
-39. [Architecture](#architecture)
-40. [How a frame works](#how-a-frame-works)
-41. [Collision](#collision)
-42. [Crash reporting](#crash-reporting)
-43. [The HUDs](#the-huds)
-44. [Testing](#testing)
-45. [Continuous integration](#continuous-integration)
-46. [Project layout](#project-layout)
-47. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-48. [Out of scope for V0.7](#out-of-scope-for-v07)
-49. [Roadmap](#roadmap)
+2. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
+3. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+4. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+5. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+6. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+7. [What V0.7.2 fixes](#what-v072-fixes)
+8. [What V0.7.1 optimises](#what-v071-optimises)
+9. [What V0.7 delivers](#what-v07-delivers)
+10. [What V0.6.1 fixes](#what-v061-fixes)
+11. [What V0.6 delivers](#what-v06-delivers)
+12. [What V0.5 delivered](#what-v05-delivered)
+13. [Quick start](#quick-start)
+14. [Controls](#controls)
+15. [What you should see](#what-you-should-see)
+16. [Settings](#settings)
+17. [Camera effects](#camera-effects)
+18. [Feel](#feel)
+19. [Your body](#your-body)
+20. [Optimisation](#optimisation)
+21. [Locomotion](#locomotion)
+22. [The movement state machine](#the-movement-state-machine)
+23. [The manoeuvre bands](#the-manoeuvre-bands)
+24. [Wall running](#wall-running)
+25. [Wall jumping](#wall-jumping)
+26. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+27. [The landing roll](#the-landing-roll)
+28. [Pipe climbing](#pipe-climbing)
+29. [Interiors and doors](#interiors-and-doors)
+30. [Lifts](#lifts)
+31. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+32. [Checkpoints and respawn](#checkpoints-and-respawn)
+33. [The district](#the-district)
+34. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+35. [Neon](#neon)
+36. [Fall damage and health](#fall-damage-and-health)
+37. [Models and surfaces](#models-and-surfaces)
+38. [Sound](#sound)
+39. [How the textures are made](#how-the-textures-are-made)
+40. [Architecture](#architecture)
+41. [How a frame works](#how-a-frame-works)
+42. [Collision](#collision)
+43. [Crash reporting](#crash-reporting)
+44. [The HUDs](#the-huds)
+45. [Testing](#testing)
+46. [Continuous integration](#continuous-integration)
+47. [Project layout](#project-layout)
+48. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+49. [Out of scope for V0.7](#out-of-scope-for-v07)
+50. [Roadmap](#roadmap)
 
 ---
 
@@ -96,7 +97,7 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.6` |
+| Version | `0.7.7` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
@@ -104,14 +105,46 @@ single pixel or millimetre of how the game plays.
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.6 is finished and frozen: the city is a grid, and the machinery that kept trying to make it
-one is gone. The district is *not* yet labelled Level 1 - that is V0.8's job.
+V0.7.7 is finished and frozen: the whole map is the grid. The district is gone, and the run -
+spawn, checkpoints, pickups, finish - is generated across the kilometre.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.7 does: the whole map, not the gaps around it
+
+V0.7.6 gridded everything *except* the hand-authored district, which meant the one part of the
+map the player actually runs around in was the one part that was not a grid. That was the
+mistake, stated plainly, and it came from reading V0.7's brief ("keep the district as the
+centre") as "the district is sacred and the city is the surround".
+
+**The district is gone.** Its props, doors, lifts, lights and smoke are not merged into the city
+any more - they are replaced by it. `buildCity` no longer appends a city to a level; it *builds*
+the level. What a level still lends the city is what a level is for here: its identity, its sky
+and its sun.
+
+**The run is generated, across the kilometre.** The district *was* the run - the spawn, the five
+checkpoints, the eight pickups and the finish all lived on it - so with it gone they have to come
+from somewhere, and they come from the grid: the spawn in the middle, five checkpoints strung out
+ahead of it, ten pickups between them, and the finish on the far corner. All of them on the
+ground, in the streets between buildings, because that is the one surface in a generated city
+that is always where it says it is.
+
+That last sentence is a retreat rather than a design. Placing the run on *rooftops* was the first
+attempt and it failed twice - a cell's centre is inside the building that stands on it, and a
+tower's registered roof is its shell rather than its roof, so route points ended up inside
+buildings and twelve metres above surfaces. Siting it on roofs needs a placement measured
+against the physics rather than assumed from the generator's own bookkeeping, and that is not
+done.
+
+**And where the district used to be, buildings now stand.** `keepClear` and `masses` are
+opt-in options that nothing passes, so every cell of the grid gets a building - the map is
+1 km x 1 km of them, uniformly spaced, with nothing carved out of the middle.
 
 ---
 
@@ -1932,4 +1965,6 @@ V0.7.6 removed more code than it added, and the city got better: the grid is the
 overlaps are gone by construction, and there is nothing left in the generator that can put two
 buildings in one place.
 
-The next milestone is V0.8: polish, and labelling the district as Level 1.
+V0.7.7 finished the job V0.7.6 started: the grid is the map, and the map is the grid.
+
+The next milestone is V0.8: siting the run on rooftops, polish, and the graphics pass.
