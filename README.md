@@ -5,9 +5,10 @@
 A low-poly, Quake-styled **first-person parkour game** set in a cyberpunk city,
 in the spirit of *Mirror's Edge*.
 
-This repository currently contains **V0.7.1**. V0.3 made the roof a route, V0.4 took the
+This repository currently contains **V0.7.2**. V0.3 made the roof a route, V0.4 took the
 route indoors, V0.5 made it a level, and V0.6 gave the player a body and a settings
-screen. **V0.7 made it a city; V0.7.1 made the city run.**
+screen. **V0.7 made it a city, V0.7.1 made the city run, and V0.7.2 made it somewhere you
+can get to.**
 
 The hand-authored district is still there, in the middle, exactly as it was — and around
 it is a kilometre of generated city: **5,233 props**, 5,264 colliders, streets 18 m wide
@@ -21,6 +22,14 @@ The old platform lifts are gone. A lift is now a thing you *call*, walk into, se
 floor, and ride: the gate shuts, the car climbs, the gate opens, and you step out onto a
 roof.
 
+**V0.7.2 is the city joined up.** V0.7 generated a skyline and never asked whether you
+could cross it: a block filled two thirds of its plot, so the buildings stood forty metres
+apart with the street between them, and a jump reaches six. The streets are full now -
+331 in-between buildings, nearly all of them decorated differently - and every one of the city's 707 rooftops has
+another within a jump of it. The lifts moved too: a tower's shaft used to stand in the
+street with a second building next door to receive it at the top, and it is now a core in
+the corner of the building it serves, reachable from the lobby and from the roof.
+
 **V0.7.1 is the cost of all that, paid down.** A city is not a district that happens to be
 bigger: 41,915 model parts was 41,915 draw calls a frame, and five thousand colliders was
 five thousand collision tests per sub-step. Both are now proportional to what is on screen
@@ -32,49 +41,50 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.1 optimises](#what-v071-optimises)
-3. [What V0.7 delivers](#what-v07-delivers)
-4. [What V0.6.1 fixes](#what-v061-fixes)
-5. [What V0.6 delivers](#what-v06-delivers)
-6. [What V0.5 delivered](#what-v05-delivered)
-7. [Quick start](#quick-start)
-8. [Controls](#controls)
-9. [What you should see](#what-you-should-see)
-10. [Settings](#settings)
-11. [Camera effects](#camera-effects)
-12. [Feel](#feel)
-13. [Your body](#your-body)
-14. [Optimisation](#optimisation)
-15. [Locomotion](#locomotion)
-16. [The movement state machine](#the-movement-state-machine)
-17. [The manoeuvre bands](#the-manoeuvre-bands)
-18. [Wall running](#wall-running)
-19. [Wall jumping](#wall-jumping)
-20. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-21. [The landing roll](#the-landing-roll)
-22. [Pipe climbing](#pipe-climbing)
-23. [Interiors and doors](#interiors-and-doors)
-24. [Lifts](#lifts)
-25. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-26. [Checkpoints and respawn](#checkpoints-and-respawn)
-27. [The district](#the-district)
-28. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-29. [Neon](#neon)
-30. [Fall damage and health](#fall-damage-and-health)
-31. [Models and surfaces](#models-and-surfaces)
-32. [Sound](#sound)
-33. [How the textures are made](#how-the-textures-are-made)
-34. [Architecture](#architecture)
-35. [How a frame works](#how-a-frame-works)
-36. [Collision](#collision)
-37. [Crash reporting](#crash-reporting)
-38. [The HUDs](#the-huds)
-39. [Testing](#testing)
-40. [Continuous integration](#continuous-integration)
-41. [Project layout](#project-layout)
-42. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-43. [Out of scope for V0.7](#out-of-scope-for-v07)
-44. [Roadmap](#roadmap)
+2. [What V0.7.2 fixes](#what-v072-fixes)
+3. [What V0.7.1 optimises](#what-v071-optimises)
+4. [What V0.7 delivers](#what-v07-delivers)
+5. [What V0.6.1 fixes](#what-v061-fixes)
+6. [What V0.6 delivers](#what-v06-delivers)
+7. [What V0.5 delivered](#what-v05-delivered)
+8. [Quick start](#quick-start)
+9. [Controls](#controls)
+10. [What you should see](#what-you-should-see)
+11. [Settings](#settings)
+12. [Camera effects](#camera-effects)
+13. [Feel](#feel)
+14. [Your body](#your-body)
+15. [Optimisation](#optimisation)
+16. [Locomotion](#locomotion)
+17. [The movement state machine](#the-movement-state-machine)
+18. [The manoeuvre bands](#the-manoeuvre-bands)
+19. [Wall running](#wall-running)
+20. [Wall jumping](#wall-jumping)
+21. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+22. [The landing roll](#the-landing-roll)
+23. [Pipe climbing](#pipe-climbing)
+24. [Interiors and doors](#interiors-and-doors)
+25. [Lifts](#lifts)
+26. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+27. [Checkpoints and respawn](#checkpoints-and-respawn)
+28. [The district](#the-district)
+29. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+30. [Neon](#neon)
+31. [Fall damage and health](#fall-damage-and-health)
+32. [Models and surfaces](#models-and-surfaces)
+33. [Sound](#sound)
+34. [How the textures are made](#how-the-textures-are-made)
+35. [Architecture](#architecture)
+36. [How a frame works](#how-a-frame-works)
+37. [Collision](#collision)
+38. [Crash reporting](#crash-reporting)
+39. [The HUDs](#the-huds)
+40. [Testing](#testing)
+41. [Continuous integration](#continuous-integration)
+42. [Project layout](#project-layout)
+43. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+44. [Out of scope for V0.7](#out-of-scope-for-v07)
+45. [Roadmap](#roadmap)
 
 ---
 
@@ -82,22 +92,125 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.1` |
+| Version | `0.7.2` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1096 across 41 files |
+| Tests | 1107 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.1 is finished and frozen, and it is the version where the city started to run. The
-district is *not* yet labelled Level 1 - that is V0.8's job.
+V0.7.2 is finished and frozen: the city you can cross and the lifts you can only get into
+from inside. The district is *not* yet labelled Level 1 - that is V0.8's job.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.2 fixes
+
+Two things V0.7 got wrong, both of them the same mistake: a city that looked right from a
+distance and did not work when you were standing in it.
+
+### The gaps between the buildings
+
+V0.7's blocks were sized at 66-96% of a 44 m plot. On a 62 m grid, that left **forty
+metres between one building and the next** - and a running jump, worked out from the
+movement code, crosses **six and a half**. The city was a diorama: every roof reachable by
+falling off it and by nothing else.
+
+Three changes, in order of how much they matter:
+
+- **Buildings fill their plots.** A block is 87-97% of its plot now, which takes the
+  street from forty metres to about twenty. That is a street; it is still three times a
+  jump.
+- **Every gap gets a building in it.** The infill pass walks the plots, measures the gap
+  between each pair of neighbours, and drops one narrow building in the middle, sized so
+  that what is left over at each end is a jump. Its roof is the taller neighbour's minus
+  most of a pull-up, so it is one move from either side.
+- **The roof bands step by 2.2 m, not 4.** V0.7's README claimed a block's roofs were "a
+  jump or a vault apart". They were four metres apart, and a jump gets one - so the
+  sentence was false, and this is the version where it is true.
+
+`src/game/reach.ts` is where the numbers come from, and it derives them from the movement
+config rather than naming them: the gap is the airtime of a jump times the speed a run
+carries into it, the rise is the ceiling of a pull-up. It is checked against the
+*simulation* - `reach.test.ts` runs the player off a ledge and measures what they actually
+cross - and the generator builds to nine tenths of it, because a gap built exactly to the
+limit is a gap a player lands one centimetre short of.
+
+The result, measured over the whole city by `city.test.ts`:
+
+| | |
+| --- | --- |
+| Walkable roofs in the city | 707 |
+| Farther from their nearest neighbour than a jump | **0** |
+| Reachable upward as well as across | 685 (97%) |
+| Infill buildings | 331 |
+| Distinct decoration signatures among them | 289 |
+
+The 22 roofs that are within a jump but only *downward* are the honest remainder: a
+terrace two and a half metres up is a pull-up and ten metres up is a climb, and every roof
+in the city has a ladder for the ones a jump cannot make. That is what "and if it is, there
+has to be other way" asks for, and the ladders have done it since V0.3 - they only had
+nowhere to be used.
+
+### The elevators were outside
+
+A V0.7 tower's shaft stood in the street beside the building, with the car riding up the
+outside of somebody's wall, and a *second* building next door whose only purpose was to
+receive it at the top. That was a fix for a real bug - a shaft placed inside the footprint
+ended up inside the building's own mass, and the physics resolved a rider standing in a
+solid by pushing them fifty metres straight up - but it solved it by moving the lift out
+of the building instead of into it.
+
+A tower's lift is a core in the corner of its own footprint now, and where the doors are
+is the whole design:
+
+```
+     +----------------------+   the shell, full height of the inside
+     |  sheds   |  setback  |   the setback rises out of the shell's roof
+     |          |           |   on the far side of the shaft
+     |  [LIFT]  |           |
+     +----------------------+
+```
+
+- **Every doorway between the street and the roof faces into the building.** You go in
+  through the front door, across the ground floor, into the lift. There is no door onto
+  the pavement, so there is no way to board it from outside - not a wall around a shaft,
+  but a shaft nobody can get to.
+- **The top doorway opens onto the building's own roof**, where the car arrives level with
+  the setback's roof and stepping out is stepping onto the building. `city.test.ts` holds
+  both ends to it: the shaft strictly inside the shell with room to stand in front of the
+  doors, and the lift's top floor *equal* to the deck of the building it is inside.
+- **The setback is on the far side of the shaft**, which is why the shaft is in a corner:
+  a setback centred over it puts thirty metres of solid through every floor the car
+  serves, and a merged city is no place to be re-learning that.
+
+The district's own two lift towers are unchanged. They are freestanding because they were
+built that way in V0.6.1 - they *are* the route from the works level to the roof - and
+"inside the building it is assigned to" does not apply to a building that is a lift.
+
+### What it cost
+
+Filling the streets is 5,233 props to 10,557, and 111,123 model parts against 42,000. The
+frame budget is held to what is in front of you rather than to what exists, so:
+
+| | V0.7.1 | V0.7.2 |
+| --- | --- | --- |
+| Props | 5,233 | 10,557 |
+| Draw calls from a street | 471 | **633** |
+| Visible triangles, same view | ~400k | **~598k** |
+| Chunks casting into the shadow map | 193 | **~200** |
+
+Half again as much frame for two and a half times the city, which is what "preferably
+without damaging the FPS" can honestly be. One free win came out of measuring it: a third
+of the props were ladder *sections* - 5 m each so the rungs stayed rungs - and at 7 m a
+building needs a third fewer of them and still reads as a ladder.
 
 ---
 
@@ -1588,5 +1701,9 @@ for, removing what it asks for and does not need, and proving the result is the 
 Both halves were checked against the old behaviour rather than against a feeling - the
 merge against the polygons it has to reproduce, and the physics against the solver it
 replaced.
+
+V0.7.2 joined the city up: it took the generator's own claims - a jump between roofs, a
+lift you have to go inside to use - and turned them into measurements with tests behind
+them, which is the only way either claim was worth making.
 
 The next milestone is V0.8: polish, and labelling the district as Level 1.

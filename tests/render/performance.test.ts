@@ -71,10 +71,10 @@ describe('the cost of a frame', () => {
       // about 1,100, which is the difference between a frame the browser can
       // submit and one it cannot.
       expect(built.chunks.length).toBeGreaterThan(500);
-      expect(built.chunks.length).toBeLessThan(2500);
+      expect(built.chunks.length).toBeLessThan(3500);
 
       const parts = city.props.length;
-      expect(built.chunks.length).toBeLessThan(parts / 4);
+      expect(built.chunks.length).toBeLessThan(parts / 3);
 
       // The build is on the critical path of a restart, so it is worth a ceiling of
       // its own - and it is *faster* than the unmerged build it replaces, because the
@@ -93,15 +93,15 @@ describe('the cost of a frame', () => {
       // On a street in the middle of the city, looking along it: the worst case is
       // a rooftop looking out over everything, and this is the common case.
       const drawn = visible(built.chunks, { x: 40, y: -32, z: 40 }, 0);
-      expect(drawn).toBeLessThan(500);
+      expect(drawn).toBeLessThan(900);
 
       // Looking up and across the roofs costs more, and still nothing like the
       // unmerged scene, which drew every part whatever direction it faced.
-      // Measured: 471 from the street, 462 from the roof, 193 casting into the
-      // shadow map. The ceilings below are slack around those numbers - what they
-      // are for is noticing if the merge or the caster cull goes away.
+      // Measured: 633 from the street on the filled-in city, 471 before it was filled.
+      // The ceilings are slack around those numbers - what they are for is noticing if
+      // the merge or the caster cull goes away.
       const overlooking = visible(built.chunks, { x: 40, y: 60, z: 40 }, 0.8);
-      expect(overlooking).toBeLessThan(900);
+      expect(overlooking).toBeLessThan(1000);
       expect(overlooking).toBeGreaterThan(0);
 
       // Behind the camera is not drawn at all, which is the property that merging
@@ -114,18 +114,41 @@ describe('the cost of a frame', () => {
     }
   });
 
-  it('draws about the same triangles it always did', () => {
-    // The optimisation is of *how* the geometry is submitted, not of the geometry.
-    // Anything else would have been a change to how the city looks.
+  it('draws about a tenth of the city it owns, because most of it is behind you', () => {
+    // V0.7.1's number was 471 draw calls and about 400k triangles for 5,233 props. V0.7.2
+    // fills the streets - 12,127 props, 111,123 parts - and asks for 633 draw calls and
+    // 600k *visible* triangles to draw them: a frame that costs half again as much for a
+    // city two and a half times the size, which is the point. What must not happen is the
+    // frame growing with the city rather than with what is in front of the player, so the
+    // triangle count here is the frustum-culled one.
     const built = buildScene(city);
     try {
-      let triangles = 0;
+      // All of it.
+      let owned = 0;
       for (const mesh of built.chunks) {
-        const index = mesh.geometry.getIndex();
-        triangles += (index?.count ?? 0) / 3;
+        owned += (mesh.geometry.getIndex()?.count ?? 0) / 3;
       }
-      expect(triangles).toBeGreaterThan(400_000);
-      expect(triangles).toBeLessThan(550_000);
+      expect(owned).toBeGreaterThan(1_000_000);
+
+      // What a frame actually submits, from a street in the middle of it all.
+      const camera = new THREE.PerspectiveCamera(82, 16 / 9, 0.05, 1200);
+      camera.position.set(40, -32, 40);
+      camera.updateMatrixWorld();
+      camera.updateProjectionMatrix();
+      const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse),
+      );
+      let visible = 0;
+      for (const mesh of built.chunks) {
+        const sphere = mesh.geometry.boundingSphere;
+        if (!sphere) continue;
+        if (frustum.intersectsSphere(new THREE.Sphere(sphere.center.clone().add(mesh.position), sphere.radius))) {
+          visible += (mesh.geometry.getIndex()?.count ?? 0) / 3;
+        }
+      }
+      expect(visible).toBeGreaterThan(200_000);
+      expect(visible).toBeLessThan(800_000);
+      expect(visible).toBeLessThan(owned * 0.7);
     } finally {
       built.dispose();
     }
@@ -142,7 +165,7 @@ describe('the cost of a frame', () => {
       // clipped, but only after its vertices were transformed. A handful of chunks
       // is a shadow pass of a handful of draw calls.
       expect(casting).toBeGreaterThan(0);
-      expect(casting).toBeLessThan(420);
+      expect(casting).toBeLessThan(520);
 
       for (const mesh of built.chunks) {
         if (Math.abs(mesh.position.x - eye.x) > reach || Math.abs(mesh.position.z - eye.z) > reach) {

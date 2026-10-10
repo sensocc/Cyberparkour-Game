@@ -28,6 +28,8 @@
 import { createRandom } from '../../core/random.js';
 
 import { liftTower, type LevelDefinition, type PropDefinition } from './levelData.js';
+import { crossingGap, crossingRise } from '../reach.js';
+import { DEFAULT_CONFIG } from '../../core/config.js';
 
 /** How the city is laid out. All of it is optional; the defaults are the demo's. */
 export interface CityOptions {
@@ -95,12 +97,12 @@ interface Band {
  */
 function bandFor(distance: number): Band {
   if (distance < 190) {
-    return { roofs: [22, 26, 30, 34], construction: 0.14, hall: 0.16 };
+    return { roofs: [22, 24.2, 26.4, 28.6, 30.8, 33], construction: 0.14, hall: 0.16 };
   }
   if (distance < 320) {
-    return { roofs: [14, 18, 22, 26], construction: 0.18, hall: 0.12 };
+    return { roofs: [14, 16.2, 18.4, 20.6, 22.8, 25], construction: 0.18, hall: 0.12 };
   }
-  return { roofs: [8, 12, 16, 20], construction: 0.12, hall: 0.08 };
+  return { roofs: [8, 10.2, 12.4, 14.6, 16.8, 19], construction: 0.12, hall: 0.08 };
 }
 
 /**
@@ -143,6 +145,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
   const props: PropDefinition[] = [];
   const lights: NonNullable<LevelDefinition['lights']>[number][] = [];
   const elevators: NonNullable<LevelDefinition['elevators']>[number][] = [];
+  /** Every building placed, in the order it was placed. */
+  const buildings: Building[] = [];
   const report = new Map<string, number>();
   const count = (kind: string): void => {
     report.set(kind, (report.get(kind) ?? 0) + 1);
@@ -150,6 +154,15 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
   const [keepX0, keepX1, keepZ0, keepZ1] = config.keepClear;
   const half = config.pitch / 2;
+  /**
+   * The building on each plot, by plot.
+   *
+   * The infill pass walks this rather than the props: after the main loop there are
+   * forty thousand props and no way to tell a wall from a walkway, and the one thing
+   * that matters is which masses face which.
+   */
+  const plots = new Map<string, Building>();
+  const plotKey = (gx: number, gz: number): string => `${gx}|${gz}`;
 
   for (let gx = -config.radius; gx <= config.radius; gx += config.pitch) {
     for (let gz = -config.radius; gz <= config.radius; gz += config.pitch) {
@@ -173,7 +186,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
       }
 
       const band = bandFor(distance);
-      const context = { props, lights, elevators, random, config, count };
+      const context = { props, lights, elevators, buildings, random, config, count, plots, gx, gz };
 
       const roll = random();
       if (roll < band.construction) {
@@ -200,6 +213,64 @@ export function generateCity(options: CityOptions = {}): CityParts {
     }
   }
 
+  // ------------------------------------------------------------- the in-between
+  //
+  // Buildings fill their plots now, which takes the gaps between them from forty metres
+  // down to twenty - a real street, and still three times what a running jump crosses. So
+  // every gap gets one more building in it, sized to leave a jump on either side.
+  //
+  // This is the difference between a city and a diorama. V0.7's blocks were an island
+  // each: reachable by falling off, and by nothing else. With the streets filled, a roof
+  // is a roof you can leave, in any direction, without going down to the pavement first.
+  //
+  // The height is the taller neighbour's minus most of a pull-up, so the two are one
+  // move apart in both directions - and where a neighbour is too much lower to pull up
+  // to it, that neighbour has a ladder of its own, which is the "other way" the rule
+  // asks for. Nothing here invents a route: it makes the ones the buildings already have
+  // meet.
+  const jumpGap = crossingGap(DEFAULT_CONFIG);
+  const reachUp = crossingRise(DEFAULT_CONFIG);
+  const filler = { props, lights, random, config, count };
+  for (const building of [...plots.values()]) {
+    for (const [dx, dz] of [
+      [config.pitch, 0],
+      [0, config.pitch],
+    ] as const) {
+      const other = plots.get(plotKey(building.gx + dx, building.gz + dz));
+      if (!other) continue;
+
+      // The gap between the two masses, and the stretch of wall they share. A pair that
+      // does not overlap on the other axis is not a gap between buildings - it is a
+      // corner, and there is nothing to fill.
+      const [near, far] = dx !== 0 ? [building, other] : [building, other];
+      const along = dx !== 0
+        ? far.cx - far.halfX - (near.cx + near.halfX)
+        : far.cz - far.halfZ - (near.cz + near.halfZ);
+      if (along <= jumpGap) continue;
+
+      const overlap0 = dx !== 0
+        ? Math.max(near.cz - near.halfZ, far.cz - far.halfZ)
+        : Math.max(near.cx - near.halfX, far.cx - far.halfX);
+      const overlap1 = dx !== 0
+        ? Math.min(near.cz + near.halfZ, far.cz + far.halfZ)
+        : Math.min(near.cx + near.halfX, far.cx + far.halfX);
+      if (overlap1 - overlap0 < 4) continue;
+
+      // Inside the gap, with a jump's width left over at each end.
+      const margin = Math.min(jumpGap * 0.8, along / 3);
+      const span = along - margin * 2;
+      const centre = (dx !== 0 ? near.cx + near.halfX : near.cz + near.halfZ) + margin + span / 2;
+      const cx = dx !== 0 ? centre : (near.cx + far.cx) / 2;
+      const cz = dx !== 0 ? (overlap0 + overlap1) / 2 : centre;
+      const width = dx !== 0 ? span : (overlap1 - overlap0) * 0.86;
+      const depth = dx !== 0 ? (overlap1 - overlap0) * 0.86 : span;
+      if (Math.min(width, depth) < 3.5) continue;
+
+      const roof = Math.max(near.roof, far.roof) - reachUp * 0.7;
+      infill(filler, cx, cz, width, depth, roof);
+    }
+  }
+
   // Ground under the whole thing. The district's own slab is 700 m across, which is
   // short of a kilometre of city - and a city with a void under its outer ring reads as
   // floating rather than as built. Half a metre lower, so the two never share a plane.
@@ -222,13 +293,211 @@ export function generateCity(options: CityOptions = {}): CityParts {
   };
 }
 
+/**
+ * A building the generator put down, as the street sees it.
+ *
+ * The widest mass at any height, its roof, and where it is - which is everything the
+ * infill pass needs to close the gap to whatever is next to it. Recorded as buildings are
+ * placed rather than worked out afterwards, because afterwards is forty thousand props
+ * and no way to tell a wall from a walkway.
+ */
+interface Building {
+  /** The plot it stands on, so its neighbours can be found. */
+  readonly gx: number;
+  readonly gz: number;
+  readonly id: string;
+  readonly cx: number;
+  readonly cz: number;
+  readonly halfX: number;
+  readonly halfZ: number;
+  /** The roof a player standing beside this building can reach. */
+  readonly roof: number;
+}
+
 interface Context {
   readonly props: PropDefinition[];
+  /** The plot this building stands on. */
+  readonly gx: number;
+  readonly gz: number;
+  /** The building on each plot, so the infill pass can find neighbours. */
+  readonly plots: Map<string, Building>;
   readonly lights: NonNullable<LevelDefinition['lights']>[number][];
   readonly elevators: NonNullable<LevelDefinition['elevators']>[number][];
   readonly random: () => number;
   readonly config: Resolved;
   readonly count: (kind: string) => void;
+}
+
+/**
+ * Files a building under its plot.
+ *
+ * Called by each archetype once it knows what it built. Only the *outermost* mass is
+ * recorded - a tower's inset upper stages are inside the base's footprint and a block's
+ * roof storey is inside its own - because the infill pass only cares about the wall a
+ * neighbour's gap runs up against.
+ */
+function record(context: Context, building: Building): void {
+  context.plots.set(`${building.gx}|${building.gz}`, building);
+}
+
+/**
+ * The rooftop kit an infill building gets, which is what makes it *its own* building.
+ *
+ * "Add more buildings between them, and these in-between buildings need to be uniquely
+ * decorated too" is a request for filler that is not filler. A street of identical
+ * blocks reads as one texture however many of them there are, so each infill draws three
+ * to five features from a dozen - arrays, tanks, a mast, a crane, a sign, a hut, a pipe
+ * run, a billboard, a balcony - and the combination is what it *is*. The signature goes
+ * into the report, so "how many of these look the same" is a number rather than an
+ * opinion, and a test holds it to it.
+ */
+const INFILL_KIT = [
+  'solar',
+  'tank',
+  'ac',
+  'mast',
+  'duct',
+  'sign',
+  'crane',
+  'hut',
+  'pipes',
+  'balcony',
+  'billboard',
+  'scaffold',
+] as const;
+
+type InfillKit = (typeof INFILL_KIT)[number];
+
+/** What an infill needs from the generator: somewhere to put things, and the dice. */
+type InfillContext = Pick<Context, 'props' | 'lights' | 'random' | 'config' | 'count'>;
+
+/** Picks what this one is made of, and counts the answer. */
+function infillKit(context: InfillContext): readonly InfillKit[] {
+  const wanted = 3 + Math.floor(context.random() * 3);
+  const pool = [...INFILL_KIT];
+  const picked: InfillKit[] = [];
+  for (let index = 0; index < wanted && pool.length > 0; index += 1) {
+    picked.push(...pool.splice(Math.floor(context.random() * pool.length), 1));
+  }
+  context.count(`infill-kit:${[...picked].sort().join('+')}`);
+  return picked;
+}
+
+/**
+ * A building in the gap between two others: narrow, tall, and dressed.
+ *
+ * Its roof is a landing from either neighbour and its own ladder is the way back down,
+ * so it is not a stepping stone on the way past - it is somewhere to stand.
+ */
+function infill(
+  context: InfillContext,
+  cx: number,
+  cz: number,
+  width: number,
+  depth: number,
+  roof: number,
+): void {
+  const { props, random, config, lights } = context;
+  const id = `fill-${Math.round(cx)}-${Math.round(cz)}-${Math.round(roof)}`;
+  const kit = infillKit(context);
+
+  roofKit(context, id, [cx, cz], width, depth, roof, { solar: false });
+  ladderUp(context, `${id}-ladder`, cx - width / 2 - 0.3, cz, roof);
+  context.count('infill');
+
+  const halfX = width / 2;
+  const halfZ = depth / 2;
+  /** Room for a feature, kept off the parapet-less edge. */
+  const inset = 1.6;
+
+  for (const [index, feature] of kit.entries()) {
+    const at: readonly [number, number] = [
+      cx + (random() - 0.5) * Math.max(1, width - inset * 4),
+      cz + (random() - 0.5) * Math.max(1, depth - inset * 4),
+    ];
+    switch (feature) {
+      case 'solar':
+        for (let panel = 0; panel < 2; panel += 1) {
+          props.push(
+            make(`${id}-solar-${index}-${panel}`, {
+              at: [at[0], at[1] + panel * 4],
+              bottom: roof,
+              size: [6.5, 1.3, 3.4],
+              model: 'solar-panel',
+            }),
+          );
+        }
+        break;
+      case 'tank':
+        props.push(make(`${id}-tank-${index}`, { at, bottom: roof, size: [3, 3.2, 3], model: 'water-tank' }));
+        break;
+      case 'ac':
+        props.push(make(`${id}-ac-${index}`, { at, bottom: roof, size: [3, 1.6, 2.2], model: 'ac-unit' }));
+        break;
+      case 'mast':
+        props.push(make(`${id}-mast-${index}`, { at, bottom: roof, size: [1, 9 + random() * 8, 1], model: 'antenna-mast' }));
+        break;
+      case 'duct':
+        props.push(make(`${id}-duct-${index}`, { at, bottom: roof, size: [1.4, 1.2, Math.max(2, Math.min(depth - 3, 8))], model: 'duct' }));
+        break;
+      case 'hut':
+        props.push(make(`${id}-hut-${index}`, { at, bottom: roof, size: [4.2, 3.4, 3.6], model: 'slab', tints: tintSet(context) }));
+        break;
+      case 'pipes':
+        props.push(
+          make(`${id}-pipe-${index}`, { at, bottom: roof, size: [1, 8 + random() * 6, 1], model: 'pipe-vertical' }),
+          make(`${id}-pipe-run-${index}`, { at: [at[0], at[1]], bottom: roof + 0.4, size: [1, 1, Math.max(2, Math.min(depth - 3, 7))], model: 'pipe-run' }),
+        );
+        break;
+      case 'crane': {
+        const crane = 24 + Math.round(random() * 16);
+        props.push(
+          make(`${id}-crane-mast-${index}`, { at, bottom: roof, size: [1.6, crane, 1.6], model: 'construction-column' }),
+          make(`${id}-crane-jib-${index}`, { at: [at[0], at[1]], bottom: roof + crane, size: [crane * 0.8, 1.4, 1.4], model: 'construction-slab' }),
+        );
+        break;
+      }
+      case 'scaffold':
+        props.push(make(`${id}-scaffold-${index}`, { at, bottom: roof, size: [7, 9, 2.6], model: 'scaffold' }));
+        break;
+      case 'balcony':
+        balcony(context, `${id}-balcony-${index}`, cx + halfX + 0.4, cz, depth * 0.5, config.groundY + 6 + random() * 12);
+        break;
+      case 'billboard':
+        props.push(
+          make(`${id}-billboard-${index}`, {
+            at: [cx, cz - halfZ - 0.3],
+            bottom: roof + 2,
+            size: [Math.min(width * 0.6, 8), 6, 0.5],
+            model: 'billboard',
+            tints: { neon: BILLBOARD_COLOURS[Math.floor(random() * BILLBOARD_COLOURS.length)] as string },
+          }),
+        );
+        break;
+      case 'sign': {
+        // Hung on a face rather than stood on the roof, because a sign on a wall is what
+        // a city at night is made of.
+        const lit = BILLBOARD_COLOURS[Math.floor(random() * BILLBOARD_COLOURS.length)] as string;
+        props.push(
+          make(`${id}-sign-${index}`, {
+            at: [cx - halfX - 0.24, cz],
+            bottom: roof + 3,
+            size: [0.4, 4.5, 1.6],
+            model: 'neon-blade',
+            tints: { neon: lit },
+          }),
+        );
+        lights.push({
+          id: `${id}-sign-lamp-${index}`,
+          position: { x: cx - halfX - 1.4, y: roof + 5, z: cz },
+          color: lit,
+          intensity: 9,
+          distance: 20,
+        });
+        break;
+      }
+    }
+  }
 }
 
 /** A prop with the city's own defaults filled in. */
@@ -264,14 +533,14 @@ const BODY_TINTS: readonly { concrete: string; 'concrete-dark': string }[] = [
   { concrete: '#4d5a55', 'concrete-dark': '#3f4a46' },
 ];
 
-function tintSet(context: Context): Record<string, string> {
+function tintSet(context: InfillContext): Record<string, string> {
   const pick = BODY_TINTS[Math.floor(context.random() * BODY_TINTS.length)] ?? BODY_TINTS[0];
   return { ...pick };
 }
 
 /** A roof deck over a body, with the kit a city roof has. */
 function roofKit(
-  context: Context,
+  context: InfillContext,
   id: string,
   at: readonly [number, number],
   width: number,
@@ -324,7 +593,14 @@ function roofKit(
   }
   if (random() < 0.3) {
     props.push(
-      make(`${id}-duct`, { at: [at[0] + width / 2 - 2.5, at[1] - depth / 2 + 2.5], bottom: top, size: [1.4, 1.2, Math.min(depth - 6, 9)], model: 'duct' }),
+      make(`${id}-duct`, {
+        at: [at[0] + width / 2 - 2.5, at[1] - depth / 2 + 2.5],
+        bottom: top,
+        // Clamped: a duct is longer than it is wide, and an infill can be narrower than
+        // the duct wants to be. A negative size is not a short duct.
+        size: [1.4, 1.2, Math.max(2, Math.min(depth - 6, 9))],
+        model: 'duct',
+      }),
     );
   }
 }
@@ -338,18 +614,25 @@ function block(
   band: Band,
   random: () => number,
 ): void {
-  const width = footprint * (0.66 + random() * 0.3);
-  const depth = footprint * (0.6 + random() * 0.34);
+  // A block fills its plot. It used to take two thirds of it, which left forty metres of
+  // nothing between one building and the next - wide enough to read as a city from the
+  // air and far too wide to cross on foot, and the reason V0.7's streets were a place you
+  // looked at rather than a route.
+  const width = footprint * (1.62 + random() * 0.2);
+  const depth = footprint * (1.58 + random() * 0.24);
   const top = band.roofs[Math.floor(random() * band.roofs.length)] ?? band.roofs[0]!;
   const id = `city-${Math.round(cx)}-${Math.round(cz)}`;
 
   roofKit(context, id, [cx, cz], width, depth, top);
+  record(context, { gx: context.gx, gz: context.gz, id, cx, cz, halfX: width / 2, halfZ: depth / 2, roof: top });
 
   // A third of the blocks carry a smaller storey on the roof: the roof of one is the
   // landing for the other, which is what turns a block into a route - and it is the
-  // cheapest verticality in the whole city.
-  if (random() < 0.34 && width > 18) {
-    const upper = top + 4 + Math.round(random() * 5);
+  // cheapest verticality in the whole city. It was four to nine metres up when V0.7 wrote
+  // that sentence, which is not a landing: a jump gets a metre and a pull-up two and a
+  // half, so this is two.
+  if (random() < 0.4 && width > 18) {
+    const upper = top + 1.7 + random() * 0.7;
     roofKit(context, `${id}-upper`, [cx + 1, cz - 1], width * 0.52, depth * 0.5, upper, { solar: false });
   }
 
@@ -358,11 +641,29 @@ function block(
 }
 
 /**
- * A tower: two or three setbacks, each a roof in its own right, and a lift.
+ * A tower with its lift *inside* it.
  *
- * The setbacks are what turn a tall box into somewhere worth climbing: the roof of one
- * stage is the landing for the next, which is how a player gets up a 90 m building
- * without the lift - and the lift is there for the ones who want the top.
+ * V0.7 put the shaft in the street beside the building and built a second building next
+ * door to receive it at the top: an elevator you got into from the pavement and out of
+ * onto somebody else's roof. This is the same tower with the shaft standing in the corner
+ * of its own footprint - a core, the way a real building has one.
+ *
+ * Where the doors are is the whole design:
+ *
+ * ```
+ *        +----------------------+   the shell, full height of the inside
+ *        |  sheds   |  setback  |   the setback rises out of the shell's roof,
+ *        |          |           |   on the far side of the shaft
+ *        |  [LIFT]  |           |
+ *        +----------------------+
+ * ```
+ *
+ * The shaft's doorways face into the building, so every floor between the street and the
+ * roof is reached from inside the building and nowhere else: in through the front door,
+ * across the ground floor, into the lift. The one door that opens to the sky is the top
+ * one, where the car arrives level with the setback's roof and stepping out is stepping
+ * onto the building. That is what "inside" means here - not a shaft with a wall around
+ * it, but a shaft nobody can board from the street.
  */
 function tower(
   context: Context,
@@ -372,121 +673,149 @@ function tower(
   band: Band,
   random: () => number,
 ): void {
-  const floor = context.config.groundY;
-  const roof = (band.roofs[band.roofs.length - 1] ?? 30) + Math.round(random() * 26);
-  const stages = 2 + Math.floor(random() * 2);
+  const { props, config, lights } = context;
+  const floor = config.groundY;
   const id = `city-${Math.round(cx)}-${Math.round(cz)}-tower`;
-  /** Half the widest stage's width, which is what the shaft has to clear. */
-  const footprintRate = (footprint * 0.8) / 2;
+  const wall = 0.6;
+  const shaftOuter = 4.2;
+  const storey = 4.8;
+  const storeys = 2 + Math.floor(random() * 2);
+  const halfW = (footprint * (1.72 + random() * 0.16)) / 2;
+  const halfD = (footprint * (1.66 + random() * 0.2)) / 2;
+  const insideTop = floor + storeys * storey;
+  const roof = (band.roofs[band.roofs.length - 1] ?? 30) + 20 + Math.round(random() * 26);
+  const tints = tintSet(context);
 
-  let width = footprint * 0.8;
-  let depth = footprint * 0.8;
-  let top = floor;
+  const panel = (
+    suffix: string,
+    x: number,
+    z: number,
+    size: readonly [number, number, number],
+    bottom: number,
+    kind: PropDefinition['kind'] = 'wall',
+  ): void => {
+    props.push(make(`${id}-${suffix}`, { at: [x, z], bottom, size, kind, model: 'slab', tints }));
+  };
 
-  for (let stage = 0; stage < stages; stage += 1) {
-    const stageTop = floor + (roof - floor) * ((stage + 1) / stages);
-    roofKit(context, `${id}-${stage}`, [cx, cz], width, depth, stageTop, {
-      solar: stage === stages - 1,
-    });
-    top = stageTop;
-    width *= 0.78;
-    depth *= 0.78;
-  }
-  void top;
+  record(context, { gx: context.gx, gz: context.gz, id, cx, cz, halfX: halfW, halfZ: halfD, roof: insideTop });
 
-  // Billboards on the tall ones, facing the old town, because the point of a billboard
-  // is to be seen from somewhere.
-  if (roof > 34 && context.random() < 0.8) {
-    const facing = cz > 0 ? -1 : 1;
-    const z = cz + facing * (footprint * 0.42);
-    const wall = z + facing * 0.2;
-    context.props.push(
-      make(`${id}-billboard`, {
-        at: [cx, wall],
-        bottom: floor + 18,
-        size: [Math.min(width * 1.2, 30), 12, 0.5],
-        model: 'billboard',
-        tints: { neon: BILLBOARD_COLOURS[Math.floor(context.random() * BILLBOARD_COLOURS.length)] as string },
-      }),
-    );
-    context.count('billboard');
-    context.lights.push({
-      id: `${id}-glow`,
-      position: { x: cx, y: floor + 24, z: wall + facing * 1.6 },
-      color: '#8fd7ff',
-      intensity: 14,
+  // ---- the shell, with the front door on the +Z side
+  const door = 5;
+  const side = (halfW * 2 - door) / 2 - wall;
+  panel('wall-w', cx - halfW + wall / 2, cz, [wall, insideTop - floor, halfD * 2], floor);
+  panel('wall-e', cx + halfW - wall / 2, cz, [wall, insideTop - floor, halfD * 2], floor);
+  panel('wall-n', cx, cz - halfD + wall / 2, [halfW * 2 - wall * 2, insideTop - floor, wall], floor);
+  panel('wall-s-l', cx - door / 2 - side / 2, cz + halfD - wall / 2, [side, insideTop - floor, wall], floor);
+  panel('wall-s-r', cx + door / 2 + side / 2, cz + halfD - wall / 2, [side, insideTop - floor, wall], floor);
+  panel('lintel', cx, cz + halfD - wall / 2, [door, insideTop - floor - 3.6, wall], floor + 3.6);
+
+  // ---- the floors: rings round an atrium, lit, with a ladderwell through them
+  const atriumX = Math.min(5, halfW / 3);
+  const atriumZ = Math.min(6, halfD / 3);
+  const innerW = halfW * 2 - wall * 2;
+  const innerD = halfD * 2 - wall * 2;
+  const bandX = (innerW / 2 - atriumX) / 2;
+  const bandZ = (innerD / 2 - atriumZ) / 2;
+  const infill = innerW - 2 * (innerW / 2 - atriumX);
+  for (let level = 1; level <= storeys; level += 1) {
+    const y = level === storeys ? insideTop : floor + storey * level - 0.6;
+    panel(`slab-${level}-w`, cx - atriumX - bandX, cz, [innerW / 2 - atriumX, 0.6, atriumZ * 2], y, 'floor');
+    panel(`slab-${level}-e`, cx + atriumX + bandX, cz, [innerW / 2 - atriumX, 0.6, atriumZ * 2], y, 'floor');
+    panel(`slab-${level}-n`, cx, cz - atriumZ - bandZ, [infill, 0.6, innerD / 2 - atriumZ], y, 'floor');
+    panel(`slab-${level}-s`, cx, cz + atriumZ + bandZ, [infill, 0.6, innerD / 2 - atriumZ], y, 'floor');
+    if (level === storeys) break;
+    lights.push({
+      id: `${id}-lamp-${level}`,
+      position: { x: cx, y: floor + storey * level - 1.3, z: cz },
+      color: '#cfe4ff',
+      intensity: 9,
       distance: 26,
     });
+    context.count('tower-floor');
   }
+  laddersUp(context, `${id}-stairs`, cx + atriumX - 1, cz + atriumZ - 1, insideTop, floor);
 
-  // Balconies up one face: ledges a player can land on and use as a route.
-  for (let index = 0; index < 3; index += 1) {
-    balcony(context, `${id}-balcony-${index}`, cx - width - 0.4, cz, depth * 0.7, floor + 12 + index * 11);
-  }
-
-  // The lift, serving the street, two of the stage roofs and a skydeck on top.
+  // ---- the shaft, standing in the −X corner of the shell
   //
-  // It stands *beside* the building rather than in it. `width` is the last stage's, which
-  // is a fraction of the first, so a shaft placed off that number ends up inside the
-  // building it serves - which the physics resolves by pushing whoever is in it out of a
-  // solid, some fifty metres straight up.
-  const liftX = cx + footprintRate + 3.2;
-  const liftFloors = [floor, floor + (roof - floor) * 0.5, roof, roof + 7];
+  // In the corner because the setback has to rise on the far side of it: a setback
+  // centred over the shaft puts thirty metres of solid through every floor the car
+  // serves, and the physics resolves a rider inside a solid by pushing them out of it.
+  const shaftX = cx - halfW + shaftOuter / 2 + wall;
+  const shaftZ = cz - halfD + shaftOuter / 2 + wall;
+  const liftFloors: number[] = [];
+  const names: string[] = ['Street'];
+  for (let level = 1; level < storeys; level += 1) {
+    liftFloors.push(floor + storey * level);
+    names.push(`Floor ${level + 1}`);
+  }
+  liftFloors.push(insideTop, roof);
+  names.push('Roof level', 'Roof');
   const liftId = `${id}-lift`;
-  const towerParts = liftTower({
+  const shaft = liftTower({
     id: liftId,
-    at: [liftX, cz],
+    at: [shaftX, shaftZ],
     size: [3.4, 3.4],
-    floors: liftFloors,
-    names: ['Street', 'Mid', 'Roof', 'Skydeck'],
-    facing: cz > 0 ? 'z-' : 'z+',
+    floors: [floor, ...liftFloors],
+    names,
+    // Into the building at every floor, and onto its roof at the top: one direction
+    // serves both because the setback is on the +X side too.
+    facing: 'x+',
     base: floor - 6,
     tint: '#3f4a5c',
     tintDark: '#333c4a',
   });
-  context.props.push(...towerParts.props);
-  context.elevators.push(towerParts.elevator);
+  props.push(...shaft.props);
+  context.elevators.push(shaft.elevator);
   context.count('lift');
 
-  // ...and the skydeck it opens onto, standing *beside* the shaft rather than round it.
-  //
-  // A deck centred on the lift puts its own body - thirty metres of it, up from the
-  // street - through every floor the car serves, and the physics then resolves a rider
-  // standing inside a solid by pushing them out of it. It is a building next door, at the
-  // same height, and the two roofs are one surface to walk across.
-  const deckX = liftX + 10;
-  context.props.push(
-    make(`${liftId}-deck`, {
-      at: [deckX, cz],
-      bottom: roof + 7 - 0.8,
-      size: [17, 0.8, 15],
-      model: 'deck',
-      kind: 'floor',
-    }),
-  );
-  context.props.push(
-    make(`${liftId}-deck-body`, {
-      at: [deckX, cz],
-      bottom: roof,
-      size: [15.5, 7 - 0.8, 13.5],
-      model: 'slab',
-      tints: tintSet(context),
-    }),
-  );
-  // The kit that makes a roof somewhere: arrays, a tank, an aerial.
-  context.props.push(
-    make(`${liftId}-deck-solar-0`, { at: [deckX - 4, cz - 4], bottom: roof + 7, size: [6.5, 1.3, 3.4], model: 'solar-panel' }),
-    make(`${liftId}-deck-solar-1`, { at: [deckX + 3, cz - 4], bottom: roof + 7, size: [6.5, 1.3, 3.4], model: 'solar-panel' }),
-    make(`${liftId}-deck-tank`, { at: [deckX + 5, cz + 4], bottom: roof + 7, size: [3.2, 3.4, 3.2], model: 'water-tank' }),
-    make(`${liftId}-deck-mast`, { at: [deckX - 6, cz + 4], bottom: roof + 7, size: [1, 10, 1], model: 'antenna-mast' }),
-  );
-  context.lights.push({
-    id: `${liftId}-deck-lamp`,
-    position: { x: deckX, y: roof + 12, z: cz },
-    color: '#9fe8ff',
-    intensity: 9,
-    distance: 24,
-  });
+  // ---- the setback above the shell, on the far side of the shaft
+  const shedX0 = shaftX + shaftOuter / 2 + wall;
+  const shedHalf = (cx + halfW - shedX0) / 2;
+  const shedX = shedX0 + shedHalf;
+  if (shedHalf > 4) {
+    roofKit(context, `${id}-setback`, [shedX, cz], shedHalf * 2, halfD * 2 - 0.4, roof, { solar: false });
+    // Solar and a tank on the setback's own roof, which is the building's roof.
+    props.push(
+      make(`${id}-roof-solar`, { at: [shedX, cz - halfD / 2], bottom: roof, size: [7, 1.3, 3.6], model: 'solar-panel' }),
+      make(`${id}-roof-tank`, { at: [shedX, cz + halfD / 2 - 3], bottom: roof, size: [3.2, 3.4, 3.2], model: 'water-tank' }),
+    );
+    if (random() < 0.5) {
+      props.push(make(`${id}-roof-mast`, { at: [shedX, cz], bottom: roof, size: [1, 12, 1], model: 'antenna-mast' }));
+    }
+    // Up the setback's face from the shell's roof, so the top is a route rather than a
+    // place the lift happens to stop.
+    ladderUp(context, `${id}-setback-ladder`, shedX0 + 0.4, cz - halfD + 2, roof);
+
+    // Billboards on the tall ones, facing the old town, because the point of a billboard
+    // is to be seen from somewhere.
+    if (roof > 44 && random() < 0.8) {
+      const facing = cz > 0 ? -1 : 1;
+      const z = cz + facing * (halfD - 0.3);
+      props.push(
+        make(`${id}-billboard`, {
+          at: [shedX, z],
+          bottom: floor + 20,
+          size: [Math.min(shedHalf * 2 * 0.9, 30), 12, 0.5],
+          model: 'billboard',
+          tints: { neon: BILLBOARD_COLOURS[Math.floor(random() * BILLBOARD_COLOURS.length)] as string },
+        }),
+      );
+      context.count('billboard');
+      lights.push({
+        id: `${id}-glow`,
+        position: { x: shedX, y: floor + 26, z: z + facing * 1.6 },
+        color: '#8fd7ff',
+        intensity: 14,
+        distance: 26,
+      });
+    }
+
+    // Balconies up the outside, ledges to land on and use as a route.
+    for (let index = 0; index < 3; index += 1) {
+      balcony(context, `${id}-balcony-${index}`, shedX, cz - halfD - 0.4, shedHalf * 1.2, insideTop + 6 + index * 8);
+    }
+  }
+  void storeys;
 }
 
 /** A building under construction: a carcass, scaffolding, and a crane over it. */
@@ -499,10 +828,22 @@ function constructionSite(
   distance: number,
 ): void {
   const { props, random, config } = context;
-  const width = footprint * 0.8;
-  const depth = footprint * 0.8;
+  const width = footprint * 1.72;
+  const depth = footprint * 1.64;
   const top = (band.roofs[band.roofs.length - 1] ?? 24) + 10 + Math.round(random() * 18);
   const id = `site-${Math.round(cx)}-${Math.round(cz)}`;
+  // The carcass as the street sees it. Its floors are inset as they rise, so the widest
+  // mass - and the one a neighbour's gap runs into - is the lowest slab.
+  record(context, {
+    gx: context.gx,
+    gz: context.gz,
+    id,
+    cx,
+    cz,
+    halfX: width / 2,
+    halfZ: depth / 2,
+    roof: top,
+  });
   const floor = config.groundY;
   const stages = 3 + Math.floor(random() * 3);
   const stage = (top - floor) / stages;
@@ -580,12 +921,22 @@ function constructionSite(
  */
 function hall(context: Context, cx: number, cz: number, footprint: number): void {
   const { props, config, random } = context;
-  const width = footprint * 0.86;
-  const depth = footprint * 0.8;
+  const width = footprint * 1.74;
+  const depth = footprint * 1.66;
   const wall = 0.6;
   const height = 12 + Math.round(random() * 6);
   const floor = config.groundY;
   const id = `hall-${Math.round(cx)}-${Math.round(cz)}`;
+  record(context, {
+    gx: context.gx,
+    gz: context.gz,
+    id,
+    cx,
+    cz,
+    halfX: width / 2,
+    halfZ: depth / 2,
+    roof: floor + height,
+  });
   const doorWidth = 4.5;
   const doorHeight = 4.2;
   const tints = tintSet(context);
@@ -638,7 +989,7 @@ function hall(context: Context, cx: number, cz: number, footprint: number): void
 }
 
 /** A ladder flush against a wall, from the street to a roof. */
-function ladderUp(context: Context, id: string, x: number, z: number, top: number): void {
+function ladderUp(context: InfillContext, id: string, x: number, z: number, top: number): void {
   laddersUp(context, id, x, z, top, context.config.groundY);
 }
 
@@ -648,10 +999,21 @@ function ladderUp(context: Context, id: string, x: number, z: number, top: numbe
  * A ladder's rungs are part of its model, so a model stretched over 40 m would have
  * rungs two metres apart. Stacking 5 m ladders up the same wall keeps them rungs.
  */
-function laddersUp(context: Context, id: string, x: number, z: number, top: number, from: number): void {
+function laddersUp(
+  context: InfillContext,
+  id: string,
+  x: number,
+  z: number,
+  top: number,
+  from: number,
+): void {
   const span = top - from;
   if (span < 3) return;
-  const length = 5;
+  // Seven metres rather than five: the rungs are part of the model, so a longer section
+  // spaces them further apart - 70 cm instead of 50, which still reads as a ladder - and
+  // every section is a prop. V0.7.2's buildings are twice as tall and there are twice as
+  // many of them, and this is a third of the city's props.
+  const length = 7;
   const count = Math.max(1, Math.round(span / length));
   const each = span / count;
   for (let index = 0; index < count; index += 1) {
@@ -670,7 +1032,7 @@ function laddersUp(context: Context, id: string, x: number, z: number, top: numb
 }
 
 /** A balcony: a lip of deck out from a wall, at a height a player can use. */
-function balcony(context: Context, id: string, x: number, z: number, width: number, top: number): void {
+function balcony(context: InfillContext, id: string, x: number, z: number, width: number, top: number): void {
   const depth = 1.8;
   context.props.push(
     make(id, {
@@ -821,4 +1183,14 @@ function interiorTower(
   props.push(...parts.props);
   context.elevators.push(parts.elevator);
   count('interior-lift');
+  record(context, {
+    gx: context.gx,
+    gz: context.gz,
+    id: `inside-${Math.round(cx)}-${Math.round(cz)}`,
+    cx,
+    cz,
+    halfX: width / 2,
+    halfZ: depth / 2,
+    roof,
+  });
 }

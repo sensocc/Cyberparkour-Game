@@ -14,6 +14,7 @@ import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { standingSize } from '../../src/game/player.js';
 import { buildCity, generateCity } from '../../src/game/level/city.js';
 import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
+import { crossingGap, crossingRise } from '../../src/game/reach.js';
 import { buildLevel, propBounds } from '../../src/game/level/level.js';
 
 const BUILD = {
@@ -96,15 +97,23 @@ describe('a generated city as a level', () => {
   });
 
   it('gives the lifts somewhere to go that parkour cannot reach', () => {
-    const towers = (city.elevators ?? []).filter((lift) => lift.id.startsWith('city-'));
+    // What a tower's lift is *for*: the top of a sixty-metre building, which is far more
+    // than the two and a half metres a pull-up reaches. V0.7.2 changed where the top is -
+    // it is the building's own roof now rather than a skydeck seven metres above it - and
+    // the height above the street is what makes it worth calling.
+    const towers = (city.elevators ?? []).filter((lift) => lift.id.includes('-tower-lift'));
     expect(towers.length).toBeGreaterThan(0);
+
     for (const lift of towers) {
       expect(lift.floors.length, lift.id).toBeGreaterThanOrEqual(3);
-      // Street, mid, roof, skydeck: the top is above the roof.
+      const street = lift.floors[0] as number;
       const highest = lift.floors[lift.floors.length - 1] as number;
-      const roof = lift.floors[lift.floors.length - 2] as number;
-      expect(highest, lift.id).toBeGreaterThan(roof + 4);
-      expect(lift.names?.[lift.names.length - 1]).toMatch(/skydeck/i);
+      expect(highest - street, lift.id).toBeGreaterThan(40);
+      expect(lift.names?.[0], lift.id).toBe('Street');
+      expect(lift.names?.[lift.names.length - 1], lift.id).toBe('Roof');
+      // ...and it stops at the building's floors on the way, so it is a lift and not an
+      // express to the top.
+      expect(lift.floors.length, lift.id).toBeGreaterThanOrEqual(4);
     }
   });
 
@@ -243,5 +252,197 @@ describe('the interiors the generator builds', () => {
       (prop) => prop.model === 'ladder' && [...interiors].some((prefix) => prop.id.startsWith(`${prefix}-ladder`)),
     );
     expect(ladders.length).toBeGreaterThan(interiors.size);
+  });
+});
+
+describe('the city as somewhere you can get around', () => {
+  // The whole city, not the small one the other suites use: the point of this version is
+  // that there is nowhere in it a player cannot get to.
+  const city = buildCity(DEMO_DISTRICT);
+
+  /**
+   * Every surface a player can stand on, from the props the generator made.
+   *
+   * Floors rather than decks: a roof is a `deck` on a block and a `slab` on a tower, and
+   * V0.7.2 is the version where that difference cost the city its routes - the streets
+   * were filled by measuring half of it and concluding the rest was empty.
+   */
+  function surfaces(): {
+    id: string;
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+    top: number;
+  }[] {
+    return city.props
+      .filter(
+        (prop) =>
+          prop.kind === 'floor' &&
+          prop.model !== 'city-street-level' &&
+          prop.size.x > 5 &&
+          prop.size.z > 5,
+      )
+      .map((prop) => ({
+        id: prop.id,
+        minX: prop.position.x - prop.size.x / 2,
+        maxX: prop.position.x + prop.size.x / 2,
+        minZ: prop.position.z - prop.size.z / 2,
+        maxZ: prop.position.z + prop.size.z / 2,
+        top: prop.position.y + prop.size.y / 2,
+      }));
+  }
+
+  /** How far apart two surfaces are, edge to edge, horizontally. */
+  function apart(a: ReturnType<typeof surfaces>[number], b: ReturnType<typeof surfaces>[number]): number {
+    const dx = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+    const dz = Math.max(0, Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ));
+    return Math.hypot(dx, dz);
+  }
+
+  it('leaves no roof farther from its neighbour than a running jump', () => {
+    // The rule V0.7.2 exists for, and the one V0.7 broke: "a distance between two
+    // different buildings cannot be higher than the highest possible jumping distance".
+    // The limit is not a number somebody liked - it is derived from the movement and
+    // checked against the simulation in `reach.test.ts`, and every roof in the city is
+    // held to it here.
+    const gap = crossingGap(DEFAULT_CONFIG);
+    const roofs = surfaces();
+    expect(roofs.length).toBeGreaterThan(400);
+
+    const stranded: string[] = [];
+    for (const roof of roofs) {
+      const nearest = roofs
+        .filter((other) => other !== roof)
+        .reduce((best, other) => Math.min(best, apart(roof, other)), Number.POSITIVE_INFINITY);
+      if (!(nearest <= gap)) stranded.push(`${roof.id} (${nearest.toFixed(1)}m)`);
+    }
+    expect(stranded.slice(0, 8)).toEqual([]);
+  });
+
+  it('reaches almost all of them upward as well as across', () => {
+    // A roof you can only drop *to* is a roof you reach from above and leave downwards.
+    // The bar is not every roof: a terrace two metres above its neighbour is a pull-up
+    // and anything higher is a ladder, and there are ladders. It is that the city is a
+    // route rather than a set of islands, which is what the number is for.
+    const gap = crossingGap(DEFAULT_CONFIG);
+    const rise = crossingRise(DEFAULT_CONFIG);
+    const roofs = surfaces();
+
+    let reachable = 0;
+    for (const roof of roofs) {
+      const up = roofs.some(
+        (other) => other !== roof && apart(roof, other) <= gap && other.top <= roof.top + rise,
+      );
+      if (up) reachable += 1;
+    }
+
+    expect(reachable / roofs.length).toBeGreaterThan(0.85);
+  });
+
+  it('gives every roof a ladder, for the ones a jump cannot make', () => {
+    // "And if it is, there has to be other way" - the other way is a ladder up the wall,
+    // which the climb has been able to handle since V0.3.
+    const ladders = city.props.filter((prop) => prop.model === 'ladder');
+    expect(ladders.length).toBeGreaterThan(200);
+
+    // Every building the generator recorded that is tall enough to need one has at least
+    // one, and each is climbable - a ladder nobody can climb is decoration.
+    for (const ladder of ladders) {
+      expect(ladder.climbable, ladder.id).toBe(true);
+    }
+  });
+});
+
+describe('the buildings the streets were filled with', () => {
+  // The whole city: filling the streets is a thing that happens where there are streets
+  // to fill, and a 200 m sample has seven of them.
+  const city = buildCity(DEMO_DISTRICT);
+  const report = generateCity().report;
+
+  it('fills the gap between neighbours with a building, not a fence', () => {
+    const infills = city.props.filter((prop) => prop.id.startsWith('fill-'));
+    expect(infills.length).toBeGreaterThan(100);
+    // Its own body, from the street up - a building rather than something laid in the gap.
+    const bodies = city.props.filter(
+      (prop) => prop.id.startsWith('fill-') && prop.id.endsWith('-body'),
+    );
+    expect(bodies.length).toBeGreaterThan(80);
+  });
+
+  it('decorates every one of them differently', () => {
+    // "These in-between buildings need to be uniquely decorated too." Three to five
+    // features each, drawn from a dozen, and the signature is in the report - so this is
+    // a count rather than an opinion about how the streets look.
+    const kits = Object.keys(report).filter((key) => key.startsWith('infill-kit:'));
+    const infills = report.infill ?? 0;
+    expect(infills).toBeGreaterThan(100);
+    expect(kits.length).toBeGreaterThan(infills * 0.5);
+  });
+});
+
+describe('the elevators, which are inside now', () => {
+  const city = buildCity(DEMO_DISTRICT);
+
+  it('stands the shaft inside the building it serves, and nowhere else', () => {
+    // V0.7 put the shaft in the street beside the building and a second building next door
+    // to receive it at the top. Every city tower now has its core in its own corner: the
+    // shaft is strictly inside the shell, with room to stand between the two, so there is
+    // no way to board it except by going in through the door.
+    const towers = city.props.filter((prop) => prop.id.endsWith('-tower-wall-w'));
+    expect(towers.length).toBeGreaterThan(0);
+
+    let checked = 0;
+    for (const wall of towers) {
+      const towerId = wall.id.replace('-wall-w', '');
+      const shell = city.props.filter((prop) => prop.id.startsWith(`${towerId}-wall`));
+      const lift = (city.elevators ?? []).find((entry) => entry.id === `${towerId}-lift`);
+      expect(lift, towerId).toBeDefined();
+      if (!lift) continue;
+
+      const shellMinX = Math.min(...shell.map((prop) => prop.position.x - prop.size.x / 2));
+      const shellMaxX = Math.max(...shell.map((prop) => prop.position.x + prop.size.x / 2));
+      const shellMinZ = Math.min(...shell.map((prop) => prop.position.z - prop.size.z / 2));
+      const shellMaxZ = Math.max(...shell.map((prop) => prop.position.z + prop.size.z / 2));
+
+      const shaftMinX = lift.at[0] - lift.size[0] / 2 - 0.4;
+      const shaftMaxX = lift.at[0] + lift.size[0] / 2 + 0.4;
+      const shaftMinZ = lift.at[1] - lift.size[1] / 2 - 0.4;
+      const shaftMaxZ = lift.at[1] + lift.size[1] / 2 + 0.4;
+
+      // Inside the building, not beside it.
+      expect(shaftMinX, `${towerId} west`).toBeGreaterThanOrEqual(shellMinX);
+      expect(shaftMaxX, `${towerId} east`).toBeLessThanOrEqual(shellMaxX);
+      expect(shaftMinZ, `${towerId} north`).toBeGreaterThanOrEqual(shellMinZ);
+      expect(shaftMaxZ, `${towerId} south`).toBeLessThanOrEqual(shellMaxZ);
+
+      // ...with somewhere to stand in front of the doors, which is what makes it a lobby
+      // rather than a shaft pressed against the wall: the doors face +X, into the building.
+      expect(shellMaxX - shaftMaxX, `${towerId} lobby`).toBeGreaterThan(4);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('ends at the building it is inside of, not beside it', () => {
+    // The top floor is the building's own roof. Nothing opens to the sky before that, and
+    // nothing opens to the street at all: the lift goes up through the middle of a
+    // building and out onto the top of it.
+    let checked = 0;
+    for (const lift of (city.elevators ?? []).filter((entry) => entry.id.includes('-tower-lift'))) {
+      const towerId = lift.id.replace('-lift', '');
+      const setback = city.props.find((prop) => prop.id === `${towerId}-setback`);
+      if (!setback) continue;
+
+      const roofTop = setback.position.y + setback.size.y / 2;
+      const top = lift.floors[lift.floors.length - 1] as number;
+      expect(top, towerId).toBeCloseTo(roofTop, 5);
+
+      // The street floor is a floor: the car is inside the shell at the bottom too.
+      const street = lift.floors[0] as number;
+      expect(top - street, towerId).toBeGreaterThan(40);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });
