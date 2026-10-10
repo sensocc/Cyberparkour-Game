@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { standingSize } from '../../src/game/player.js';
 import { buildCity, generateCity } from '../../src/game/level/city.js';
+import { buildScene, updateChunkVisibility } from '../../src/render/sceneBuilder.js';
 import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
 import { crossingGap, crossingRise } from '../../src/game/reach.js';
 import { buildLevel, propBounds } from '../../src/game/level/level.js';
@@ -700,5 +701,71 @@ describe('no two buildings in one place', () => {
       }
     }
     expect(overlaps.slice(0, 5)).toEqual([]);
+  });
+});
+
+describe('the run, which is on the roofs', () => {
+  const city = buildCity(DEMO_DISTRICT);
+  const ground = DEMO_DISTRICT.environment.backdrop.baseY;
+
+  it('starts the player on a rooftop, well above the street', () => {
+    // V0.7.7 spawned the player on the ground: the run had been placed from the generator's own
+    // register, and a register is bookkeeping rather than geometry, so route points landed
+    // inside buildings and above surfaces. It is placed on deck props now, which *are* the
+    // surfaces, with a clearance check for the rooftop kit standing on them.
+    expect(city.spawn.position.y).toBeGreaterThan(ground + 20);
+    expect(() => buildLevel(city, BUILD)).not.toThrow();
+  });
+
+  it('puts every checkpoint and pickup on a roof as well', () => {
+    for (const point of [...city.checkpoints, ...(city.collectibles ?? []), city.goal!]) {
+      expect(point.position.y, point.id).toBeGreaterThan(ground + 20);
+    }
+  });
+
+  it('walks the checkpoints from the spawn towards the finish', () => {
+    // The checkpoints arm the finish, so they have to be met in order - and across a kilometre
+    // rather than a district, which is why there are five of them strung out rather than three.
+    const distance = (a: { x: number; z: number }, b: { x: number; z: number }): number =>
+      Math.hypot(a.x - b.x, a.z - b.z);
+    const start = city.spawn.position;
+    const positions = city.checkpoints.map((checkpoint) => checkpoint.position);
+    const goal = city.goal!.position;
+
+    expect(city.checkpoints.length).toBeGreaterThanOrEqual(4);
+    expect(distance(start, goal)).toBeGreaterThan(250);
+    for (const [index, position] of positions.entries()) {
+      const before = index === 0 ? start : (positions[index - 1] as { x: number; z: number });
+      expect(distance(before, position), `checkpoint ${index + 1} goes backwards`).toBeGreaterThan(1);
+    }
+    expect(distance(positions[positions.length - 1] as { x: number; z: number }, goal)).toBeGreaterThan(1);
+  });
+});
+
+describe('the ground, which is always there', () => {
+  it('is not culled when the player walks away from the middle of it', () => {
+    // The street is one prop 1200 m across, merged into one mesh whose bounding sphere is the
+    // whole map. Culling by the distance to that sphere's centre hid the entire floor whenever
+    // the player was more than 420 m from the origin: "the ground turned transparent" was the
+    // floor not being drawn.
+    const city = buildCity(DEMO_DISTRICT);
+    const scene = buildScene(city);
+    try {
+      const big = scene.chunks.filter((mesh) => (mesh.geometry.boundingSphere?.radius ?? 0) > 200);
+      expect(big.length).toBeGreaterThan(0);
+
+      for (const eye of [
+        { x: 0, y: 0, z: 0 },
+        { x: 460, y: 0, z: 460 },
+        { x: -480, y: 0, z: 400 },
+      ]) {
+        updateChunkVisibility(scene.chunks, eye);
+        for (const mesh of big) {
+          expect(mesh.visible, `${mesh.name} from ${eye.x},${eye.z}`).toBe(true);
+        }
+      }
+    } finally {
+      scene.dispose();
+    }
   });
 });

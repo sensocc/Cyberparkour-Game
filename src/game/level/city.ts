@@ -345,62 +345,81 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
   // ------------------------------------------------------------------ the run
   //
-  // Across the diagonal of the grid, because the map is a kilometre now and a run across it
-  // should be a run across it: the spawn in the middle, five checkpoints strung out ahead of
-  // it, the pickups between them, and the finish on the far corner. Every one of them stands
-  // on a rooftop, so the route is rooftops from end to end.
-  // Plain blocks only. A tower's roofs are inset setbacks, a construction carcass is open
-  // frames, and an interior's top is a ring round a well: all of them are places where the
-  // *cell's* centre is not a surface, and a route point belongs on a surface.
-  const ordered = [...plots.values()]
-    .filter((cell) => !/-tower|-site|inside-|hall-/.test(cell.id))
-    .sort((a, b) => a.cx + a.cz - (b.cx + b.cz));
+  // **On the roofs, and on roofs that are actually there.** The first attempt placed the run
+  // from the register - the height each archetype said its building was - and a register is
+  // bookkeeping, not geometry: a cell's centre is inside the building that stands on it, and a
+  // tower's registered roof is the top of its shell, forty metres under its actual roof. Route
+  // points landed inside bodies and twelve metres above surfaces, so the run went down to the
+  // street and stayed there.
+  //
+  // A roof deck is the surface itself, so a point at a deck's centre is a point *on* it - and
+  // the one thing a deck cannot tell you is whether something is standing on top of it, which
+  // is what the clearance check is for.
+  const roofDecks = props
+    .filter(
+      (prop) =>
+        prop.kind === 'floor' &&
+        prop.model === 'deck' &&
+        prop.size.x > 14 &&
+        prop.size.z > 14 &&
+        prop.position.y + prop.size.y / 2 > config.groundY + 8,
+    )
+    .map((prop) => ({
+      id: prop.id,
+      x: prop.position.x,
+      z: prop.position.z,
+      y: prop.position.y + prop.size.y / 2,
+    }));
 
-  // On a *surface*, not on a number the register happens to hold. A tower's registered roof is
-  // the top of its shell - the terrace its lift opens onto - and its actual roof is forty
-  // metres higher, so a spawn placed from the register lands in the air. Asked of the props
-  // instead, the answer is the highest deck over that cell, which is a roof you can stand on.
-  const decks = props.filter(
-    (prop) => prop.kind === 'floor' && prop.size.x > 6 && prop.size.z > 6 && prop.size.x < 400,
-  );
-  const roofOver = (cell: Building): { x: number; y: number; z: number } => {
-    // The building's *own* roof deck, by name, rather than the highest deck over the cell.
-    // A cell can have a roof storey, a parapet and a solar array on it, and the highest deck
-    // over a footprint is not always the one you would land on - which is how a spawn ends up
-    // twelve metres above the surface it was aimed at.
-    const own = decks.find((deck) => deck.id === cell.id);
-    if (own) {
-      return {
-        x: own.position.x,
-        y: own.position.y + own.size.y / 2,
-        z: own.position.z,
-      };
+  /** True when nobody is already standing there: a foot of headroom, and no prop in it. */
+  const clearOf = (x: number, z: number, y: number): boolean =>
+    !props.some(
+      (prop) =>
+        Math.abs(prop.position.x - x) < prop.size.x / 2 + 0.5 &&
+        Math.abs(prop.position.z - z) < prop.size.z / 2 + 0.5 &&
+        prop.position.y + prop.size.y / 2 > y + 0.15 &&
+        prop.position.y - prop.size.y / 2 < y + 1.8,
+    );
+
+  /** A spot on that roof, as close to its centre as the rooftop kit allows. */
+  const spotOn = (deck: (typeof roofDecks)[number]): { x: number; y: number; z: number } | null => {
+    for (const [dx, dz] of [
+      [0, 0],
+      [2.6, 0],
+      [-2.6, 0],
+      [0, 2.6],
+      [0, -2.6],
+      [2.6, 2.6],
+      [-2.6, -2.6],
+      [2.6, -2.6],
+      [-2.6, 2.6],
+    ] as const) {
+      if (clearOf(deck.x + dx, deck.z + dz, deck.y)) {
+        return { x: deck.x + dx, y: deck.y, z: deck.z + dz };
+      }
     }
-    return { x: cell.cx, y: cell.roof, z: cell.cz };
+    return null;
   };
+
+  const roofs = roofDecks
+    .map((deck) => ({ deck, spot: spotOn(deck) }))
+    .filter((entry): entry is { deck: (typeof roofDecks)[number]; spot: { x: number; y: number; z: number } } =>
+      entry.spot !== null,
+    )
+    .sort((a, b) => a.deck.x + a.deck.z - (b.deck.x + b.deck.z));
+
   const on = (fraction: number, id: string): { id: string; position: { x: number; y: number; z: number } } => {
-    const cell = ordered[Math.min(ordered.length - 1, Math.max(0, Math.round(fraction * (ordered.length - 1))))]!;
-    // On the street, which is the one surface in a generated city that is always where it says
-    // it is. The roofs were the first choice and they are not reliable: a building's cell
-    // centre is not always on its roof deck, and a spawn twelve metres above the surface is a
-    // spawn that falls. Siting the run on rooftops is the next thing to do, and it needs a
-    // placement that is measured against the physics rather than assumed from the register.
-    void roofOver;
-    // In the street *between* cells, not on a cell: a cell's centre is inside the building that
-    // stands on it, from the ground up.
-    return {
-      id,
-      position: { x: cell.cx, y: config.groundY + 0.05, z: cell.cz + half + STREET / 2 },
-    };
+    const entry = roofs[Math.min(roofs.length - 1, Math.max(0, Math.round(fraction * (roofs.length - 1))))]!;
+    return { id, position: { x: entry.spot.x, y: entry.spot.y + 0.02, z: entry.spot.z } };
   };
-  const origin = ordered[Math.min(ordered.length - 1, Math.round(ordered.length / 2))]!;
+  const origin = roofs[Math.min(roofs.length - 1, Math.round(roofs.length / 2))]!;
 
   return {
     props,
     lights: lights.length > 0 ? lights : undefined,
     elevators: elevators.length > 0 ? elevators : undefined,
     spawn: {
-      position: { x: origin.cx, y: config.groundY + 0.05, z: origin.cz + half + STREET / 2 },
+      position: { x: origin.spot.x, y: origin.spot.y + 0.02, z: origin.spot.z },
       yaw: 0,
       pitch: 0,
     },

@@ -297,6 +297,17 @@ export function updateChunkVisibility(
   const reach = far * far;
   let drawn = 0;
   for (const mesh of chunks) {
+    // **A chunk bigger than a chunk is not a chunk.** The street is one prop 1200 m across, so
+    // it is merged into one mesh whose bounding sphere is the whole map - and culling by the
+    // distance to that sphere's *centre* hides the entire ground the moment the player is 420 m
+    // from the middle of it, which is what "the ground turned transparent" was: not a material
+    // and not a depth problem, the floor simply not being drawn.
+    const radius = mesh.geometry.boundingSphere?.radius ?? 0;
+    if (radius > 200) {
+      if (!mesh.visible) mesh.visible = true;
+      drawn += 1;
+      continue;
+    }
     const dx = mesh.position.x - eye.x;
     const dz = mesh.position.z - eye.z;
     const visible = dx * dx + dz * dz < reach;
