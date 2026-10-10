@@ -86,7 +86,37 @@ export interface CollisionWorldOptions {
   maxSubStep?: number;
   /** Distance below the feet that still counts as "grounded" (m). */
   groundProbe?: number;
+  /**
+   * How candidates are found.
+   *
+   * `grid` is what the game uses. `scan` is the V0.1 behaviour - every collider,
+   * every time - and is kept because it is the thing the grid has to be *equal*
+   * to: two implementations that must agree are worth more than one that must be
+   * believed, and the equivalence test runs both over the whole city.
+   */
+  broadphase?: 'grid' | 'scan';
 }
+
+/**
+ * Side of a broadphase cell, in metres.
+ *
+ * Sized to the things that are tested against each other rather than to the city:
+ * a player is under a metre across, so 16 m is a cell that a walking step never
+ * leaves and a falling step crosses at most one boundary of. Smaller cells make
+ * the per-cell lists shorter but the *number* of cells to visit larger, and past
+ * about this size the second effect wins.
+ */
+const CELL = 16;
+
+/**
+ * How many cells a collider may span before it is held aside instead.
+ *
+ * A collider in every cell it touches is what makes the grid work; a collider in
+ * *every* cell - a 1200 m street plate - would be inserted into nine thousand of
+ * them and defeat the point. There are only a handful of these, and they are the
+ * ones a query is most likely to hit anyway, so they are tested every time.
+ */
+const MAX_CELLS = 8;
 
 export class CollisionWorld {
   readonly colliders: readonly Collider[];
@@ -102,9 +132,113 @@ export class CollisionWorld {
    */
   private readonly disabled = new Set<string>();
 
+  /** `grid` (the game) or `scan` (the reference the equivalence test compares against). */
+  private readonly broadphase: 'grid' | 'scan';
+
+  /** Cell coordinate of a world position, on one axis. */
+  private static cell(value: number): number {
+    return Math.floor(value / CELL);
+  }
+
+  /** Cell key. Packs both coordinates into one number, which a Map wants. */
+  private static key(x: number, z: number): number {
+    return x * 100000 + z;
+  }
+
+  private readonly cells = new Map<number, number[]>();
+  /** Colliders too large to file by cell, tested on every query. */
+  private readonly large: number[] = [];
+  /** Cell lists built in ascending collider order, so a query can rely on it. */
+  private readonly scratch: number[] = [];
+  private scratchCount = 0;
+  /**
+   * One stamp per collider, so a collider filed under several cells is visited
+   * once. Stamps rather than a cleared set: the counter only ever goes up, so
+   * nothing has to be reset between queries.
+   */
+  private readonly seen: Int32Array;
+  private stamp = 0;
+
+  /**
+   * Files every collider into the cells it overlaps.
+   *
+   * A collider is written into each cell it touches *in ascending index order*,
+   * which is what lets `findGround` pick the same collider the linear scan would
+   * - the first one in the level's own order - without walking the whole level.
+   */
+  private index(): void {
+    if (this.broadphase === 'scan') return;
+
+    for (let index = 0; index < this.colliders.length; index += 1) {
+      const { box } = this.colliders[index] as Collider;
+      const x0 = CollisionWorld.cell(box.min.x);
+      const x1 = CollisionWorld.cell(box.max.x);
+      const z0 = CollisionWorld.cell(box.min.z);
+      const z1 = CollisionWorld.cell(box.max.z);
+      if (x1 - x0 >= MAX_CELLS || z1 - z0 >= MAX_CELLS) {
+        this.large.push(index);
+        continue;
+      }
+      for (let x = x0; x <= x1; x += 1) {
+        for (let z = z0; z <= z1; z += 1) {
+          const key = CollisionWorld.key(x, z);
+          const cell = this.cells.get(key);
+          if (cell) cell.push(index);
+          else this.cells.set(key, [index]);
+        }
+      }
+    }
+  }
+
+  /**
+   * Collects the colliders that could overlap `box` into `this.scratch`.
+   *
+   * A collision query is a handful of cells rather than the level, which is the
+   * whole reason the city can be five thousand colliders and still cost what the
+   * district's two hundred cost. A sweeping box covers a few cells per query, so
+   * this is the hot path's only allocation-free step.
+   */
+  private gather(box: AABB): number {
+    this.scratchCount = 0;
+    if (this.broadphase === 'scan') {
+      for (let index = 0; index < this.colliders.length; index += 1) this.scratch[index] = index;
+      this.scratchCount = this.colliders.length;
+      return this.scratchCount;
+    }
+
+    this.stamp += 1;
+    const stamp = this.stamp;
+    for (let index = 0; index < this.large.length; index += 1) {
+      const candidate = this.large[index] as number;
+      this.seen[candidate] = stamp;
+      this.scratch[this.scratchCount] = candidate;
+      this.scratchCount += 1;
+    }
+
+    const x0 = CollisionWorld.cell(box.min.x);
+    const x1 = CollisionWorld.cell(box.max.x);
+    const z0 = CollisionWorld.cell(box.min.z);
+    const z1 = CollisionWorld.cell(box.max.z);
+    for (let x = x0; x <= x1; x += 1) {
+      for (let z = z0; z <= z1; z += 1) {
+        const cell = this.cells.get(CollisionWorld.key(x, z));
+        if (!cell) continue;
+        for (let index = 0; index < cell.length; index += 1) {
+          const candidate = cell[index] as number;
+          if (this.seen[candidate] === stamp) continue;
+          this.seen[candidate] = stamp;
+          this.scratch[this.scratchCount] = candidate;
+          this.scratchCount += 1;
+        }
+      }
+    }
+    return this.scratchCount;
+  }
+
   constructor(colliders: readonly Collider[], options: CollisionWorldOptions = {}) {
     this.colliders = colliders.slice();
     this.groundProbe = options.groundProbe ?? 0.02;
+    this.broadphase = options.broadphase ?? 'grid';
 
     // A collider thinner than the sub-step could be stepped straight over, so
     // the sub-step is clamped to the thinnest thing in the level.
@@ -115,6 +249,9 @@ export class CollisionWorld {
     const requested = options.maxSubStep ?? 0.2;
     if (requested <= 0) throw new RangeError('maxSubStep must be > 0');
     this.maxSubStep = Math.min(requested, Number.isFinite(thinnest) ? thinnest : requested);
+
+    this.seen = new Int32Array(this.colliders.length);
+    this.index();
   }
 
   /** The sub-step actually in use (exposed for diagnostics/tests). */
@@ -201,7 +338,9 @@ export class CollisionWorld {
 
   /** True when the box does not overlap any *enabled* collider. */
   isFree(box: AABB): boolean {
-    for (const collider of this.colliders) {
+    const count = this.gather(box);
+    for (let index = 0; index < count; index += 1) {
+      const collider = this.colliders[this.scratch[index] as number] as Collider;
       if (this.disabled.has(collider.id)) continue;
       if (overlaps(box, collider.box)) return false;
     }
@@ -213,12 +352,28 @@ export class CollisionWorld {
     return this.findGround(box, distance) !== null;
   }
 
+  /**
+   * The supporting collider, chosen exactly as the linear scan chose it: the
+   * first one in the level's own order.
+   *
+   * "First in order" is "lowest index", which is a fact about the candidate set
+   * rather than about the order it was visited in - so the grid can answer with
+   * the same collider even though it finds candidates cell by cell. Two
+   * colliders that both support the player are a real case (the lip of a roof and
+   * the roof itself), which is why this is pinned down rather than left to
+   * whichever the walk happened to reach.
+   */
   private findGround(box: AABB, distance: number): Collider | null {
-    for (const collider of this.colliders) {
+    const count = this.gather(box);
+    let best = -1;
+    for (let index = 0; index < count; index += 1) {
+      const candidate = this.scratch[index] as number;
+      if (best !== -1 && candidate > best) continue;
+      const collider = this.colliders[candidate] as Collider;
       if (this.disabled.has(collider.id)) continue;
-      if (overlapsWhenOffset(box, 'y', -distance, collider.box)) return collider;
+      if (overlapsWhenOffset(box, 'y', -distance, collider.box)) best = candidate;
     }
-    return null;
+    return best === -1 ? null : (this.colliders[best] as Collider);
   }
 
   /**
@@ -256,7 +411,9 @@ export class CollisionWorld {
   private depenetrateAxis(box: AABB, axis: Axis, direction: number): number {
     let push = 0;
 
-    for (const collider of this.colliders) {
+    const count = this.gather(box);
+    for (let index = 0; index < count; index += 1) {
+      const collider = this.colliders[this.scratch[index] as number] as Collider;
       if (this.disabled.has(collider.id)) continue;
       if (!overlaps(box, collider.box)) continue;
 

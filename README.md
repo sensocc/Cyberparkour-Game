@@ -5,9 +5,9 @@
 A low-poly, Quake-styled **first-person parkour game** set in a cyberpunk city,
 in the spirit of *Mirror's Edge*.
 
-This repository currently contains **V0.7**. V0.3 made the roof a route, V0.4 took the
+This repository currently contains **V0.7.1**. V0.3 made the roof a route, V0.4 took the
 route indoors, V0.5 made it a level, and V0.6 gave the player a body and a settings
-screen. **V0.7 makes it a city.**
+screen. **V0.7 made it a city; V0.7.1 made the city run.**
 
 The hand-authored district is still there, in the middle, exactly as it was — and around
 it is a kilometre of generated city: **5,233 props**, 5,264 colliders, streets 18 m wide
@@ -21,53 +21,60 @@ The old platform lifts are gone. A lift is now a thing you *call*, walk into, se
 floor, and ride: the gate shuts, the car climbs, the gate opens, and you step out onto a
 roof.
 
+**V0.7.1 is the cost of all that, paid down.** A city is not a district that happens to be
+bigger: 41,915 model parts was 41,915 draw calls a frame, and five thousand colliders was
+five thousand collision tests per sub-step. Both are now proportional to what is on screen
+and what is underfoot rather than to how much city exists, and neither change alters a
+single pixel or millimetre of how the game plays.
+
 ---
 
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7 delivers](#what-v07-delivers)
-3. [What V0.6.1 fixes](#what-v061-fixes)
-4. [What V0.6 delivers](#what-v06-delivers)
-5. [What V0.5 delivered](#what-v05-delivered)
-6. [Quick start](#quick-start)
-7. [Controls](#controls)
-8. [What you should see](#what-you-should-see)
-9. [Settings](#settings)
-10. [Camera effects](#camera-effects)
-11. [Feel](#feel)
-12. [Your body](#your-body)
-13. [Optimisation](#optimisation)
-14. [Locomotion](#locomotion)
-15. [The movement state machine](#the-movement-state-machine)
-16. [The manoeuvre bands](#the-manoeuvre-bands)
-17. [Wall running](#wall-running)
-18. [Wall jumping](#wall-jumping)
-19. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-20. [The landing roll](#the-landing-roll)
-21. [Pipe climbing](#pipe-climbing)
-22. [Interiors and doors](#interiors-and-doors)
-23. [Lifts](#lifts)
-24. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-25. [Checkpoints and respawn](#checkpoints-and-respawn)
-26. [The district](#the-district)
-27. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-28. [Neon](#neon)
-29. [Fall damage and health](#fall-damage-and-health)
-30. [Models and surfaces](#models-and-surfaces)
-31. [Sound](#sound)
-32. [How the textures are made](#how-the-textures-are-made)
-33. [Architecture](#architecture)
-34. [How a frame works](#how-a-frame-works)
-35. [Collision](#collision)
-36. [Crash reporting](#crash-reporting)
-37. [The HUDs](#the-huds)
-38. [Testing](#testing)
-39. [Continuous integration](#continuous-integration)
-40. [Project layout](#project-layout)
-41. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-42. [Out of scope for V0.7](#out-of-scope-for-v07)
-43. [Roadmap](#roadmap)
+2. [What V0.7.1 optimises](#what-v071-optimises)
+3. [What V0.7 delivers](#what-v07-delivers)
+4. [What V0.6.1 fixes](#what-v061-fixes)
+5. [What V0.6 delivers](#what-v06-delivers)
+6. [What V0.5 delivered](#what-v05-delivered)
+7. [Quick start](#quick-start)
+8. [Controls](#controls)
+9. [What you should see](#what-you-should-see)
+10. [Settings](#settings)
+11. [Camera effects](#camera-effects)
+12. [Feel](#feel)
+13. [Your body](#your-body)
+14. [Optimisation](#optimisation)
+15. [Locomotion](#locomotion)
+16. [The movement state machine](#the-movement-state-machine)
+17. [The manoeuvre bands](#the-manoeuvre-bands)
+18. [Wall running](#wall-running)
+19. [Wall jumping](#wall-jumping)
+20. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+21. [The landing roll](#the-landing-roll)
+22. [Pipe climbing](#pipe-climbing)
+23. [Interiors and doors](#interiors-and-doors)
+24. [Lifts](#lifts)
+25. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+26. [Checkpoints and respawn](#checkpoints-and-respawn)
+27. [The district](#the-district)
+28. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+29. [Neon](#neon)
+30. [Fall damage and health](#fall-damage-and-health)
+31. [Models and surfaces](#models-and-surfaces)
+32. [Sound](#sound)
+33. [How the textures are made](#how-the-textures-are-made)
+34. [Architecture](#architecture)
+35. [How a frame works](#how-a-frame-works)
+36. [Collision](#collision)
+37. [Crash reporting](#crash-reporting)
+38. [The HUDs](#the-huds)
+39. [Testing](#testing)
+40. [Continuous integration](#continuous-integration)
+41. [Project layout](#project-layout)
+42. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+43. [Out of scope for V0.7](#out-of-scope-for-v07)
+44. [Roadmap](#roadmap)
 
 ---
 
@@ -75,22 +82,94 @@ roof.
 
 | | |
 | --- | --- |
-| Version | `0.7.0` |
+| Version | `0.7.1` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1086 across 40 files |
+| Tests | 1096 across 41 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7 is finished and frozen. The district is *not* yet labelled Level 1 - that is V0.8's
-job, along with the polish that comes after a change this size.
+V0.7.1 is finished and frozen, and it is the version where the city started to run. The
+district is *not* yet labelled Level 1 - that is V0.8's job.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.1 optimises
+
+The city was built to be looked at and then asked to be played. This version is the
+difference, measured rather than argued about:
+
+| | Before | After |
+| --- | --- | --- |
+| Meshes in the city scene | 41,915 | **2,313** |
+| Draw calls, standing on a street | ~40,000 | **471** |
+| Chunks casting into the shadow map | 1,091 | **193** |
+| A falling step, worst case | ~0.5 ms | **~0.001 ms** |
+| Building the city scene | 328 ms | **259 ms** |
+| Triangles | 502,980 | 476,196 (the same parts, minus 101 double-drawn gates) |
+
+**Static parts are merged into chunks.** A part is a box that never moves, and forty
+thousand boxes that never move can share a vertex buffer. Props are now written into one
+buffer per (chunk, material, shadow flags) - a chunk being 128 m, about two blocks of the
+city - and each chunk becomes one mesh. The bargain is deliberate: bigger chunks would
+mean fewer draw calls but cull less, smaller ones the reverse, and 128 m puts a chunk
+either mostly in view or mostly not.
+
+What the merge does *not* do is change what is drawn. The buffer is the box the shared
+cache already built - same vertices, same normals, same pre-scaled UVs - copied to its
+world position inside the chunk rather than rewritten. Chunk-local coordinates matter at
+this size: a metre-wide box a kilometre from the origin has no precision left in a float.
+
+**A chunk casts a shadow only while the shadow map can see it.** A shadow pass draws every
+caster in the scene and *clips* the rest; vertices outside the shadow camera are clipped,
+not culled. With one mesh per prop that cost nothing worth counting. With the city merged
+it was a second full pass over half a million triangles for a map 220 m across, so casting
+is now switched by distance from the player - and since everything switched off was
+outside the map anyway, no shadow changed.
+
+**The collision solver stops testing the whole city to answer a question about one
+street.** Every sub-step of every axis used to walk all 5,264 colliders; a falling step at
+terminal velocity did that twenty times over. Colliders are now filed into a 16 m grid and
+a query visits the handful of cells the player's box overlaps. The solver itself is
+untouched - same arithmetic, same decisions, better index:
+
+- **The grid must answer exactly what the scan answered**, and it is held to that: 1,200
+  pseudo-random moves through the whole city, comparing `grounded`, `hitWall`,
+  `hitCeiling`, `groundId`, `groundSurface` and the final box, corner for corner.
+- The one query where the *choice* of collider matters is `findGround`, which returns the
+  first supporting collider in the level's order. "First in order" is "lowest index", which
+  is a property of the candidate set rather than of the order it was walked in - so the
+  grid answers with the same collider cell by cell. Two things supporting the player at
+  once is a real case: the lip of a roof and the roof.
+
+The `scan` path is still there, behind an option, because two implementations that must
+agree are worth more than one that must be believed. It is what the equivalence test
+compares against.
+
+### A gate drawn twice
+
+Optimising the props pass surfaced a bug V0.7 introduced: **every elevator gate was drawn
+twice.** Gates are props *and* groups that slide, and V0.7 added the groups without
+removing them from the props pass - so 101 shutters existed in two places, and the copy
+that never moved stood shut in front of openings the lift had already left. A merged gate
+can only be in one place, which is how it became impossible to miss. The merge now skips
+them, and a test asserts no gate is both.
+
+### What is not here
+
+No frames-per-second number. The machine this was built on has no GPU worth the name, and
+a software rasteriser's frame rate says more about the rasteriser than about the game. The
+numbers above are the ones that transfer - the draw calls a frame asks for, the casters a
+shadow pass takes, the milliseconds the physics spends between frames - and they are what
+a machine with a real GPU will feel. They are pinned by `tests/render/performance.test.ts`
+and `tests/game/physics/collision.test.ts`.
 
 ---
 
@@ -538,6 +617,10 @@ the player looks down, and anything larger turns the whole view cyan.
 ---
 
 ## Optimisation
+
+V0.7.1's work has a section of its own, above. What follows is V0.6's, which it replaces
+and builds on - and which is still true, still measured, and still the reason the merge
+had a cache of identical boxes to copy from.
 
 V0.6's optimisation work started from a measurement rather than an assumption.
 
@@ -1499,5 +1582,11 @@ one sign.
 V0.7, this version, is the largest change the project has had: the district became a city
 of four and a half thousand props, the platform lifts became buildings you call, and the
 walk got the one fix that a smooth set of joints was never going to provide.
+
+V0.7.1 optimised the city the way an engine is optimised: by measuring what a frame asks
+for, removing what it asks for and does not need, and proving the result is the same game.
+Both halves were checked against the old behaviour rather than against a feeling - the
+merge against the polygons it has to reproduce, and the physics against the solver it
+replaced.
 
 The next milestone is V0.8: polish, and labelling the district as Level 1.

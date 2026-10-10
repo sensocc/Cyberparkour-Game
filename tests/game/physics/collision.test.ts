@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { vec3, type Vec3 } from '../../../src/core/vec3.js';
-import { aabbFromCenterSize, overlaps, type AABB } from '../../../src/game/physics/aabb.js';
+import { aabbFromCenterSize, aabbFromFeet, overlaps, type AABB } from '../../../src/game/physics/aabb.js';
+import { buildCity } from '../../../src/game/level/city.js';
+import { DEMO_DISTRICT } from '../../../src/game/level/levelData.js';
+import { buildLevel } from '../../../src/game/level/level.js';
+import { standingSize } from '../../../src/game/player.js';
+import { DEFAULT_CONFIG } from '../../../src/core/config.js';
 import {
   COLLISION_SKIN,
   CollisionWorld,
@@ -419,5 +424,126 @@ describe('velocity and delta guards', () => {
     const delta = vec3(Number.NaN, 1, 1);
     clampDelta(delta, 50);
     expect(delta).toEqual({ x: 0, y: 0, z: 0 });
+  });
+});
+
+describe('the broadphase the city needs', () => {
+  /**
+   * Builds the city's collider list and both worlds.
+   *
+   * V0.7.1 made `CollisionWorld` stop scanning every collider on every sub-step:
+   * the city is 5,264 of them, and a falling step tested all of them several times
+   * over. `scan` is the V0.1 behaviour, kept precisely so this test can hold the
+   * grid to it.
+   */
+  function worlds(): { grid: CollisionWorld; scan: CollisionWorld; colliders: readonly Collider[] } {
+    const city = buildCity(DEMO_DISTRICT);
+    const built = buildLevel(city, {
+      maxSubStep: DEFAULT_CONFIG.world.maxCollisionSubStep,
+      player: standingSize(DEFAULT_CONFIG.player),
+    });
+    return {
+      grid: new CollisionWorld(built.colliders, { broadphase: 'grid' }),
+      scan: new CollisionWorld(built.colliders, { broadphase: 'scan' }),
+      colliders: built.colliders,
+    };
+  }
+
+  const size = standingSize(DEFAULT_CONFIG.player);
+  const at = { x: 0, y: 0, z: 0 };
+
+  /** Moves one box through `world`, from `from`, by `delta`. */
+  function push(
+    world: CollisionWorld,
+    from: { x: number; y: number; z: number },
+    delta: { x: number; y: number; z: number },
+  ) {
+    const box = aabbFromFeet(from, size.radius, size.height);
+    const velocity = { x: delta.x * 6, y: delta.y * 6, z: delta.z * 6 };
+    const result = world.move(box, delta, velocity);
+    return { result, box };
+  }
+
+  it('answers exactly what the scan would, over the whole city', () => {
+    // The point of the grid is that it is *not* a rewrite of the solver: it makes
+    // the same decision about the same colliders, having found them by cell instead
+    // of by walking the level. Anything else would be a physics change wearing an
+    // optimisation's clothes, and this is where that would show up.
+    //
+    // Every mismatch is collected and asserted once, rather than asserted inside the
+    // loop: the `scan` half of this is deliberately slow - it is the behaviour being
+    // replaced - and three thousand assertions on top of it is a test that times out
+    // on a runner slower than the one it was written on.
+    const { grid, scan } = worlds();
+    let seed = 20271010;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+
+    const mismatches: string[] = [];
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      at.x = (random() - 0.5) * 800;
+      at.y = -30 + random() * 100;
+      at.z = (random() - 0.5) * 800;
+      const delta = { x: (random() - 0.5) * 0.6, y: (random() - 0.5) * 0.6, z: (random() - 0.5) * 0.6 };
+
+      const mine = push(grid, at, delta);
+      const theirs = push(scan, at, delta);
+
+      const same =
+        mine.result.grounded === theirs.result.grounded &&
+        mine.result.hitWall === theirs.result.hitWall &&
+        mine.result.hitCeiling === theirs.result.hitCeiling &&
+        mine.result.groundId === theirs.result.groundId &&
+        mine.result.groundSurface === theirs.result.groundSurface &&
+        mine.box.min.x === theirs.box.min.x &&
+        mine.box.min.y === theirs.box.min.y &&
+        mine.box.min.z === theirs.box.min.z &&
+        mine.box.max.x === theirs.box.max.x &&
+        mine.box.max.y === theirs.box.max.y &&
+        mine.box.max.z === theirs.box.max.z;
+
+      if (!same) {
+        mismatches.push(
+          `at ${JSON.stringify(at)} delta ${JSON.stringify(delta)}: ` +
+            `grid ${JSON.stringify(mine.result)} ${JSON.stringify(mine.box.min)} / ` +
+            `scan ${JSON.stringify(theirs.result)} ${JSON.stringify(theirs.box.min)}`,
+        );
+        if (mismatches.length > 4) break;
+      }
+    }
+
+    expect(mismatches).toEqual([]);
+  });
+
+  it('declines to test the whole city to answer a question about one street', () => {
+    // A falling step is the worst case: it sub-steps repeatedly, on every axis.
+    // 1,200 of them took about a millisecond with the grid and most of a second
+    // without it, so the assertion is deliberately loose - it is there to catch the
+    // broadphase being dropped, not to measure the machine it runs on.
+    const { grid } = worlds();
+    const start = performance.now();
+    for (let move = 0; move < 1200; move += 1) {
+      push(grid, { x: 40, y: 60 - move * 0.05, z: 40 }, { x: 0.05, y: -0.4, z: 0 });
+    }
+    expect(performance.now() - start).toBeLessThan(400);
+  });
+
+  it('finds the same ground when two things both support the player', () => {
+    // The one query where the answer depends on *which* collider is found: the
+    // first in the level's order. A grid visits candidates cell by cell, so it has
+    // to choose by index rather than by whatever it happened to reach first.
+    const { grid, scan, colliders } = worlds();
+    let checked = 0;
+
+    for (const collider of colliders.slice(0, 400)) {
+      const feet = { x: collider.box.max.x - 0.3, y: collider.box.max.y, z: collider.box.max.z - 0.3 };
+      const mine = push(grid, feet, { x: 0, y: -0.01, z: 0 });
+      const theirs = push(scan, feet, { x: 0, y: -0.01, z: 0 });
+      expect(mine.result.groundId, collider.id).toBe(theirs.result.groundId);
+      checked += 1;
+    }
+    expect(checked).toBeGreaterThan(100);
   });
 });

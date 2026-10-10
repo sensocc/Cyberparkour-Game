@@ -132,7 +132,7 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk rooftop district. This build is the V0.6 technical demo: a complete district on two levels, joined by lifts, with pickups, a finish line and a clock on the wall — and a body of your own, settings you keep, and a camera that answers the running.',
+        text: 'A first-person parkour run across a cyberpunk city. This build is the V0.7 technical demo: a hand-made district at the centre of a kilometre of generated city — rooftops in terraces, construction sites and their cranes, ladders and balconies, halls and buildings you can walk into, and lifts you call, ride and step out of fifty metres above the street.',
       }),
       this.menu([
         button('Play', {

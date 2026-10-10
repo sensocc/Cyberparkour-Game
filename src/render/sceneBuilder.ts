@@ -31,8 +31,28 @@ export interface SmokeEmitterMesh {
 export interface BuiltScene {
   readonly scene: THREE.Scene;
   readonly sun: THREE.DirectionalLight;
-  /** Meshes by prop id, one entry per part. */
-  readonly meshes: ReadonlyMap<string, readonly THREE.Mesh[]>;
+  /**
+   * What each prop was drawn as: how many model parts it resolved into, and the
+   * material each was drawn with.
+   *
+   * V0.7.1 stopped keeping a mesh per part - the parts are merged into per-chunk
+   * buffers - so a prop is a count and a list of materials rather than a list of
+   * meshes. The material objects are still shared per (surface, tint), so
+   * `materials[0]` is the same object for two props that look the same.
+   */
+  readonly parts: ReadonlyMap<string, { readonly count: number; readonly materials: readonly THREE.Material[] }>;
+  /**
+   * The merged static geometry: one mesh per (chunk, material, shadow flags).
+   *
+   * This is what the frame actually draws, and the number to watch: it is the
+   * draw-call count of the city, and it is about a thousand rather than forty
+   * thousand.
+   *
+   * `userData.castsChunk` is the prop's own shadow flag, kept because the view
+   * switches casting off for chunks the shadow volume cannot reach and needs to
+   * know which ones were casting to begin with - see `View.updateShadowCasters`.
+   */
+  readonly chunks: readonly THREE.Mesh[];
   /**
    * Door leaves, keyed by door id.
    *
@@ -78,6 +98,193 @@ export interface BuiltScene {
   /** The city skyline, when one was built. */
   readonly backdrop: THREE.Mesh | null;
   dispose(): void;
+}
+
+/**
+ * Side of a merged chunk, in metres.
+ *
+ * V0.7.1's bargain. The city is 41,915 model parts, and one mesh each was 41,915
+ * draw calls a frame - a number no browser can push, whatever the triangle count
+ * says. Merging them is the only fix that helps: a part is a box with a position,
+ * and forty thousand boxes that never move can share a vertex buffer.
+ *
+ * Chunked rather than merged whole, because merging the whole city into one
+ * buffer per material would lose frustum culling entirely - the renderer would
+ * draw every roof in the city while the player looks at a wall. A chunk is a unit
+ * small enough to cull and large enough that its parts mostly belong together,
+ * which is why the number is neither 16 nor 512: at 128 m a chunk is about two
+ * blocks of the city, so the player either sees most of one or none of it.
+ */
+const CHUNK = 128;
+
+/**
+ * A growable buffer of box geometry, in one chunk's local space.
+ *
+ * Written to rather than `push`ed into: the parts are appended one vertex at a
+ * time, one million verts in total, and a double-precision `Array` would spend
+ * longer reallocating than the rest of the build takes. Typed arrays that double
+ * when they fill cost one copy every doubling instead of one per append.
+ */
+class PartBuffer {
+  positions: Float32Array;
+  normals: Float32Array;
+  uvs: Float32Array;
+  indices: Uint32Array;
+  vertices = 0;
+  indexCount = 0;
+
+  constructor(capacity = 1024) {
+    this.positions = new Float32Array(capacity * 3);
+    this.normals = new Float32Array(capacity * 3);
+    this.uvs = new Float32Array(capacity * 2);
+    this.indices = new Uint32Array(capacity * 2);
+  }
+
+  /** Grows the vertex arrays so `extra` more vertices fit. */
+  private room(extra: number): void {
+    if (this.vertices + extra <= this.positions.length / 3) return;
+    let capacity = this.positions.length / 3;
+    while (capacity < this.vertices + extra) capacity *= 2;
+    const positions = new Float32Array(capacity * 3);
+    const normals = new Float32Array(capacity * 3);
+    const uvs = new Float32Array(capacity * 2);
+    positions.set(this.positions.subarray(0, this.vertices * 3));
+    normals.set(this.normals.subarray(0, this.vertices * 3));
+    uvs.set(this.uvs.subarray(0, this.vertices * 2));
+    this.positions = positions;
+    this.normals = normals;
+    this.uvs = uvs;
+  }
+
+  private roomForIndices(extra: number): void {
+    if (this.indexCount + extra <= this.indices.length) return;
+    let capacity = this.indices.length;
+    while (capacity < this.indexCount + extra) capacity *= 2;
+    const indices = new Uint32Array(capacity);
+    indices.set(this.indices.subarray(0, this.indexCount));
+    this.indices = indices;
+  }
+
+  /**
+   * Appends one part, offset by its position in the chunk's own frame.
+   *
+   * The source is the *cached* box, so the vertices, normals and - the part that
+   * matters - the UVs are bit-for-bit what an unmerged mesh would have drawn.
+   * Nothing here recomputes geometry; it copies it somewhere else.
+   */
+  add(source: THREE.BufferGeometry, dx: number, dy: number, dz: number): void {
+    const position = source.getAttribute('position');
+    const normal = source.getAttribute('normal');
+    const uv = source.getAttribute('uv');
+    const count = position.count;
+    this.room(count);
+
+    const pa = position.array as Float32Array;
+    const na = normal?.array as Float32Array | undefined;
+    const ua = uv?.array as Float32Array | undefined;
+    const base = this.vertices;
+    let v = base * 3;
+    let t = base * 2;
+    for (let index = 0; index < count; index += 1) {
+      this.positions[v] = (pa[index * 3] as number) + dx;
+      this.positions[v + 1] = (pa[index * 3 + 1] as number) + dy;
+      this.positions[v + 2] = (pa[index * 3 + 2] as number) + dz;
+      if (na) {
+        this.normals[v] = na[index * 3] as number;
+        this.normals[v + 1] = na[index * 3 + 1] as number;
+        this.normals[v + 2] = na[index * 3 + 2] as number;
+      }
+      if (ua) {
+        this.uvs[t] = ua[index * 2] as number;
+        this.uvs[t + 1] = ua[index * 2 + 1] as number;
+      }
+      v += 3;
+      t += 2;
+    }
+
+    const index = source.getIndex();
+    if (index) {
+      const ia = index.array as Uint32Array | Uint16Array;
+      this.roomForIndices(index.count);
+      for (let i = 0; i < index.count; i += 1) {
+        this.indices[this.indexCount + i] = (ia[i] as number) + base;
+      }
+      this.indexCount += index.count;
+    } else {
+      this.roomForIndices(count);
+      for (let i = 0; i < count; i += 1) {
+        this.indices[this.indexCount + i] = base + i;
+      }
+      this.indexCount += count;
+    }
+
+    this.vertices += count;
+  }
+
+  /** The buffer as geometry, trimmed to what was actually written. */
+  bake(): THREE.BufferGeometry {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(this.positions.subarray(0, this.vertices * 3), 3),
+    );
+    geometry.setAttribute(
+      'normal',
+      new THREE.BufferAttribute(this.normals.subarray(0, this.vertices * 3), 3),
+    );
+    geometry.setAttribute(
+      'uv',
+      new THREE.BufferAttribute(this.uvs.subarray(0, this.vertices * 2), 2),
+    );
+    geometry.setIndex(
+      new THREE.BufferAttribute(this.indices.subarray(0, this.indexCount), 1),
+    );
+    return geometry;
+  }
+}
+
+/**
+ * How far a chunk must extend beyond the eye before it can stop casting.
+ *
+ * The shadow camera's half-extent plus a chunk's half-diagonal: a chunk whose
+ * centre is inside that could still have a corner inside the volume, so it is kept.
+ * Deliberately generous - a chunk dropped too early is a shadow that flickers at
+ * the edge of the map, and one kept too long costs a draw call.
+ */
+export function shadowReachFor(extent: number): number {
+  return Math.max(1, extent) + CHUNK * 0.5 * Math.SQRT2;
+}
+
+/**
+ * Lets only the chunks a shadow volume can reach cast into it, and reports how
+ * many that is.
+ *
+ * A shadow pass draws every caster in the scene and clips the rest: vertices
+ * outside the shadow camera are clipped, not culled. With a mesh per prop that cost
+ * nothing worth measuring. With the city merged into a thousand chunks it is a
+ * second full pass over half a million triangles for a map 220 m across, so a chunk
+ * casts only while the volume is near it. What that changes *visually* is nothing -
+ * everything switched off was outside the map already - and the pass gets short
+ * enough to be worth the bookkeeping.
+ *
+ * A chunk that was never a caster is never made one: the prop's own flag is the
+ * authority, and this only ever takes casting away.
+ */
+export function updateShadowCasters(
+  chunks: readonly THREE.Mesh[],
+  eye: ReadonlyVec3,
+  reach: number,
+): number {
+  let casting = 0;
+  for (const mesh of chunks) {
+    if (mesh.userData.castsChunk !== true) continue;
+    const dx = mesh.position.x - eye.x;
+    const dz = mesh.position.z - eye.z;
+    const wanted = Math.abs(dx) < reach && Math.abs(dz) < reach;
+    if (mesh.castShadow !== wanted) mesh.castShadow = wanted;
+    if (wanted) casting += 1;
+  }
+  return casting;
 }
 
 /** Distance of the sun from the origin. Only affects the shadow camera setup. */
@@ -160,7 +367,6 @@ export function buildScene(
     u: [depth, depth, width, width, width, width],
     v: [height, height, depth, depth, height, height],
   });
-  const meshes = new Map<string, THREE.Mesh[]>();
 
   const materialFor = (surfaceId: string, tint: string): THREE.MeshLambertMaterial => {
     const key = `${surfaceId}|${tint}`;
@@ -234,11 +440,36 @@ export function buildScene(
     return group;
   };
 
-  for (const prop of definition.props) {
-    const parts = resolvePropParts(prop);
-    const propMeshes: THREE.Mesh[] = [];
+  // ------------------------------------------------------- merged static parts
+  //
+  // Every static part goes into one buffer per (chunk, material, shadow flags)
+  // instead of becoming its own mesh. The parts do not move, so they can share a
+  // vertex buffer, and what a prop "is" to the rest of the scene is now a count
+  // and the materials it was drawn with.
+  //
+  // Gates are the exception, and were being drawn *twice* until V0.7.1: they are
+  // props, so the loop below used to take them, and they are also built as groups
+  // further down because they slide. The group moved and the copy did not, so a
+  // shutter that had opened still stood shut in front of the opening. A moving
+  // part must not be merged, which is the same rule that keeps doors and lift cars
+  // out of here.
+  const gateProps = new Set<string>();
+  for (const elevator of definition.elevators ?? []) {
+    for (const prop of definition.props) {
+      if (isElevatorGateOf(elevator.id, prop.id)) gateProps.add(prop.id);
+    }
+  }
 
-    for (const [index, entry] of parts.entries()) {
+  const buckets = new Map<string, { material: THREE.Material; buffer: PartBuffer; cx: number; cz: number; cast: boolean; receive: boolean }>();
+  const partInfo = new Map<string, { count: number; materials: THREE.Material[] }>();
+
+  for (const prop of definition.props) {
+    if (gateProps.has(prop.id)) continue;
+    const parts = resolvePropParts(prop);
+    const used: THREE.Material[] = [];
+    let drawn = 0;
+
+    for (const entry of parts) {
       const width = entry.max.x - entry.min.x;
       const height = entry.max.y - entry.min.y;
       const depth = entry.max.z - entry.min.z;
@@ -255,23 +486,62 @@ export function buildScene(
       const scales = uvScales(width, height, depth);
       const geometry = boxGeometry(width, height, depth, metresPerTile, scales.u, scales.v);
 
-      const mesh = new THREE.Mesh(geometry, materialFor(surfaceId, tint));
-      mesh.position.set(
-        (entry.min.x + entry.max.x) / 2,
-        (entry.min.y + entry.max.y) / 2,
-        (entry.min.z + entry.max.z) / 2,
-      );
-      mesh.castShadow = (prop.castShadow ?? true) && entry.castShadow;
-      mesh.receiveShadow = (prop.receiveShadow ?? true) && entry.receiveShadow;
-      mesh.name = `${prop.id}#${index}`;
-      mesh.matrixAutoUpdate = false;
-      mesh.updateMatrix();
+      const material = materialFor(surfaceId, tint);
+      const centreX = (entry.min.x + entry.max.x) / 2;
+      const centreY = (entry.min.y + entry.max.y) / 2;
+      const centreZ = (entry.min.z + entry.max.z) / 2;
 
-      scene.add(mesh);
-      propMeshes.push(mesh);
+      // The chunk the part's *centre* is in, so a part belongs to whichever chunk
+      // it mostly occupies rather than to the one its corner touches.
+      const cx = Math.floor(centreX / CHUNK);
+      const cz = Math.floor(centreZ / CHUNK);
+      const cast = (prop.castShadow ?? true) && entry.castShadow;
+      const receive = (prop.receiveShadow ?? true) && entry.receiveShadow;
+      const key = `${cx}|${cz}|${surfaceId}|${tint}|${cast ? 1 : 0}${receive ? 1 : 0}`;
+
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          material,
+          buffer: new PartBuffer(),
+          cx,
+          cz,
+          cast,
+          receive,
+        };
+        buckets.set(key, bucket);
+      }
+      // Chunk-local coordinates: a metre-wide box ten kilometres from the origin
+      // has no precision left in a float, and a city is a kilometre across.
+      bucket.buffer.add(geometry, centreX - (cx + 0.5) * CHUNK, centreY, centreZ - (cz + 0.5) * CHUNK);
+
+      used.push(material);
+      drawn += 1;
     }
 
-    meshes.set(prop.id, propMeshes);
+    partInfo.set(prop.id, { count: drawn, materials: used });
+  }
+
+  /** The merged chunk meshes, for the shadow pass and for the draw-call count. */
+  const chunks: THREE.Mesh[] = [];
+  let mergedParts = 0;
+  for (const bucket of buckets.values()) {
+    const geometry = bucket.buffer.bake();
+    const mesh = new THREE.Mesh(geometry, bucket.material);
+    mesh.name = `chunk:${bucket.cx}:${bucket.cz}`;
+    mesh.position.set((bucket.cx + 0.5) * CHUNK, 0, (bucket.cz + 0.5) * CHUNK);
+    mesh.castShadow = bucket.cast;
+    mesh.receiveShadow = bucket.receive;
+    // Remembered as well as applied: the view switches casting off for chunks the
+    // shadow volume cannot reach, and has to know which ones were casting to begin
+    // with. See `BuiltScene.chunks`.
+    mesh.userData.castsChunk = bucket.cast;
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
+    geometry.computeBoundingSphere();
+    scene.add(mesh);
+    chunks.push(mesh);
+    mergedParts += bucket.buffer.vertices / 24;
   }
 
   // ----------------------------------------------------------------- doors
@@ -498,7 +768,8 @@ export function buildScene(
   return {
     scene,
     sun,
-    meshes,
+    parts: partInfo,
+    chunks,
     doors,
     collectibles,
     lifts,
@@ -509,6 +780,7 @@ export function buildScene(
     backdrop,
     dispose(): void {
       scene.clear();
+      for (const mesh of chunks) (mesh.geometry as THREE.BufferGeometry).dispose();
       for (const geometry of geometryCache.values()) geometry.dispose();
       for (const geometry of looseGeometries) geometry.dispose();
       for (const material of materials.values()) material.dispose();

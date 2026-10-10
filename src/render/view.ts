@@ -17,7 +17,12 @@ import type { LevelDefinition } from '../game/level/levelData.js';
 import type { PlayerPose } from '../game/pose.js';
 import { applyAnisotropy } from './assets.js';
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.js';
-import { buildScene, type BuiltScene } from './sceneBuilder.js';
+import {
+  buildScene,
+  shadowReachFor,
+  updateShadowCasters,
+  type BuiltScene,
+} from './sceneBuilder.js';
 import { pickupPose, smokePose } from './effects.js';
 import { QUALITY_PRESETS, type QualityPreset } from '../core/settings.js';
 import { GraphicsUnavailableError, NO_ASSETS, type GameViewLike, type SceneAssets } from './types.js';
@@ -112,6 +117,15 @@ export class GameView implements GameViewLike {
    * level's own sun direction.
    */
   private readonly sunOffset: { x: number; y: number; z: number };
+  /**
+   * How far from the eye a chunk may be and still cast a shadow.
+   *
+   * The shadow camera's half-extent plus the half-diagonal of a chunk, so a chunk
+   * with any part of itself inside the volume stays in the pass.
+   */
+  private readonly shadowReach: number;
+  /** How many chunks are casting into the shadow map this frame. */
+  private casters = 0;
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -174,6 +188,8 @@ export class GameView implements GameViewLike {
       z: this.built.sun.position.z - this.built.sun.target.position.z,
     };
 
+    this.shadowReach = shadowReachFor(this.built.sun.shadow?.camera.right ?? 110);
+
     // The player's own body: in the world, casting a shadow, and visible when the
     // player looks down at themselves.
     this.body = buildPlayerBody();
@@ -200,7 +216,9 @@ export class GameView implements GameViewLike {
       renderer: this.rendererInfo ?? 'unknown',
       skybox: options.assets?.skybox != null,
       backdrop: this.built.backdrop !== null,
-      parts: [...this.built.meshes.values()].reduce((total, list) => total + list.length, 0),
+      parts: [...this.built.parts.values()].reduce((total, info) => total + info.count, 0),
+      chunks: this.built.chunks.length,
+      casters: this.casters,
     });
   }
 
@@ -350,6 +368,10 @@ export class GameView implements GameViewLike {
     const shadow = sun.shadow;
     if (!shadow) return;
 
+    // Cheap enough to do every frame, and it has to be: the reach changes with the
+    // graphics preset, so the cell cache would have to be invalidated by it.
+    this.casters = updateShadowCasters(this.built.chunks, eye, this.shadowReach);
+
     const extent = Math.max(1, shadow.camera.right);
     const texel = (extent * 2) / Math.max(1, shadow.mapSize.width);
     const snappedX = Math.round(eye.x / texel) * texel;
@@ -430,7 +452,9 @@ export class GameView implements GameViewLike {
       quality: preset.label,
       shadows: preset.shadows,
       shadowMapSize: preset.shadowMapSize,
-      parts: [...this.built.meshes.values()].reduce((total, list) => total + list.length, 0),
+      parts: [...this.built.parts.values()].reduce((total, info) => total + info.count, 0),
+      chunks: this.built.chunks.length,
+      casters: this.casters,
     });
   }
 

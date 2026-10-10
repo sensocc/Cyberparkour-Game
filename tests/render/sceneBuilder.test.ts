@@ -11,10 +11,11 @@ import * as THREE from 'three';
 
 import { buildScene } from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
-import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT, type LevelDefinition } from '../../src/game/level/levelData.js';
 import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
-import { isMountedModel, modelById } from '../../src/game/level/models.js';
-import { propBounds } from '../../src/game/level/level.js';
+import { isMountedModel } from '../../src/game/level/models.js';
+import { isElevatorGateOf, resolvePropParts } from '../../src/game/level/level.js';
+import { buildCity } from '../../src/game/level/city.js';
 import type { PropDefinition } from '../../src/game/level/levelData.js';
 
 function assetTextures(): SceneAssets {
@@ -26,98 +27,191 @@ function assetTextures(): SceneAssets {
   };
 }
 
-/** All the meshes a prop was resolved into. */
-function partsOf(built: ReturnType<typeof buildScene>, id: string): readonly THREE.Mesh[] {
-  const meshes = built.meshes.get(id);
-  expect(meshes, `expected meshes for ${id}`).toBeDefined();
-  return meshes ?? [];
+/**
+ * What a prop was drawn as: how many parts, and with which materials.
+ *
+ * V0.7.1 merges the static parts into per-chunk buffers, so there is no mesh per
+ * prop any more. The parts are still countable and the materials still shared,
+ * which is what these tests are about.
+ */
+function partsOf(
+  built: ReturnType<typeof buildScene>,
+  id: string,
+): { readonly count: number; readonly materials: readonly THREE.Material[] } {
+  const parts = built.parts.get(id);
+  expect(parts, `expected parts for ${id}`).toBeDefined();
+  return parts as { readonly count: number; readonly materials: readonly THREE.Material[] };
 }
 
-/** The first part's mesh, which is the prop's main mass in every model. */
-function meshOf(built: ReturnType<typeof buildScene>, id: string): THREE.Mesh {
-  const [first] = partsOf(built, id);
-  expect(first, `expected a mesh for ${id}`).toBeDefined();
-  return first as THREE.Mesh;
+/** The first material a prop was drawn with, which is its main mass. */
+function materialOf(built: ReturnType<typeof buildScene>, id: string): THREE.MeshLambertMaterial {
+  const [first] = partsOf(built, id).materials;
+  expect(first, `expected a material for ${id}`).toBeDefined();
+  return first as THREE.MeshLambertMaterial;
+}
+
+/**
+ * A level holding only the props named.
+ *
+ * The merged buffers are per chunk, so a prop in a full level shares its geometry
+ * with everything around it and its own vertices cannot be picked out. A level of
+ * one prop makes the chunk that prop's, and its geometry exactly that prop's -
+ * which is how the world-space assertions below stay meaningful after the merge.
+ */
+function onlyLevel(...props: readonly PropDefinition[]): LevelDefinition {
+  return { ...DEMO_DISTRICT, props, doors: [], elevators: [], collectibles: [], smoke: [], lights: [] };
+}
+
+/**
+ * World-space bounds of every merged buffer, as drawn.
+ *
+ * Every chunk, not just the first: a prop is split by *material* as well as by
+ * position, so one prop can be several buffers and the union is the honest answer
+ * to "where is it".
+ */
+function boundsOf(built: ReturnType<typeof buildScene>): { min: THREE.Vector3; max: THREE.Vector3 } {
+  const min = new THREE.Vector3(Infinity, Infinity, Infinity);
+  const max = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
+  for (const mesh of built.chunks) {
+    const position = mesh.geometry.getAttribute('position');
+    for (let index = 0; index < position.count; index += 1) {
+      min.x = Math.min(min.x, position.getX(index) + mesh.position.x);
+      min.y = Math.min(min.y, position.getY(index) + mesh.position.y);
+      min.z = Math.min(min.z, position.getZ(index) + mesh.position.z);
+      max.x = Math.max(max.x, position.getX(index) + mesh.position.x);
+      max.y = Math.max(max.y, position.getY(index) + mesh.position.y);
+      max.z = Math.max(max.z, position.getZ(index) + mesh.position.z);
+    }
+  }
+  return { min, max };
+}
+
+/** Every merged vertex, so a prop split across buffers can still be counted. */
+function verticesOf(built: ReturnType<typeof buildScene>): { readonly count: number }[] {
+  return built.chunks.map((mesh) => mesh.geometry.getAttribute('position'));
+}
+
+/** Every vertex count in the merged buffers, in parts. */
+function mergedParts(built: ReturnType<typeof buildScene>): number {
+  return built.chunks.reduce(
+    (total, mesh) => total + mesh.geometry.getAttribute('position').count / 24,
+    0,
+  );
 }
 
 describe('buildScene geometry', () => {
-  it('creates one mesh per model part, per prop', () => {
+  it('counts every model part of every prop, and drops none of them', () => {
     const built = buildScene(DEMO_DISTRICT);
     try {
-      expect(built.meshes.size).toBe(DEMO_DISTRICT.props.length);
+      // Gates are drawn as sliding groups rather than merged, which is the one
+      // exception - and the reason V0.7.1 has a test of its own for them.
+      const merged = DEMO_DISTRICT.props.filter((prop) => built.parts.get(prop.id) !== undefined);
+      expect(merged.length).toBeGreaterThan(0);
 
-      // V0.2's whole point: props are models, so most of them are several meshes.
-      const multiPart = DEMO_DISTRICT.props.filter((prop) => partsOf(built, prop.id).length > 1);
-      expect(multiPart.length).toBeGreaterThan(DEMO_DISTRICT.props.length / 2);
+      // V0.2's whole point: props are models, so most of them are several parts.
+      const multiPart = merged.filter((prop) => partsOf(built, prop.id).count > 1);
+      expect(multiPart.length).toBeGreaterThan(merged.length / 2);
 
-      for (const prop of DEMO_DISTRICT.props) {
-        for (const mesh of partsOf(built, prop.id)) {
-          expect(mesh.name.startsWith(`${prop.id}#`), mesh.name).toBe(true);
-          expect(built.scene.getObjectByName(mesh.name)).toBe(mesh);
+      // Every part that was counted is in a buffer: a merged mesh holds exactly 24
+      // vertices per part - a box, and the box the shared cache handed out - so
+      // nothing was dropped on the way in.
+      const counted = merged.reduce((total, prop) => total + partsOf(built, prop.id).count, 0);
+      expect(mergedParts(built)).toBe(counted);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('bakes the parts into world space, where the prop actually is', () => {
+    const prop = DEMO_DISTRICT.props.find((entry) => entry.id === 'duct') as PropDefinition;
+    expect(prop).toBeDefined();
+    const built = buildScene(onlyLevel(prop));
+    try {
+      // Parts are normalised against the prop's box, so the union of them is the
+      // prop's own footprint - which is what the merged buffer has to cover, vertex
+      // for vertex, now that the parts are not meshes of their own.
+      // The oracle is the union of the model's own parts, not the prop's box: a
+      // part may legitimately stand proud of the box it belongs to - a collar on a
+      // duct does - and the merged buffer has to match the parts.
+      const parts = resolvePropParts(prop);
+      const expected = {
+        min: {
+          x: Math.min(...parts.map((entry) => entry.min.x)),
+          y: Math.min(...parts.map((entry) => entry.min.y)),
+          z: Math.min(...parts.map((entry) => entry.min.z)),
+        },
+        max: {
+          x: Math.max(...parts.map((entry) => entry.max.x)),
+          y: Math.max(...parts.map((entry) => entry.max.y)),
+          z: Math.max(...parts.map((entry) => entry.max.z)),
+        },
+      };
+      const { min, max } = boundsOf(built);
+
+      expect(min.x).toBeCloseTo(expected.min.x, 5);
+      expect(min.y).toBeCloseTo(expected.min.y, 5);
+      expect(min.z).toBeCloseTo(expected.min.z, 5);
+      expect(max.x).toBeCloseTo(expected.max.x, 5);
+      expect(max.y).toBeCloseTo(expected.max.y, 5);
+      expect(max.z).toBeCloseTo(expected.max.z, 5);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('draws the city in a thousand meshes, not in one per part', () => {
+    // V0.7.1's whole point. One mesh per part was 41,915 draw calls a frame, which
+    // no browser can push whatever the triangle count says; merged into per-chunk
+    // buffers it is about a thousand - and the parts are the ones that were there
+    // before, which is what the oracle below checks.
+    const built = buildScene(buildCity(DEMO_DISTRICT));
+    try {
+      const parts = mergedParts(built);
+      expect(parts).toBeGreaterThan(30_000);
+      expect(built.chunks.length).toBeLessThan(parts / 20);
+
+      // Nothing was dropped on the way in: every part of every prop that is not a
+      // gate is in a buffer. (Gates are groups that slide.)
+      const gates = new Set<string>();
+      for (const elevator of buildCity(DEMO_DISTRICT).elevators ?? []) {
+        for (const prop of buildCity(DEMO_DISTRICT).props) {
+          if (isElevatorGateOf(elevator.id, prop.id)) gates.add(prop.id);
         }
       }
-    } finally {
-      built.dispose();
-    }
-  });
+      const expected = buildCity(DEMO_DISTRICT).props
+        .filter((prop) => !gates.has(prop.id))
+        .reduce((total, prop) => total + resolvePropParts(prop).length, 0);
+      expect(parts).toBe(expected);
 
-  it('bakes each part into its own geometry, sized and positioned in world space', () => {
-    const built = buildScene(DEMO_DISTRICT);
-    try {
-      // Parts are normalised against the prop's box, so a part's world size is
-      // its normalised extent times the prop's size.
-      const prop = DEMO_DISTRICT.props.find((entry) => entry.id === 'duct');
-      expect(prop).toBeDefined();
-      const model = modelById(prop?.model ?? '');
-      const first = model?.parts[0];
-      expect(first).toBeDefined();
-
-      const size = prop?.size ?? { x: 0, y: 0, z: 0 };
-      const trunk = meshOf(built, 'duct');
-      const parameters = (trunk.geometry as THREE.BoxGeometry).parameters;
-
-      expect(parameters.width).toBeCloseTo(((first?.max.x ?? 0) - (first?.min.x ?? 0)) * size.x, 6);
-      expect(parameters.height).toBeCloseTo(((first?.max.y ?? 0) - (first?.min.y ?? 0)) * size.y, 6);
-      expect(parameters.depth).toBeCloseTo(((first?.max.z ?? 0) - (first?.min.z ?? 0)) * size.z, 6);
-
-      // ...and the mesh is centred where that part lands in the world.
-      const origin = propBounds(prop as PropDefinition).min;
-      expect(trunk.position.x).toBeCloseTo(origin.x + (((first?.min.x ?? 0) + (first?.max.x ?? 0)) / 2) * size.x, 6);
-      expect(trunk.position.y).toBeCloseTo(origin.y + (((first?.min.y ?? 0) + (first?.max.y ?? 0)) / 2) * size.y, 6);
-    } finally {
-      built.dispose();
-    }
-  });
-
-  it('shares geometry between parts that are identical, and only between those', () => {
-    // The V0.2 concern was that parts might all share one *unit cube* and be scaled
-    // by the mesh transform, which would break the world-space UV repeat. The V0.6
-    // concern is the opposite one: a few hundred identical boxes each with their own
-    // vertex buffer. Both are the same invariant - geometry is shared exactly when
-    // the geometry would be identical.
-    const built = buildScene(DEMO_DISTRICT);
-    try {
-      const parts = [...built.meshes.values()].flat();
-      const byGeometry = new Map<THREE.BufferGeometry, typeof parts>();
-
-      for (const mesh of parts) {
-        const box = mesh.geometry as THREE.BoxGeometry;
-        expect(box.parameters, 'every part is a box').toBeDefined();
-        const list = byGeometry.get(mesh.geometry) ?? [];
-        list.push(mesh);
-        byGeometry.set(mesh.geometry, list);
+      // A chunk is a real spatial unit rather than a formality: it carries a
+      // bounding sphere so the renderer can cull it, and it never moves.
+      for (const mesh of built.chunks) {
+        expect(mesh.geometry.getAttribute('position').count % 24).toBe(0);
+        expect(mesh.geometry.boundingSphere).not.toBeNull();
+        expect(mesh.matrixAutoUpdate, 'merged geometry never moves').toBe(false);
       }
+    } finally {
+      built.dispose();
+    }
+  });
 
-      // Sharing happened: there are fewer geometries than parts.
-      expect(byGeometry.size).toBeLessThan(parts.length);
+  it('keeps every merged part a box, exactly as the shared cache handed it out', () => {
+    // The V0.2 concern was that parts might all share one *unit cube* and be scaled
+    // by the mesh transform, which would break the world-space UV repeat. That is
+    // still the invariant: what lands in the buffer is the box the cache built, UVs
+    // and all - moved, never rewritten.
+    const prop = DEMO_DISTRICT.props.find((entry) => entry.id === 'duct') as PropDefinition;
+    const built = buildScene(onlyLevel(prop));
+    try {
+      const total = verticesOf(built).reduce((sum, attribute) => sum + attribute.count, 0);
+      expect(total).toBe(partsOf(built, prop.id).count * 24);
 
-      // ...and every part that shares is genuinely the same box, so nothing renders
-      // differently than it would have on its own.
-      for (const group of byGeometry.values()) {
-        const first = group[0]!.geometry as THREE.BoxGeometry;
-        for (const mesh of group) {
-          const box = mesh.geometry as THREE.BoxGeometry;
-          expect(box.parameters).toEqual(first.parameters);
+      // Every face of every part faces along an axis.
+      for (const geometry of built.chunks.map((mesh) => mesh.geometry)) {
+        const normal = geometry.getAttribute('normal');
+        for (let index = 0; index < normal.count; index += 1) {
+          const axes = [normal.getX(index), normal.getY(index), normal.getZ(index)];
+          expect(axes.filter((value) => value !== 0)).toHaveLength(1);
         }
       }
     } finally {
@@ -126,27 +220,36 @@ describe('buildScene geometry', () => {
   });
 
   it('scales texture repeats in world space, so density does not depend on size', () => {
-    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    // The deck is far bigger than the pipe run, but both should show the same
+    // texels per metre, which means very different UV ranges. Each is built on its
+    // own so that the merged chunk holds that prop and nothing else.
+    const deck = buildScene(
+      onlyLevel(DEMO_DISTRICT.props.find((prop) => prop.id === 'deck') as PropDefinition),
+      assetTextures(),
+    );
+    const pipe = buildScene(
+      onlyLevel(DEMO_DISTRICT.props.find((prop) => prop.id === 'pipe-run-far') as PropDefinition),
+      assetTextures(),
+    );
     try {
-      // The deck is far bigger than the pipe run, but both should show the same
-      // texels per metre, which means very different UV ranges.
-      const span = (mesh: THREE.Mesh): number => {
-        const uv = mesh.geometry.getAttribute('uv');
+      const span = (built: ReturnType<typeof buildScene>): number => {
         let min = Infinity;
         let max = -Infinity;
-        for (let index = 0; index < uv.count; index += 1) {
-          min = Math.min(min, uv.getX(index));
-          max = Math.max(max, uv.getX(index));
+        for (const mesh of built.chunks) {
+          const uv = mesh.geometry.getAttribute('uv');
+          for (let index = 0; index < uv.count; index += 1) {
+            min = Math.min(min, uv.getX(index));
+            max = Math.max(max, uv.getX(index));
+          }
         }
         return max - min;
       };
 
-      const deck = span(meshOf(built, 'deck'));
-      const pipe = span(meshOf(built, 'pipe-run-far'));
-      expect(deck).toBeGreaterThan(pipe * 1.5);
-      expect(pipe).toBeGreaterThan(0);
+      expect(span(deck)).toBeGreaterThan(span(pipe) * 1.5);
+      expect(span(pipe)).toBeGreaterThan(0);
     } finally {
-      built.dispose();
+      deck.dispose();
+      pipe.dispose();
     }
   });
 
@@ -155,19 +258,18 @@ describe('buildScene geometry', () => {
     try {
       // The three AC units in the home roof's plant row are identical, so they
       // share all their materials; the recoloured one elsewhere does not.
-      const first = partsOf(built, 'ac-unit-home-a').map((mesh) => mesh.material);
-      const second = partsOf(built, 'ac-unit-home-b').map((mesh) => mesh.material);
-      const recoloured = partsOf(built, 'ac-unit-far-a').map((mesh) => mesh.material);
+      const first = partsOf(built, 'ac-unit-home-a').materials;
+      const second = partsOf(built, 'ac-unit-home-b').materials;
+      const recoloured = partsOf(built, 'ac-unit-far-a').materials;
 
       expect(first).toEqual(second);
       expect(first[0]).not.toBe(recoloured[0]);
 
-      // Far fewer materials than meshes.
-      const materials = new Set(
-        [...built.meshes.values()].flatMap((list) => list.map((mesh) => mesh.material)),
-      );
-      const meshCount = [...built.meshes.values()].reduce((total, list) => total + list.length, 0);
-      expect(materials.size).toBeLessThan(meshCount / 4);
+      // Far fewer materials than parts - and, because a merged buffer carries one
+      // material, far fewer than chunks too, which is what lets the renderer sort
+      // and bind them cheaply.
+      const materials = new Set(built.chunks.map((mesh) => mesh.material));
+      expect(materials.size).toBeLessThan(mergedParts(built) / 4);
     } finally {
       built.dispose();
     }
@@ -176,8 +278,7 @@ describe('buildScene geometry', () => {
   it('applies the prop tints to the material colours', () => {
     const built = buildScene(DEMO_DISTRICT);
     try {
-      const tower = meshOf(built, 'tower-a');
-      const material = tower.material as THREE.MeshLambertMaterial;
+      const material = materialOf(built, 'tower-a');
       const tint = DEMO_DISTRICT.props.find((entry) => entry.id === 'tower-a')?.tints?.concrete;
       expect(tint).toBeDefined();
       expect(material.color.getHexString()).toBe((tint ?? '').replace('#', ''));
@@ -187,13 +288,21 @@ describe('buildScene geometry', () => {
   });
 
   it('honours the per-prop shadow flags', () => {
-    const built = buildScene(DEMO_DISTRICT);
+    // Flags are part of what a merged buffer is keyed on, so props that disagree
+    // about shadows are drawn from different chunks rather than from one buffer
+    // that has to lie about one of them.
+    const deck = DEMO_DISTRICT.props.find((prop) => prop.id === 'deck') as PropDefinition;
+    const tower = DEMO_DISTRICT.props.find((prop) => prop.id === 'tower-a') as PropDefinition;
+
+    const on = buildScene(onlyLevel(deck));
+    const off = buildScene(onlyLevel(tower));
     try {
-      expect(meshOf(built, 'deck').receiveShadow).toBe(true);
+      expect(on.chunks.every((mesh) => mesh.receiveShadow)).toBe(true);
       // The background towers opt out of receiving shadows.
-      expect(meshOf(built, 'tower-a').receiveShadow).toBe(false);
+      expect(off.chunks.every((mesh) => mesh.receiveShadow)).toBe(false);
     } finally {
-      built.dispose();
+      on.dispose();
+      off.dispose();
     }
   });
 
@@ -334,8 +443,8 @@ describe('buildScene V0.4 content', () => {
       expect(signs.length).toBeGreaterThanOrEqual(8);
 
       for (const prop of signs) {
-        const lit = partsOf(built, prop.id).filter((mesh) => {
-          const material = mesh.material as THREE.MeshLambertMaterial;
+        const lit = partsOf(built, prop.id).materials.filter((entry) => {
+          const material = entry as THREE.MeshLambertMaterial;
           return material.emissive !== undefined && material.emissive.getHex() !== 0;
         });
         expect(lit.length, prop.id).toBeGreaterThan(0);
@@ -343,10 +452,10 @@ describe('buildScene V0.4 content', () => {
         // The glow is the sign's own tint, not a colour baked into the model.
         const tint = prop.tints?.neon;
         expect(tint, prop.id).toBeDefined();
-        expect((lit[0]!.material as THREE.MeshLambertMaterial).emissive.getHex(), prop.id).toBe(
+        expect((lit[0] as THREE.MeshLambertMaterial).emissive.getHex(), prop.id).toBe(
           new THREE.Color(tint as string).getHex(),
         );
-        expect((lit[0]!.material as THREE.MeshLambertMaterial).emissiveMap, prop.id).not.toBeNull();
+        expect((lit[0] as THREE.MeshLambertMaterial).emissiveMap, prop.id).not.toBeNull();
       }
     } finally {
       built.dispose();
@@ -356,7 +465,7 @@ describe('buildScene V0.4 content', () => {
   it('leaves ordinary surfaces unlit', () => {
     const built = buildScene(DEMO_DISTRICT, assetTextures());
     try {
-      const material = meshOf(built, 'deck').material as THREE.MeshLambertMaterial;
+      const material = materialOf(built, 'deck');
       expect(material.emissive.getHex()).toBe(0);
       expect(material.emissiveMap).toBeNull();
     } finally {
@@ -392,6 +501,26 @@ describe('buildScene V0.5 content', () => {
         const group = built.lifts.get(lift.id);
         const startY = lift.floors[lift.start ?? 0] as number;
         expect(group?.position.y, lift.id).toBeCloseTo(startY - lift.thickness, 6);
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('draws a gate once — as the group that slides, not also as a static prop', () => {
+    // V0.7 pulled gates out of the props pass so they could slide, and did not
+    // actually leave them out of it. Every shutter was drawn twice: the group moved
+    // when the lift was called, and the copy that had not moved stood shut in front
+    // of an opening it had already vacated. Merging the props made that impossible
+    // to overlook, because a merged gate can only be in one place.
+    const city = buildCity(DEMO_DISTRICT);
+    const built = buildScene(city);
+    try {
+      expect(built.gates.size).toBeGreaterThan(0);
+
+      for (const id of built.gates.keys()) {
+        expect(built.parts.get(id), `${id} must not also be a merged prop`).toBeUndefined();
+        expect(built.scene.getObjectByName(`gate:${id}`), id).toBeDefined();
       }
     } finally {
       built.dispose();
@@ -602,7 +731,7 @@ describe('buildScene disposal', () => {
 
   it('disposes the geometry and materials it created', () => {
     const built = buildScene(DEMO_DISTRICT, assetTextures());
-    const mesh = meshOf(built, 'deck');
+    const mesh = built.chunks[0] as THREE.Mesh;
     const geometryDispose = mesh.geometry.dispose.bind(mesh.geometry);
     const materialDispose = (mesh.material as THREE.Material).dispose.bind(mesh.material);
 
