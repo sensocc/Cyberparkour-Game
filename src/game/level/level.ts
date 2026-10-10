@@ -262,8 +262,13 @@ export function validateLevel(
 
     // The solver advances at most `maxSubStep` metres before re-testing; a
     // collider thinner than that could be stepped straight through.
+    // A prop with no collider is exempt from the thickness rule, and that is the point of the
+    // rule rather than an exception to it: it exists so a thin *collider* cannot be stepped
+    // straight over, and a road or a painted lane marking is something you walk on rather than
+    // into. Thickening them to satisfy it would put a twenty-five centimetre kerb in every street.
+    const collides = prop.collide !== 'none';
     const thin = minThickness(propBounds(prop));
-    if (Number.isFinite(thin) && thin < maxSubStep) {
+    if (collides && Number.isFinite(thin) && thin < maxSubStep) {
       add(
         `thinnest extent is ${thin.toFixed(3)}m, below the ${maxSubStep}m collision sub-step ` +
           '(thicken the geometry or lower the sub-step)',

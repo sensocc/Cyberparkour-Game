@@ -41,59 +41,60 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.11 fixes: the frame, and the crane's collision](#what-v0711-fixes-the-frame-and-the-cranes-collision)
-3. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
-4. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
-5. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
-6. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
-7. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
-8. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-9. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-10. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-11. [What V0.7.2 fixes](#what-v072-fixes)
-12. [What V0.7.1 optimises](#what-v071-optimises)
-13. [What V0.7 delivers](#what-v07-delivers)
-14. [What V0.6.1 fixes](#what-v061-fixes)
-15. [What V0.6 delivers](#what-v06-delivers)
-16. [What V0.5 delivered](#what-v05-delivered)
-17. [Quick start](#quick-start)
-18. [Controls](#controls)
-19. [What you should see](#what-you-should-see)
-20. [Settings](#settings)
-21. [Camera effects](#camera-effects)
-22. [Feel](#feel)
-23. [Your body](#your-body)
-24. [Optimisation](#optimisation)
-25. [Locomotion](#locomotion)
-26. [The movement state machine](#the-movement-state-machine)
-27. [The manoeuvre bands](#the-manoeuvre-bands)
-28. [Wall running](#wall-running)
-29. [Wall jumping](#wall-jumping)
-30. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-31. [The landing roll](#the-landing-roll)
-32. [Pipe climbing](#pipe-climbing)
-33. [Interiors and doors](#interiors-and-doors)
-34. [Lifts](#lifts)
-35. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-36. [Checkpoints and respawn](#checkpoints-and-respawn)
-37. [The district](#the-district)
-38. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-39. [Neon](#neon)
-40. [Fall damage and health](#fall-damage-and-health)
-41. [Models and surfaces](#models-and-surfaces)
-42. [Sound](#sound)
-43. [How the textures are made](#how-the-textures-are-made)
-44. [Architecture](#architecture)
-45. [How a frame works](#how-a-frame-works)
-46. [Collision](#collision)
-47. [Crash reporting](#crash-reporting)
-48. [The HUDs](#the-huds)
-49. [Testing](#testing)
-50. [Continuous integration](#continuous-integration)
-51. [Project layout](#project-layout)
-52. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-53. [Out of scope for V0.7](#out-of-scope-for-v07)
-54. [Roadmap](#roadmap)
+2. [What V0.8 adds: the city you can see](#what-v08-adds-the-city-you-can-see)
+3. [What V0.7.11 fixes: the frame, and the crane's collision](#what-v0711-fixes-the-frame-and-the-cranes-collision)
+4. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
+5. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
+6. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
+7. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
+8. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+9. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+10. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+11. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+12. [What V0.7.2 fixes](#what-v072-fixes)
+13. [What V0.7.1 optimises](#what-v071-optimises)
+14. [What V0.7 delivers](#what-v07-delivers)
+15. [What V0.6.1 fixes](#what-v061-fixes)
+16. [What V0.6 delivers](#what-v06-delivers)
+17. [What V0.5 delivered](#what-v05-delivered)
+18. [Quick start](#quick-start)
+19. [Controls](#controls)
+20. [What you should see](#what-you-should-see)
+21. [Settings](#settings)
+22. [Camera effects](#camera-effects)
+23. [Feel](#feel)
+24. [Your body](#your-body)
+25. [Optimisation](#optimisation)
+26. [Locomotion](#locomotion)
+27. [The movement state machine](#the-movement-state-machine)
+28. [The manoeuvre bands](#the-manoeuvre-bands)
+29. [Wall running](#wall-running)
+30. [Wall jumping](#wall-jumping)
+31. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+32. [The landing roll](#the-landing-roll)
+33. [Pipe climbing](#pipe-climbing)
+34. [Interiors and doors](#interiors-and-doors)
+35. [Lifts](#lifts)
+36. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+37. [Checkpoints and respawn](#checkpoints-and-respawn)
+38. [The district](#the-district)
+39. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+40. [Neon](#neon)
+41. [Fall damage and health](#fall-damage-and-health)
+42. [Models and surfaces](#models-and-surfaces)
+43. [Sound](#sound)
+44. [How the textures are made](#how-the-textures-are-made)
+45. [Architecture](#architecture)
+46. [How a frame works](#how-a-frame-works)
+47. [Collision](#collision)
+48. [Crash reporting](#crash-reporting)
+49. [The HUDs](#the-huds)
+50. [Testing](#testing)
+51. [Continuous integration](#continuous-integration)
+52. [Project layout](#project-layout)
+53. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+54. [Out of scope for V0.7](#out-of-scope-for-v07)
+55. [Roadmap](#roadmap)
 
 ---
 
@@ -101,21 +102,68 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.11` |
+| Version | `0.8.0` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1122 across 42 files |
+| Tests | 1127 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.11 is finished and frozen: the lamps are lit, and the crane is a lattice.
+V0.8 is finished: the city has a night, a ground, glass, and a way to find what is hidden in it.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.8 adds: the city you can see
+
+Five things, and one rule that runs through all of them.
+
+### Light bought with surfaces, not with lamps
+
+**433 neon signs** across the city - blades, bars and frames on the faces of buildings, four
+metres up to the parapet, in six colours and three silhouettes. They cost the frame *nothing*,
+because a sign is emissive: its own material is the light, no shadow is cast by it and no shader
+loop runs for it. That is the rule this version is built on. V0.7.11 cut 545 point lights to 12
+because a point light is a per-pixel loop over the whole screen, and the brightness a city needs
+is bought with emissive surfaces instead. The **197 lampposts** added to the streets are the
+cheap side of the same rule: they join that cap, so only the twelve nearest anything are ever lit.
+
+### Curtain-wall towers
+
+**A fifth of the blocks are glass from the pavement to the parapet** - a new `glass-slab` model,
+one sheet of reflective material with a sill and mullions - which is what the reflective surfaces
+added in V0.7.4 were always for. A city of this size is mostly window, and until this version
+almost nothing in it was.
+
+### A pointer to the pickups
+
+Eight shards on a kilometre of rooftops are findable by accident and unfindable on purpose; the
+map is four times the size they were placed for. The HUD carries a **bearing and a distance to the
+nearest one still out there**, and goes quiet when there are none left. Straight line rather than a
+route: the city is a grid, so the straight line *is* the route within a street or two.
+
+### Ground
+
+The streets were a bare grey plane between buildings, which is what a grid looks like before
+anybody lives in it. There is now **tarmac** on two sides of every cell with a **painted lane
+marking** down the middle, a **lamp on one corner** and a **planter with a bush on the other**.
+The road and its marking carry no collider at all - `collide: 'none'` - because a city's ground is
+something you walk *on*, and a two-centimetre kerb as a collider is a step the physics resolves for
+ever. The validator learned that too: the thickness rule exists so a thin *collider* cannot be
+tunnelled, so a prop with no collider is exempt from it.
+
+### And the grid is uneven, a little
+
+Half a metre of jitter, both ways. A grid on exact graph paper reads as graph paper from a roof
+however good the buildings are - and a grid with a *large* jitter is the city of V0.7.3, where the
+gaps came out anywhere between two metres and thirty. Half a metre breaks the graph paper, and the
+widest street came down from 5.6 to 5.0 to leave room for it inside the jump.
 
 ---
 
@@ -2148,4 +2196,9 @@ finished, and it ends with one rule half-delivered and said so.
 V0.7.11 was the version where the frame was measured instead of reasoned about, and the answer was
 one number: five hundred and forty-five lights.
 
-The next milestone is V0.8: the height lead, polish, and the graphics pass.
+### What V0.8 does not fix
+
+The **height lead** from V0.7.10 is still not delivered: the rule is that no building stands more
+than ten to fifteen metres over the average of its neighbours, and the finished roofs still measure
+up to thirty. The clamp is in `roofTargets` and something between it and the roofs the generator
+places is adding height it cannot see. That is the first thing after this.

@@ -487,6 +487,55 @@ const ladder: ModelDefinition = {
  * skyline gleam - a strip of window scaled to whatever a building is, with the mullions in
  * the same model so one prop is one band.
  */
+/** A curtain wall: one sheet of reflective glass, for the buildings that are all window. */
+const glassSlab: ModelDefinition = {
+  id: 'glass-slab',
+  note: 'A curtain wall: a single sheet of glass, with a sill and a mullion grid.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'glass'),
+    part([0, 0, 0], [1, 0.03, 1], 'metal-dark'),
+    part([0, 0.97, 0], [1, 1, 1], 'metal-dark'),
+    part([0.32, 0.03, 0], [0.34, 0.97, 1], 'metal-dark'),
+    part([0.66, 0.03, 0], [0.68, 0.97, 1], 'metal-dark'),
+  ],
+};
+
+/** A street lamp: a post, a bracket and a head that is lit. */
+const lampPost: ModelDefinition = {
+  id: 'lamp-post',
+  note: 'A street lamp: post, bracket, and a head that glows.',
+  parts: [
+    part([0.42, 0, 0.42], [0.58, 0.9, 0.58], 'metal-dark'),
+    part([0.2, 0.9, 0.46], [0.58, 0.96, 0.54], 'metal-dark'),
+    part([0.1, 0.86, 0.36], [0.34, 0.94, 0.64], 'metal-warm'),
+    part([0.12, 0.8, 0.4], [0.32, 0.86, 0.6], 'neon'),
+  ],
+};
+
+/** Something planted: a kerb, soil, and a canopy. */
+const planter: ModelDefinition = {
+  id: 'planter',
+  note: 'A kerbed planter with a canopy over it - the green a city keeps.',
+  parts: [
+    part([0.05, 0, 0.05], [0.95, 0.3, 0.95], 'concrete-dark'),
+    part([0.15, 0.28, 0.15], [0.85, 0.34, 0.85], 'rust'),
+    part([0.34, 0.3, 0.34], [0.66, 0.76, 0.66], 'metal-warm'),
+    part([0.12, 0.72, 0.12], [0.88, 0.98, 0.88], 'concrete-dark'),
+    part([0.26, 0.96, 0.26], [0.74, 1, 0.74], 'rust'),
+  ],
+};
+
+/** A bush: low, round by silhouette, and cheap. */
+const bush: ModelDefinition = {
+  id: 'bush',
+  note: 'A low bush: three blocks pretending to be a canopy.',
+  parts: [
+    part([0.11, 0.1, 0.11], [0.89, 0.5, 0.89], 'rust'),
+    part([0.2, 0.44, 0.2], [0.8, 0.72, 0.8], 'concrete-dark'),
+    part([0.34, 0.68, 0.34], [0.66, 0.86, 0.66], 'rust'),
+  ],
+};
+
 const windowBand: ModelDefinition = {
   id: 'window-band',
   note: 'A strip of lit or dark glass with mullions, sized to the wall it sits in.',
@@ -728,6 +777,10 @@ const MODELS: readonly ModelDefinition[] = [
   ladder,
   solarPanel,
   windowBand,
+  glassSlab,
+  lampPost,
+  planter,
+  bush,
   billboard,
   crane,
   scaffold,

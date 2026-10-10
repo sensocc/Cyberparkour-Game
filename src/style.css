@@ -871,3 +871,37 @@ body {
   color: #cfe6f5;
   font-variant-numeric: tabular-nums;
 }
+
+/* The pickup pointer: a bearing and a distance, and nothing at all once they are all found. */
+.hint {
+  position: absolute;
+  right: 1.2rem;
+  bottom: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgba(120, 220, 255, 0.35);
+  border-radius: 0.25rem;
+  background: rgba(10, 16, 24, 0.55);
+  color: #9fe8ff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  transition: opacity 120ms linear;
+}
+
+.hint--off {
+  opacity: 0;
+}
+
+.hint__arrow {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-top: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform-origin: 50% 50%;
+}
+
+.hint__text {
+  font-size: 0.85rem;
+}

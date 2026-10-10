@@ -851,3 +851,84 @@ describe('the crane, which is a lattice and not a slab', () => {
     }
   });
 });
+
+describe('what V0.8 puts in the city', () => {
+  const city = buildCity(DEMO_DISTRICT);
+  const generated = city.props.slice(DEMO_DISTRICT.props.length);
+  const report = generateCity().report;
+
+  it('lights the place with signs rather than with lamps', () => {
+    // Brightness bought with emissive surfaces, not with point lights: a sign's emissive channel
+    // costs nothing to draw and no shader loop runs for it, which is what lets the city be neon
+    // *and* fast. V0.7.11 cut five hundred and forty-five lights to twelve for exactly this
+    // reason, and the lampposts added here are cheap only because they join that same cap.
+    expect(report['neon-sign'] ?? 0).toBeGreaterThan(200);
+    expect(generated.filter((prop) => prop.model.startsWith('neon-')).length).toBeGreaterThan(400);
+    // ...and they are varied: more than one silhouette and more than one colour.
+    const models = new Set(
+      generated.filter((prop) => prop.id.includes('-sign-')).map((prop) => prop.model),
+    );
+    const colours = new Set(
+      generated.filter((prop) => prop.id.includes('-sign-')).map((prop) => prop.tints?.neon),
+    );
+    expect(models.size).toBeGreaterThan(1);
+    expect(colours.size).toBeGreaterThan(3);
+  });
+
+  it('builds curtain-wall towers for the glass to reflect off', () => {
+    expect(report['glass-tower'] ?? 0).toBeGreaterThan(5);
+    const walls = generated.filter((prop) => prop.model === 'glass-slab');
+    expect(walls.length).toBeGreaterThan(5);
+    for (const wall of walls.slice(0, 20)) {
+      expect(wall.tints?.glass, wall.id).toBeDefined();
+    }
+  });
+
+  it('paves the streets and puts something on the corners', () => {
+    // Roads and lane markings carry no collider: a city's ground is something you walk *on*.
+    const roads = generated.filter((prop) => prop.id.includes('-road-'));
+    const lanes = generated.filter((prop) => prop.id.includes('-lane-mark'));
+    expect(roads.length).toBeGreaterThan(200);
+    expect(lanes.length).toBeGreaterThan(100);
+    for (const road of roads.slice(0, 40)) {
+      expect(road.collide, road.id).toBe('none');
+    }
+
+    expect(generated.filter((prop) => prop.model === 'lamp-post').length).toBeGreaterThan(50);
+    const planted = generated.filter(
+      (prop) => prop.model === 'planter' || prop.model === 'bush',
+    );
+    expect(planted.length).toBeGreaterThan(20);
+  });
+
+  it('sits the grid very slightly off the exact line', () => {
+    // "A little bit uneven." Half a metre of jitter, which is enough to stop a grid reading as
+    // graph paper and small enough that the street widths stay inside the jump - the wide jitter
+    // of V0.7.3 is where "anywhere between two metres and thirty" came from.
+    //
+    // Measured off the *roads*, whose ids carry the cell index and whose centres are the cell
+    // centres: a building's body can be inset, so asking a body where the grid is measures the
+    // archetype rather than the grid.
+    // The pitch is *derived* rather than assumed: it is 62 by default and the test would be
+    // measuring its own wrong constant, which is exactly what the first version of it did.
+    const cells = new Map<number, number>();
+    for (const prop of generated) {
+      const match = /^cell-(\d+)-(\d+)-road-x$/.exec(prop.id);
+      if (!match) continue;
+      cells.set(Number(match[1]), prop.position.x);
+    }
+    const indices = [...cells.keys()].sort((a, b) => a - b);
+    expect(indices.length).toBeGreaterThan(10);
+    const first = indices[0] as number;
+    const last = indices[indices.length - 1] as number;
+    const pitch = ((cells.get(last) as number) - (cells.get(first) as number)) / (last - first);
+
+    const offsets = indices.map((ix) =>
+      Math.abs((cells.get(ix) as number) - (-500 + pitch * (ix + 0.5))),
+    );
+    const worst = Math.max(...offsets);
+    expect(pitch).toBeGreaterThan(50);
+    expect(worst, 'the jitter must not be zero').toBeGreaterThan(0.05);
+    expect(worst, 'and must not be large').toBeLessThanOrEqual(0.3);
+  });
+});

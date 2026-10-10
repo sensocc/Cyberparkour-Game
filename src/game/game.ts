@@ -629,6 +629,10 @@ export class Game {
       collectibleCount: run.collectibleCount,
       goalArmed: run.goalArmed,
       prompt: this.elevatorPrompt,
+      // Where the nearest one is that nobody has taken: eight shards on a kilometre of rooftops
+      // are findable by accident and unfindable on purpose, and the map is four times the size
+      // they were placed for.
+      hint: this.nearestShard(),
     });
   }
 
@@ -934,6 +938,27 @@ export class Game {
    * about where they are standing: a prompt that has to be cleared is a prompt that
    * gets left on the screen.
    */
+  /**
+   * The nearest pickup still out there, as a bearing and a distance.
+   *
+   * Straight line rather than a route: the city is a grid, so the straight line *is* the route
+   * within a street or two, and a pathfinder whose answer changes shape as buildings are added is
+   * a worse guide than an arrow.
+   */
+  private nearestShard(): { bearing: number; distance: number } | null {
+    let best: { bearing: number; distance: number } | null = null;
+    for (const shard of this.collectibles) {
+      if (this.run.hasCollected(shard.id)) continue;
+      const dx = shard.position.x - this.player.position.x;
+      const dz = shard.position.z - this.player.position.z;
+      const distance = Math.hypot(dx, dz);
+      if (best && distance >= best.distance) continue;
+      // Relative to where the player is looking, so "ahead" means ahead.
+      best = { bearing: Math.atan2(dx, dz) - this.player.yaw, distance };
+    }
+    return best;
+  }
+
   private refreshElevatorPrompt(): void {
     if (this.status !== 'playing') return;
     const near = this.elevators.approach(this.player.position);

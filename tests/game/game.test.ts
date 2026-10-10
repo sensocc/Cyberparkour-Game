@@ -1503,3 +1503,36 @@ describe('the sounds a run makes', () => {
     expect(audio.cues.some((cue) => cue.kind === 'checkpoint')).toBe(true);
   });
 });
+
+describe('the pointer to the pickups', () => {
+  /** A HUD snapshot with nothing in it but the fields the pointer needs. */
+  const snapshot = (hint: { bearing: number; distance: number } | null) =>
+    ({
+      health: 100,
+      maxHealth: 100,
+      checkpoint: 0,
+      checkpointCount: 5,
+      elapsedSeconds: 0,
+      running: true,
+      collected: 1,
+      collectibleCount: 10,
+      goalArmed: false,
+      hint,
+    }) as const;
+
+  it('draws a bearing and a distance, and nothing at all once they are all found', () => {
+    // Eight shards on a kilometre of rooftops are findable by accident and unfindable on purpose:
+    // the map is four times the size they were placed for. The HUD carries a bearing and a
+    // distance to the nearest one still out there - and it goes away when there is none.
+    const hud = new GameHud();
+
+    hud.update(snapshot({ bearing: Math.PI / 2, distance: 42 }) as never);
+    expect(hud.last?.hint?.distance).toBe(42);
+    expect(hud.element.querySelector('.hint__text')?.textContent).toBe('42 m');
+    expect(hud.element.querySelector('.hint')?.classList.contains('hint--off')).toBe(false);
+
+    hud.update(snapshot(null) as never);
+    expect(hud.last?.hint).toBe(null);
+    expect(hud.element.querySelector('.hint')?.classList.contains('hint--off')).toBe(true);
+  });
+});

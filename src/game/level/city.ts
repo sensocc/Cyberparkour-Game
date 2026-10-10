@@ -115,7 +115,16 @@ const GRID_SPAN = 1000;
  * is visible without ever putting a neighbour out of reach.
  */
 const STREET = 4.5;
-const STREET_MAX = 5.6;
+const STREET_MAX = 5.0;
+
+/**
+ * How far a cell may sit off the exact grid, in metres.
+ *
+ * Half a metre, both ways, and the widest street is five rather than 5.6 - because the jitter has
+ * to fit inside the jump as well: two neighbours jittered apart by half a metre each are 5.5 m
+ * apart at worst, and the jump crosses 5.7.
+ */
+const UNEVEN = 0.5;
 
 /**
  * How tall a cell's buildings may be: **random, and no more than a lead over the neighbours.**
@@ -311,8 +320,12 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
   for (let ix = 0; ix < cells; ix += 1) {
     for (let iz = 0; iz < cells; iz += 1) {
-      const cx = -GRID_SPAN / 2 + config.pitch * (ix + 0.5);
-      const cz = -GRID_SPAN / 2 + config.pitch * (iz + 0.5);
+      // **Uneven, and only a little.** A grid on exact graph paper reads as graph paper from a
+      // roof, however good the buildings are - and a grid with a *large* jitter is the city of
+      // V0.7.3, where the gaps came out anywhere between two metres and thirty. Half a metre each
+      // way breaks the graph paper and the streets stay streets.
+      const cx = -GRID_SPAN / 2 + config.pitch * (ix + 0.5) + (random() - 0.5) * UNEVEN;
+      const cz = -GRID_SPAN / 2 + config.pitch * (iz + 0.5) + (random() - 0.5) * UNEVEN;
 
       // The old town keeps its own ground, and a street around it.
       if (
@@ -369,6 +382,81 @@ export function generateCity(options: CityOptions = {}): CityParts {
         nextId,
         street,
       };
+
+      // ---- the ground: tarmac, a lane, a lamp, and something planted
+      //
+      // The streets were a bare grey plane between buildings, which is what a grid looks like
+      // before anybody lives in it. None of this collides - `collide: 'none'` on the road and its
+      // marking - because a road is something you walk *on*, and a two-centimetre kerb as a
+      // collider is a step the physics has to resolve for ever.
+      const cellId = `cell-${ix}-${iz}`;
+      const roadY = config.groundY - 0.02;
+      const roadHalf = street / 2;
+      const tarmac = { concrete: '#2b2e36', 'concrete-dark': '#242730' };
+      context.props.push(
+        make(`${cellId}-road-x`, {
+          at: [cx, cz + footprint + roadHalf],
+          bottom: roadY,
+          size: [footprint * 2 + street, 0.05, street * 0.86],
+          model: 'slab',
+          collide: 'none',
+          tints: tarmac,
+        }),
+        make(`${cellId}-road-z`, {
+          at: [cx + footprint + roadHalf, cz],
+          bottom: roadY,
+          size: [street * 0.86, 0.05, footprint * 2 + street],
+          model: 'slab',
+          collide: 'none',
+          tints: tarmac,
+        }),
+        make(`${cellId}-lane-mark`, {
+          at: [cx, cz + footprint + roadHalf],
+          bottom: roadY + 0.05,
+          size: [footprint * 1.2, 0.03, 0.25],
+          model: 'neon-strip',
+          collide: 'none',
+          tints: { neon: '#c8c2a6' },
+        }),
+      );
+
+      // A lamp on one corner of the cell and something growing on the other.
+      const cornerX = cx + footprint + roadHalf;
+      const cornerZ = cz + footprint + roadHalf;
+      if (random() < 0.75) {
+        context.props.push(
+          make(`${cellId}-lamp`, {
+            at: [cornerX, cornerZ],
+            bottom: config.groundY,
+            size: [0.4, 5.6, 0.4],
+            model: 'lamp-post',
+          }),
+        );
+        context.lights.push({
+          id: `${cellId}-lamp-light`,
+          position: { x: cornerX, y: config.groundY + 5.4, z: cornerZ },
+          color: '#ffcf8a',
+          intensity: 9,
+          distance: 22,
+        });
+        context.count('lamppost');
+      } else {
+        context.props.push(
+          make(`${cellId}-planter`, {
+            at: [cornerX, cornerZ],
+            bottom: config.groundY,
+            size: [3, 3.4, 3],
+            model: 'planter',
+          }),
+          make(`${cellId}-bush`, {
+            at: [cornerX + 0.4, cornerZ - 0.4],
+            bottom: config.groundY,
+            size: [2, 1.7, 2],
+            model: 'bush',
+          }),
+        );
+        context.count('planter');
+      }
 
       const roll = random();
       if (roll < band.construction) {
@@ -602,7 +690,7 @@ function roofKit(
   width: number,
   depth: number,
   top: number,
-  opts: { readonly solar?: boolean } = { solar: true },
+  opts: { readonly solar?: boolean; readonly kit?: boolean; readonly body?: string } = { solar: true },
 ): void {
   const { props, random, config } = context;
 
@@ -615,8 +703,10 @@ function roofKit(
       at,
       bottom: config.groundY,
       size: [width - 1.4, top - 0.8 - config.groundY, depth - 1.4],
-      model: 'slab',
-      tints: tintSet(context),
+      // A curtain wall is a sheet of glass rather than a slab of concrete, and a city of the
+      // size this one is has towers that are all window.
+      model: opts.body ?? 'slab',
+      tints: opts.body === 'glass-slab' ? { glass: '#b8d4e0' } : tintSet(context),
     }),
   );
 
@@ -691,6 +781,38 @@ function roofKit(
   // Only a whole building's roof. A setback, a roof storey and an upper stage all go through
   // `roofKit` too, and dressing every one of them puts a water tower on a penthouse.
   const dressed = width > 30 && depth > 30;
+  // ---- the signage: what a city at night is actually made of
+  //
+  // **Emissive, not lit.** A sign is a surface that lights itself and costs nothing to draw: the
+  // material's emissive channel is the light, no shadow is cast by it and no shader loop runs for
+  // it. That is the whole reason the city can be bright *and* fast - V0.7.11 cut five hundred and
+  // forty-five point lights down to twelve because each one cost every pixel on the screen, and
+  // the brightness a city needs is bought with emissive surfaces instead.
+  const signs = 1 + Math.floor(random() * 3);
+  for (let index = 0; index < signs; index += 1) {
+    const colour = BILLBOARD_COLOURS[Math.floor(random() * BILLBOARD_COLOURS.length)] as string;
+    const face = random() < 0.5 ? 'x' : 'z';
+    const tall = random() < 0.35;
+    const height = tall ? 6 + random() * 10 : 2.6 + random() * 3;
+    const width = tall ? 1.6 + random() * 1.4 : 3 + random() * 6;
+    const bottom = config.groundY + 4 + random() * Math.max(4, top - config.groundY - 12);
+    // On a wall of the building, facing the street: half a metre proud, so it is a sign hung on
+    // a building rather than a stripe of paint.
+    const x = face === 'x' ? at[0] + width / 2 + 0.4 : at[0] + (random() - 0.5) * width * 2;
+    const z = face === 'z' ? at[1] + depth / 2 + 0.4 : at[1] + (random() - 0.5) * depth * 2;
+    const model = tall ? 'neon-blade' : random() < 0.5 ? 'neon-bar' : 'neon-frame';
+    props.push(
+      make(`${id}-sign-${index}`, {
+        at: [x, z],
+        bottom,
+        size: face === 'x' ? [0.5, height, width] : [width, height, 0.5],
+        model,
+        tints: { neon: colour },
+      }),
+    );
+    context.count('neon-sign');
+  }
+
   const decor: string[] = [];
   const place = (
     suffix: string,
@@ -886,7 +1008,13 @@ function block(
   const top = band.roofs[Math.floor(random() * band.roofs.length)] ?? band.roofs[0]!;
   const id = `city-${Math.round(cx)}-${Math.round(cz)}`;
 
-  roofKit(context, id, [cx, cz], width, depth, top);
+  // A fifth of them are curtain wall - glass from the pavement to the parapet, which is what a
+  // city of this size is mostly made of and what the reflective surfaces added in V0.7.4 were for.
+  const curtainWall = random() < 0.2;
+  roofKit(context, id, [cx, cz], width, depth, top, {
+    body: curtainWall ? 'glass-slab' : undefined,
+  });
+  if (curtainWall) context.count('glass-tower');
   record(context, { gx: context.gx, gz: context.gz, id, cx, cz, halfX: width / 2, halfZ: depth / 2, roof: top });
 
   // A third of the blocks carry a smaller storey on the roof: the roof of one is the

@@ -38,6 +38,14 @@ export interface GameHudSnapshot {
   readonly goalArmed: boolean;
   /** What the lift in front of the player is offering, if anything. */
   readonly prompt?: ElevatorPrompt | null;
+  /**
+   * Which way the nearest pickup is, and how far.
+   *
+   * The bearing is relative to where the player is looking, so "ahead" means ahead - and it is a
+   * straight line rather than a route, because the city is a grid and the straight line is the
+   * route within a street or two.
+   */
+  readonly hint?: { readonly bearing: number; readonly distance: number } | null;
 }
 
 /**
@@ -97,6 +105,13 @@ export function describePickups(taken: number, total: number): string {
 
 export class GameHud {
   readonly element: HTMLElement;
+  /**
+   * The last snapshot drawn.
+   *
+   * Kept because the HUD is the only thing that knows what the player was told, and "what was on
+   * the screen when it went wrong" is the first question anybody asks of a bug report.
+   */
+  last: GameHudSnapshot | null = null;
   private readonly healthFill: HTMLElement;
   private readonly healthLabel: HTMLElement;
   private readonly checkpointLabel: HTMLElement;
@@ -107,11 +122,22 @@ export class GameHud {
   /** Last checkpoint index the pips were filled to. */
   private lastCheckpoint = -1;
   /** The lift prompt: two lines, hidden when there is nothing to do here. */
+  private readonly hint: HTMLElement;
+  private readonly hintArrow: HTMLElement;
+  private readonly hintText: HTMLElement;
   private readonly prompt: HTMLElement;
   private readonly promptTitle: HTMLElement;
   private readonly promptDetail: HTMLElement;
 
   constructor() {
+    this.hintArrow = document.createElement('span');
+    this.hintArrow.className = 'hint__arrow';
+    this.hintText = document.createElement('span');
+    this.hintText.className = 'hint__text';
+    this.hint = document.createElement('div');
+    this.hint.className = 'hint';
+    this.hint.append(this.hintArrow, this.hintText);
+
     this.healthFill = document.createElement('div');
     this.healthFill.className = 'vitals__fill';
 
@@ -131,6 +157,7 @@ export class GameHud {
     vitals.className = 'vitals__row';
     vitals.append(this.healthLabel, healthBar);
     this.element.append(vitals);
+    this.element.append(this.hint);
 
     this.checkpointLabel = document.createElement('span');
     this.checkpointLabel.className = 'vitals__checkpoints';
@@ -162,6 +189,7 @@ export class GameHud {
   }
 
   update(snapshot: GameHudSnapshot): void {
+    this.last = snapshot;
     // This runs every frame while playing, because the clock has to move every
     // frame, so every write here is guarded: rewriting a dozen identical text
     // nodes sixty times a second is work the browser then has to notice.
@@ -183,6 +211,16 @@ export class GameHud {
     // stopped" and "the finish is live" without the DOM being rearranged.
     const running = String(snapshot.running);
     if (this.element.dataset.running !== running) this.element.dataset.running = running;
+    // **The pointer.** A shard you cannot see is a shard you cannot look for, so the HUD carries a
+    // bearing and a distance to the nearest one still out there - and only when there is one.
+    const hint = snapshot.hint ?? null;
+    const hintText = hint
+      ? `${Math.round(hint.distance)} m`
+      : '';
+    if (this.hintText.textContent !== hintText) this.hintText.textContent = hintText;
+    this.hint.style.transform = hint ? `rotate(${hint.bearing}rad)` : '';
+    this.hint.classList.toggle('hint--off', hint === null);
+
     const armed = String(snapshot.goalArmed);
     if (this.element.dataset.armed !== armed) this.element.dataset.armed = armed;
 
