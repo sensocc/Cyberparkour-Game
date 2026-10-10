@@ -769,3 +769,30 @@ describe('the ground, which is always there', () => {
     }
   });
 });
+
+describe('the roofs, which are furnished', () => {
+  const report = generateCity().report;
+
+  it('dresses them with many different kinds of thing', () => {
+    // A uniform grid gives every roof the same footprint, which is exactly why they need
+    // dressing: forty identical slabs read as a car park. Fourteen kinds of rooftop furniture,
+    // four to eight of them per building, chosen by the building's own dice.
+    const kinds = Object.keys(report).filter((key) => key.startsWith('roof-'));
+    expect(kinds.length).toBeGreaterThanOrEqual(10);
+    const pieces = kinds.reduce((total, key) => total + (report[key] ?? 0), 0);
+    expect(pieces).toBeGreaterThan(500);
+  });
+
+  it('puts an access hut and a gangway on the map, which are the two that matter', () => {
+    // The hut is a building on a roof; the gangway is a *second way* between two roofs, over the
+    // street - so a player who cannot make the jump has a bridge.
+    const city = buildCity(DEMO_DISTRICT);
+    expect(city.props.filter((prop) => prop.model === 'stair-bulkhead').length).toBeGreaterThan(20);
+    const gangways = city.props.filter((prop) => prop.id.includes('roof-gangway-') && prop.model === 'deck');
+    expect(gangways.length).toBeGreaterThan(5);
+    // ...and each of them spans a street rather than standing on a roof.
+    for (const gangway of gangways.slice(0, 20)) {
+      expect(Math.max(gangway.size.x, gangway.size.z), gangway.id).toBeGreaterThan(6);
+    }
+  });
+});

@@ -41,56 +41,57 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
-3. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
-4. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
-5. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-6. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-7. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-8. [What V0.7.2 fixes](#what-v072-fixes)
-9. [What V0.7.1 optimises](#what-v071-optimises)
-10. [What V0.7 delivers](#what-v07-delivers)
-11. [What V0.6.1 fixes](#what-v061-fixes)
-12. [What V0.6 delivers](#what-v06-delivers)
-13. [What V0.5 delivered](#what-v05-delivered)
-14. [Quick start](#quick-start)
-15. [Controls](#controls)
-16. [What you should see](#what-you-should-see)
-17. [Settings](#settings)
-18. [Camera effects](#camera-effects)
-19. [Feel](#feel)
-20. [Your body](#your-body)
-21. [Optimisation](#optimisation)
-22. [Locomotion](#locomotion)
-23. [The movement state machine](#the-movement-state-machine)
-24. [The manoeuvre bands](#the-manoeuvre-bands)
-25. [Wall running](#wall-running)
-26. [Wall jumping](#wall-jumping)
-27. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-28. [The landing roll](#the-landing-roll)
-29. [Pipe climbing](#pipe-climbing)
-30. [Interiors and doors](#interiors-and-doors)
-31. [Lifts](#lifts)
-32. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-33. [Checkpoints and respawn](#checkpoints-and-respawn)
-34. [The district](#the-district)
-35. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-36. [Neon](#neon)
-37. [Fall damage and health](#fall-damage-and-health)
-38. [Models and surfaces](#models-and-surfaces)
-39. [Sound](#sound)
-40. [How the textures are made](#how-the-textures-are-made)
-41. [Architecture](#architecture)
-42. [How a frame works](#how-a-frame-works)
-43. [Collision](#collision)
-44. [Crash reporting](#crash-reporting)
-45. [The HUDs](#the-huds)
-46. [Testing](#testing)
-47. [Continuous integration](#continuous-integration)
-48. [Project layout](#project-layout)
-49. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-50. [Out of scope for V0.7](#out-of-scope-for-v07)
-51. [Roadmap](#roadmap)
+2. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
+3. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
+4. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
+5. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+6. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+7. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+8. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+9. [What V0.7.2 fixes](#what-v072-fixes)
+10. [What V0.7.1 optimises](#what-v071-optimises)
+11. [What V0.7 delivers](#what-v07-delivers)
+12. [What V0.6.1 fixes](#what-v061-fixes)
+13. [What V0.6 delivers](#what-v06-delivers)
+14. [What V0.5 delivered](#what-v05-delivered)
+15. [Quick start](#quick-start)
+16. [Controls](#controls)
+17. [What you should see](#what-you-should-see)
+18. [Settings](#settings)
+19. [Camera effects](#camera-effects)
+20. [Feel](#feel)
+21. [Your body](#your-body)
+22. [Optimisation](#optimisation)
+23. [Locomotion](#locomotion)
+24. [The movement state machine](#the-movement-state-machine)
+25. [The manoeuvre bands](#the-manoeuvre-bands)
+26. [Wall running](#wall-running)
+27. [Wall jumping](#wall-jumping)
+28. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+29. [The landing roll](#the-landing-roll)
+30. [Pipe climbing](#pipe-climbing)
+31. [Interiors and doors](#interiors-and-doors)
+32. [Lifts](#lifts)
+33. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+34. [Checkpoints and respawn](#checkpoints-and-respawn)
+35. [The district](#the-district)
+36. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+37. [Neon](#neon)
+38. [Fall damage and health](#fall-damage-and-health)
+39. [Models and surfaces](#models-and-surfaces)
+40. [Sound](#sound)
+41. [How the textures are made](#how-the-textures-are-made)
+42. [Architecture](#architecture)
+43. [How a frame works](#how-a-frame-works)
+44. [Collision](#collision)
+45. [Crash reporting](#crash-reporting)
+46. [The HUDs](#the-huds)
+47. [Testing](#testing)
+48. [Continuous integration](#continuous-integration)
+49. [Project layout](#project-layout)
+50. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+51. [Out of scope for V0.7](#out-of-scope-for-v07)
+52. [Roadmap](#roadmap)
 
 ---
 
@@ -98,22 +99,63 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.8` |
+| Version | `0.7.9` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1118 across 42 files |
+| Tests | 1120 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.8 is finished and frozen: the run is on the rooftops, where it was always meant to be, and
-the floor is drawn wherever you stand.
+V0.7.9 is finished and frozen: seven times fewer draw calls, and roofs worth running across.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.9 does: the frame, and the furniture
+
+### Draw calls, which are what a browser runs out of first
+
+The merge has chunked geometry since V0.7.1, and the chunk was 128 m - chosen as "about two blocks
+of the city", which is a good reason to choose a *culling* unit and a bad one to choose a
+draw-call budget. Every chunk is split once more by material, so 1,578 chunk meshes came out of a
+kilometre of city and a street view asked the browser for **663 draw calls**.
+
+At 500 m the whole map is four meshes per material:
+
+| | before | after |
+| --- | --- | --- |
+| Chunk meshes | 1,578 | **134** |
+| Draw calls in a street view | 663 | **90** |
+| Triangles submitted | 358k | 704k |
+| Props | 12,129 | 13,965 |
+
+Seven times fewer draw calls for twice the triangles, and that is the trade deliberately made: a
+500 m chunk is rarely entirely off screen, so culling stops paying, and draw-call submission is
+what the CPU actually stalls on. Seven hundred thousand triangles is not a GPU's problem; six
+hundred draw calls is a browser's.
+
+### And the roofs are furnished
+
+A uniform grid gives every roof the same footprint, which is exactly why they need dressing -
+forty identical slabs read as a car park. Fourteen kinds of rooftop furniture, four to eight per
+building, chosen by the building's own dice: **1,118 pieces** across the city.
+
+- An **access hut**, **vent stacks**, a **satellite dish**, **junction boxes**, **cable spools**,
+  **skylights**, **barriers**, a **chiller bank**, an **aerial farm**, a **helipad**, a
+  **greenhouse**, and a **crown**.
+- A **water tower** on four legs, which is the one silhouette a skyline needs.
+- And a **gangway** to the building next door: a catwalk over the street with a rail, so a player
+  who cannot make the jump has a second way across. It is the one piece of rooftop furniture that
+  changes the *map* rather than the view.
+
+Only a whole building's roof gets the works - a setback, a roof storey and an upper stage all go
+through the same roof kit, and dressing every one of them puts a water tower on a penthouse.
 
 ---
 
@@ -2006,5 +2048,8 @@ V0.7.7 finished the job V0.7.6 started: the grid is the map, and the map is the 
 
 V0.7.8 put the run back on the rooftops, which is where a rooftop parkour game's run has to be,
 and stopped the floor disappearing when the player walks away from the middle of it.
+
+V0.7.9 paid for its own furniture: seven times fewer draw calls bought fourteen kinds of rooftop
+architecture for two thousand more props, and the frame is cheaper than before either.
 
 The next milestone is V0.8: polish, and the graphics pass.

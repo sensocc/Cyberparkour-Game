@@ -108,14 +108,20 @@ export interface BuiltScene {
  * says. Merging them is the only fix that helps: a part is a box with a position,
  * and forty thousand boxes that never move can share a vertex buffer.
  *
- * Chunked rather than merged whole, because merging the whole city into one
- * buffer per material would lose frustum culling entirely - the renderer would
- * draw every roof in the city while the player looks at a wall. A chunk is a unit
- * small enough to cull and large enough that its parts mostly belong together,
- * which is why the number is neither 16 nor 512: at 128 m a chunk is about two
- * blocks of the city, so the player either sees most of one or none of it.
+ * Chunked rather than merged whole, because merging the whole city into one buffer per
+ * material would lose frustum culling entirely - the renderer would draw every roof in the
+ * city while the player looks at a wall.
+ *
+ * **The number is a draw-call budget rather than a culling unit, and it is 500.** At 128 m -
+ * which is where it started, chosen as "about two blocks" - the city came out as 1,578 chunk
+ * meshes and a street view asked the browser for 663 draw calls, because every chunk is split
+ * once more by material. At 500 m the whole kilometre is four meshes per material, and the
+ * same view asks for about 150. What that costs is culling resolution: a 500 m chunk is rarely
+ * entirely off screen, so most of the city's triangles are submitted every frame - 822k
+ * against 358k. Draw calls are what a browser runs out of first, and the GPU does not notice
+ * three quarters of a million triangles.
  */
-const CHUNK = 128;
+const CHUNK = 500;
 
 /**
  * A growable buffer of box geometry, in one chunk's local space.

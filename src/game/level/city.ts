@@ -605,6 +605,157 @@ function roofKit(
     }
   }
 
+  // ------------------------------------------------------------------ the roof
+  //
+  // **What is up there.** A city's roofs are its third dimension, and the grid gives every one
+  // of them the same footprint - which is exactly why they need dressing: forty identical slabs
+  // read as a car park. Fourteen kinds of thing, four to eight of them per roof, chosen by the
+  // building's own dice: an access hut, a vent, a dish, a junction box, a spool of cable, a
+  // skylight, a barrier, a water tower on its legs, a bank of chillers, an aerial farm, a
+  // helipad, a greenhouse, a crown, and a gangway to the building next door.
+  //
+  // The gangway is the one that changes the map rather than the view: a catwalk over the street
+  // is a second way between two roofs, so a player who cannot make the jump has a bridge.
+  // Only a whole building's roof. A setback, a roof storey and an upper stage all go through
+  // `roofKit` too, and dressing every one of them puts a water tower on a penthouse.
+  const dressed = width > 30 && depth > 30;
+  const decor: string[] = [];
+  const place = (
+    suffix: string,
+    x: number,
+    z: number,
+    bottom: number,
+    size: readonly [number, number, number],
+    model: string,
+    tints?: Readonly<Record<string, string>>,
+  ): void => {
+    props.push(make(`${id}-${suffix}`, { at: [x, z], bottom, size, model, ...(tints ? { tints } : {}) }));
+  };
+
+  /** A spot on the roof, off the parapet and away from the middle. */
+  const spot = (): readonly [number, number] => [
+    at[0] + (random() - 0.5) * Math.max(2, width * 0.66),
+    at[1] + (random() - 0.5) * Math.max(2, depth * 0.66),
+  ];
+
+  const wanted = dressed ? 4 + Math.floor(random() * 5) : 0;
+  const pool = [
+    'hut',
+    'vent',
+    'dish',
+    'junction',
+    'spool',
+    'skylight',
+    'barrier',
+    'tower',
+    'chillers',
+    'aerials',
+    'helipad',
+    'greenhouse',
+    'crown',
+    'gangway',
+  ];
+  for (let index = 0; index < wanted && pool.length > 0; index += 1) {
+    const pick = pool.splice(Math.floor(random() * pool.length), 1)[0]!;
+    const [px, pz] = spot();
+    decor.push(pick);
+
+    switch (pick) {
+      case 'hut':
+        place(`roof-hut-${index}`, px, pz, top, [4.4, 3.4, 3.8], 'stair-bulkhead');
+        break;
+      case 'vent':
+        place(`roof-vent-${index}`, px, pz, top, [1.6, 5, 1.6], 'vent-stack');
+        break;
+      case 'dish':
+        place(`roof-dish-${index}`, px, pz, top, [3.4, 3.4, 3.4], 'antenna-mast');
+        place(`roof-dish-face-${index}`, px + 1.4, pz, top + 3.2, [2, 2, 0.4], 'satellite-dish');
+        break;
+      case 'junction':
+        place(`roof-junction-${index}`, px, pz, top, [2.2, 1.8, 1.4], 'junction-box');
+        break;
+      case 'spool':
+        place(`roof-spool-${index}`, px, pz, top, [2.4, 2.4, 1.8], 'cable-spool');
+        break;
+      case 'skylight':
+        place(`roof-skylight-${index}`, px, pz, top, [3.6, 1.2, 3.6], 'skylight');
+        break;
+      case 'barrier':
+        place(`roof-barrier-${index}`, px, pz, top, [Math.min(width - 6, 8), 1.1, 0.6], 'barrier');
+        break;
+      case 'tower': {
+        // A water tower: the tank on four legs, which is the one silhouette a skyline needs.
+        const legTop = top + 5;
+        for (const [lx, lz] of [
+          [-1.4, -1.4],
+          [1.4, -1.4],
+          [-1.4, 1.4],
+          [1.4, 1.4],
+        ] as const) {
+          place(`roof-tower-leg-${index}-${lx}${lz}`, px + lx, pz + lz, top, [1, 5, 1], 'construction-column');
+        }
+        place(`roof-tower-tank-${index}`, px, pz, legTop, [4.4, 4, 4.4], 'water-tank', tintSet(context));
+        break;
+      }
+      case 'chillers': {
+        const bank = 2 + Math.floor(random() * 3);
+        for (let unit = 0; unit < bank; unit += 1) {
+          place(`roof-chiller-${index}-${unit}`, px + unit * 3.4, pz, top, [3, 1.7, 2.4], 'ac-unit');
+        }
+        break;
+      }
+      case 'aerials': {
+        const masts = 2 + Math.floor(random() * 2);
+        for (let mast = 0; mast < masts; mast += 1) {
+          place(`roof-aerial-${index}-${mast}`, px + mast * 3, pz + mast, top, [1, 9 + random() * 9, 1], 'antenna-mast');
+        }
+        break;
+      }
+      case 'helipad':
+        place(`roof-pad-${index}`, px, pz, top, [Math.min(width - 8, 20), 0.3, Math.min(depth - 8, 20)], 'construction-slab', {
+          hazard: '#d8cfa8',
+        });
+        place(`roof-pad-mark-${index}`, px, pz, top + 0.3, [Math.min(width - 12, 12), 0.3, 2], 'neon-strip');
+        break;
+      case 'greenhouse':
+        place(`roof-greenhouse-${index}`, px, pz, top, [Math.min(width - 8, 14), 3.2, Math.min(depth - 8, 8)], 'block', {
+          glass: '#cfe6ee',
+        });
+        break;
+      case 'crown':
+        place(`roof-crown-${index}`, px, pz, top, [6, 5.6, 6], 'crown', tintSet(context));
+        break;
+      case 'gangway': {
+        // Over the street to the building next door: a walkway, not a bridge in the structural
+        // sense - two posts and a deck 4.5 m long, which is exactly the street.
+        const along = random() < 0.5 ? 'x' : 'z';
+        const length = STREET + 2.4;
+        const x = along === 'x' ? at[0] + width / 2 + length / 2 - 1 : at[0];
+        const z = along === 'z' ? at[1] + depth / 2 + length / 2 - 1 : at[1];
+        place(
+          `roof-gangway-${index}`,
+          x,
+          z,
+          top - 0.4,
+          along === 'x' ? [length, 0.5, 2.6] : [2.6, 0.5, length],
+          'deck',
+        );
+        props.push(
+          make(`${id}-roof-gangway-rail-${index}`, {
+            at: along === 'x' ? [x, z + 1.2] : [x + 1.2, z],
+            bottom: top + 0.1,
+            size: along === 'x' ? [length, 1, 0.3] : [0.3, 1, length],
+            model: 'barrier',
+          }),
+        );
+        break;
+      }
+    }
+  }
+  for (const kind of decor) {
+    context.count(`roof-${kind}`);
+  }
+
   if (random() < 0.3) {
     props.push(
       make(`${id}-duct`, {
