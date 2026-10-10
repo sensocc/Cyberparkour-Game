@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { aabbFromCenterSize, overlaps } from '../../src/game/physics/aabb.js';
+import { isElevatorGateOf } from '../../src/game/level/level.js';
 import {
   DEFAULT_PLAYER_SIZE,
   buildLevel,
@@ -161,7 +162,18 @@ describe('the shipped demo roof', () => {
           bounds.min.z < deckBounds.max.z &&
           bounds.max.z > deckBounds.min.z;
         if (touchesEdge) {
-          expect(insideBorderRing, `${wall.id} walls off the edge of ${deck.id}`).toBe(true);
+          // A *building* on the roofline is not a parapet: the lift towers stand
+          // against the home deck's edge, because that is where their doors open. What
+          // the rule is about is a wall that fences a roof off, so a wall that covers
+          // less than half of an edge is allowed.
+          const spanX = Math.min(bounds.max.x, deckBounds.max.x) - Math.max(bounds.min.x, deckBounds.min.x);
+          const spanZ = Math.min(bounds.max.z, deckBounds.max.z) - Math.max(bounds.min.z, deckBounds.min.z);
+          const coversAnEdge =
+            spanX > (deckBounds.max.x - deckBounds.min.x) * 0.5 ||
+            spanZ > (deckBounds.max.z - deckBounds.min.z) * 0.5;
+          if (coversAnEdge) {
+            expect(insideBorderRing, `${wall.id} walls off the edge of ${deck.id}`).toBe(true);
+          }
         }
       }
     }
@@ -414,10 +426,23 @@ describe('spawnBounds', () => {
 
 describe('toColliders', () => {
   it('preserves ids and kinds', () => {
+    // Every prop becomes a collider, in order, except the elevator gates: those are
+    // props for their *mesh*, and the elevator system owns their collider, because it is
+    // the thing that moves them.
     const colliders = toColliders(DEMO_DISTRICT);
-    expect(colliders.slice(0, DEMO_DISTRICT.props.length).map((entry) => entry.id)).toEqual(
-      DEMO_DISTRICT.props.map((entry) => entry.id),
+    const gateIds = new Set(
+      DEMO_DISTRICT.props
+        .filter((prop) =>
+          (DEMO_DISTRICT.elevators ?? []).some((lift) => isElevatorGateOf(lift.id, prop.id)),
+        )
+        .map((prop) => prop.id),
     );
+    const expected = DEMO_DISTRICT.props.filter((entry) => !gateIds.has(entry.id)).map((entry) => entry.id);
+    expect(colliders.slice(0, expected.length).map((entry) => entry.id)).toEqual(expected);
+    for (const id of gateIds) {
+      if (!DEMO_DISTRICT.props.some((entry) => entry.id === id)) continue;
+      expect(colliders.filter((entry) => entry.id === id), id).toHaveLength(1);
+    }
     expect(colliders.find((entry) => entry.id === 'deck')?.kind).toBe('floor');
     expect(colliders.find((entry) => entry.id === 'penthouse')?.kind).toBe('wall');
     expect(colliders.find((entry) => entry.id === 'duct')?.kind).toBe('prop');
@@ -803,6 +828,12 @@ describe('the V0.5 works level, lifts and the run', () => {
     return propBounds(prop as PropDefinition).max.y;
   };
 
+  const propById = (id: string): PropDefinition => {
+    const found = DEMO_DISTRICT.props.find((entry) => entry.id === id);
+    expect(found, `expected a prop named ${id}`).toBeDefined();
+    return found as PropDefinition;
+  };
+
   const liftById = (id: string) => {
     const found = (DEMO_DISTRICT.elevators ?? []).find((entry) => entry.id === id);
     expect(found, `expected a lift named ${id}`).toBeDefined();
@@ -840,24 +871,43 @@ describe('the V0.5 works level, lifts and the run', () => {
     expect(lowest).toBeGreaterThan(DEMO_DISTRICT.killPlaneY + 5);
   });
 
-  it('connects the route with lifts that arrive exactly at the floors they serve', () => {
-    // This is the whole contract of a lift: it starts and ends *flush*, so getting
-    // on and off is a step and not a climb - and a fraction out either way would
-    // be an invisible lip the mantle band will not take.
-    const down = liftById('lift-down');
-    expect(down.highTop).toBeCloseTo(topOf('far-deck'), 9);
-    expect(down.lowTop).toBeCloseTo(topOf('works-1-deck'), 9);
+  it('connects the route with elevators that arrive exactly at the floors they serve', () => {
+    // This is the whole contract of a lift: it stops *flush*, so getting on and off is
+    // a step and not a climb - and a fraction out either way would be an invisible lip
+    // the mantle band will not take.
+    const east = liftById('lift-sky-east');
+    expect(east.floors[0]).toBeCloseTo(topOf('works-4-deck'), 9);
+    expect(east.floors[1]).toBeCloseTo(topOf('deck'), 9);
+    expect(east.floors[2]).toBeCloseTo(topOf('skydeck-east-deck'), 9);
 
-    const up = liftById('lift-up');
-    expect(up.lowTop).toBeCloseTo(topOf('works-4-deck'), 9);
-    expect(up.highTop).toBeCloseTo(topOf('deck'), 9);
+    const far = liftById('lift-sky-far');
+    expect(far.floors[0]).toBeCloseTo(topOf('works-1-deck'), 9);
+    expect(far.floors[1]).toBeCloseTo(topOf('far-deck'), 9);
+    expect(far.floors[2]).toBeCloseTo(topOf('skydeck-far-deck'), 9);
   });
 
-  it('gives a lift enough travel to be worth riding', () => {
+  it('gives every elevator floors worth riding between, and a gate on each', () => {
     for (const lift of DEMO_DISTRICT.elevators ?? []) {
-      expect(lift.highTop - lift.lowTop, lift.id).toBeGreaterThan(1);
-      // Thin platforms are what the sub-step exists to catch.
+      expect(lift.floors.length, lift.id).toBeGreaterThanOrEqual(2);
+      const span = (lift.floors[lift.floors.length - 1] as number) - (lift.floors[0] as number);
+      expect(span, lift.id).toBeGreaterThan(1);
+      // Thin car floors are what the sub-step exists to catch.
       expect(lift.thickness, lift.id).toBeGreaterThanOrEqual(SUB_STEP);
+      // A gate for every floor but the top one: the top floor is the roof, where there
+      // is no wall to put a gate in.
+      for (let index = 0; index < lift.floors.length - 1; index += 1) {
+        expect(propById(`${lift.id}-gate-${index}`).model, lift.id).toBe('elevator-gate');
+      }
+    }
+  });
+
+  it('opens its top floor onto a roof nothing else reaches', () => {
+    // The reason the towers exist: a roof the parkour route cannot get to, so the
+    // only way up is to use the lift.
+    for (const lift of DEMO_DISTRICT.elevators ?? []) {
+      const top = lift.floors[lift.floors.length - 1] as number;
+      expect(top, lift.id).toBeGreaterThan(20);
+      expect(lift.names?.[lift.floors.length - 1], lift.id).toMatch(/skydeck/i);
     }
   });
 

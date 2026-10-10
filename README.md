@@ -5,69 +5,68 @@
 A low-poly, Quake-styled **first-person parkour game** set in a cyberpunk city,
 in the spirit of *Mirror's Edge*.
 
-This repository currently contains **V0.6.1**. V0.3 made the roof a route, V0.4 took
-the route indoors, and V0.5 made it a **level**: nine roofs on two levels, joined by
-two lifts so the district closes into a loop rather than running out at one end, with
-eight pickups strung along the way, a finish line that only opens when the route is
-behind you, and a clock.
+This repository currently contains **V0.7**. V0.3 made the roof a route, V0.4 took the
+route indoors, V0.5 made it a level, and V0.6 gave the player a body and a settings
+screen. **V0.7 makes it a city.**
 
-V0.6 was the **polish pass**: a body of your own with a shadow under it, a settings
-screen that remembers what you chose, a camera that answers the running, and the two
-windows of forgiveness that make a jump land when you meant it.
+The hand-authored district is still there, in the middle, exactly as it was — and around
+it is a kilometre of generated city: **4,462 props**, 4,475 colliders, streets 18 m wide
+between blocks, towers with setbacks, construction sites with carcasses and cranes,
+ladders up the walls, balconies to land on, halls you can walk into, solar arrays and
+billboards on the roofs, and **eleven elevators** that go where parkour cannot — up the
+inside of a building, out onto a roof 59 m above the street that nothing else reaches.
 
-**V0.6.1 fixes three things that playing it turned up.** The body's animation was
-jerky, because every pose change snapped from one angle to another in a single frame.
-Neon signage was one panel in six colours, so the district had one sign rather than
-five kinds of sign. And a handful of surfaces were drawn on each other's planes —
-two faces at one depth, which is the one thing a depth buffer cannot resolve — so the
-level shimmered wherever they overlapped.
+The old platform lifts are gone. A lift is now a thing you *call*, walk into, send to a
+floor, and ride: the gate shuts, the car climbs, the gate opens, and you step out onto a
+roof.
 
 ---
 
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.6.1 fixes](#what-v061-fixes)
-3. [What V0.6 delivers](#what-v06-delivers)
-4. [What V0.5 delivered](#what-v05-delivered)
-5. [Quick start](#quick-start)
-6. [Controls](#controls)
-7. [What you should see](#what-you-should-see)
-8. [Settings](#settings)
-9. [Camera effects](#camera-effects)
-10. [Feel](#feel)
-11. [Your body](#your-body)
-12. [Optimisation](#optimisation)
-13. [Locomotion](#locomotion)
-14. [The movement state machine](#the-movement-state-machine)
-15. [The manoeuvre bands](#the-manoeuvre-bands)
-16. [Wall running](#wall-running)
-17. [Wall jumping](#wall-jumping)
-18. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-19. [The landing roll](#the-landing-roll)
-20. [Pipe climbing](#pipe-climbing)
-21. [Interiors and doors](#interiors-and-doors)
-22. [Lifts](#lifts)
-23. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-24. [Checkpoints and respawn](#checkpoints-and-respawn)
-25. [The district](#the-district)
-26. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-27. [Neon](#neon)
-28. [Fall damage and health](#fall-damage-and-health)
-29. [Models and surfaces](#models-and-surfaces)
-30. [Sound](#sound)
-31. [How the textures are made](#how-the-textures-are-made)
-32. [Architecture](#architecture)
-33. [How a frame works](#how-a-frame-works)
-34. [Collision](#collision)
-35. [Crash reporting](#crash-reporting)
-36. [The HUDs](#the-huds)
-37. [Testing](#testing)
-38. [Continuous integration](#continuous-integration)
-39. [Project layout](#project-layout)
-40. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-41. [Out of scope for V0.6.1](#out-of-scope-for-v061)
-42. [Roadmap](#roadmap)
+2. [What V0.7 delivers](#what-v07-delivers)
+3. [What V0.6.1 fixes](#what-v061-fixes)
+4. [What V0.6 delivers](#what-v06-delivers)
+5. [What V0.5 delivered](#what-v05-delivered)
+6. [Quick start](#quick-start)
+7. [Controls](#controls)
+8. [What you should see](#what-you-should-see)
+9. [Settings](#settings)
+10. [Camera effects](#camera-effects)
+11. [Feel](#feel)
+12. [Your body](#your-body)
+13. [Optimisation](#optimisation)
+14. [Locomotion](#locomotion)
+15. [The movement state machine](#the-movement-state-machine)
+16. [The manoeuvre bands](#the-manoeuvre-bands)
+17. [Wall running](#wall-running)
+18. [Wall jumping](#wall-jumping)
+19. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+20. [The landing roll](#the-landing-roll)
+21. [Pipe climbing](#pipe-climbing)
+22. [Interiors and doors](#interiors-and-doors)
+23. [Lifts](#lifts)
+24. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+25. [Checkpoints and respawn](#checkpoints-and-respawn)
+26. [The district](#the-district)
+27. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+28. [Neon](#neon)
+29. [Fall damage and health](#fall-damage-and-health)
+30. [Models and surfaces](#models-and-surfaces)
+31. [Sound](#sound)
+32. [How the textures are made](#how-the-textures-are-made)
+33. [Architecture](#architecture)
+34. [How a frame works](#how-a-frame-works)
+35. [Collision](#collision)
+36. [Crash reporting](#crash-reporting)
+37. [The HUDs](#the-huds)
+38. [Testing](#testing)
+39. [Continuous integration](#continuous-integration)
+40. [Project layout](#project-layout)
+41. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+42. [Out of scope for V0.7](#out-of-scope-for-v07)
+43. [Roadmap](#roadmap)
 
 ---
 
@@ -75,22 +74,106 @@ level shimmered wherever they overlapped.
 
 | | |
 | --- | --- |
-| Version | `0.6.1` |
+| Version | `0.7.0` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1053 across 39 files |
+| Tests | 1080 across 40 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.6.1 is finished and frozen. Nothing from V0.7 onward is implemented, and none of it
-is stubbed.
+V0.7 is finished and frozen. The district is *not* yet labelled Level 1 - that is V0.8's
+job, along with the polish that comes after a change this size.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7 delivers
+
+| Feature | Where |
+| --- | --- |
+| A city, ~1 km across | `game/level/city.ts` — a seeded generator, 4,278 props on top of the district's 184 |
+| Verticality, per building and in the skyline | Setbacks, two-storey blocks, terraced roof heights that rise towards the centre |
+| Ladders | A `ladder` model on a `climbable` face — the V0.3 climb ability already did the rest |
+| Balconies | Lips of deck on a bracket, at heights a player can use as a route |
+| Construction sites | `construction-slab` and `construction-column` carcasses, scaffold towers, and a tower crane over each |
+| Halls and interiors | Single volumes the size of a block, with columns, a mezzanine and a lit interior |
+| Indoor elevators | `game/level/elevators.ts` — call, enter, choose a floor, gates shut, ride |
+| Solar, billboards, megastructure | `solar-panel`, `billboard`, `crown` models, on roofs and on the tallest facades |
+| Smoother animation | The gait phase is extrapolated to the moment being drawn, and the joints have weight |
+
+### The city
+
+It is generated, and it is *the same city every time*: the layout comes from one seed, so
+a bug found in it can be reproduced and a screenshot from last week still matches. What
+the generator produces:
+
+| | |
+| --- | --- |
+| Blocks | 133 mid-rise, 9 towers, 26 construction sites, 20 halls |
+| Roofs | Terraced in bands of 22-34 m near the old town, 8-20 m at the edge |
+| Ladders | 179, stacked 5 m at a time so the rungs stay rungs |
+| Balconies | 160 |
+| Cranes | 26, each over a site with four poured floors and columns that stop dead |
+| Billboards | On the tallest facades, facing the old town |
+| Lifts | 9 city towers, each serving street, mid, roof and a skydeck 7 m above the roof |
+
+Four rules are what make it *playable* rather than merely large, and each has a test:
+
+- **Roofs come in terraces.** A block's buildings are drawn from the same height band, so
+  their roofs are a jump or a vault apart. Neighbouring bands step up towards the centre,
+  which gives the skyline a shape and every roof somewhere to go.
+- **Every building is a route.** A ladder, a balcony, a setback or a neighbour at a
+  reachable height — nothing in the city is decoration you can only look at.
+- **The lifts go where parkour cannot.** The top of a tower is 59 m above its street, and
+  the only way up is to use the city.
+- **The streets are a place.** They are at -34.8 m, which is why V0.7 lowered the kill
+  plane: with the district's plane 12 m below the roofs, every street in the city would
+  have been instantly fatal. A fall from a roof is still fatal on its own — 35 m of it is
+  well past the 26 m/s that kills.
+
+### Elevators
+
+V0.5's lift was a slab that cycled up and down on a timer, and you rode it if you happened
+to be standing on it. V0.7's is a building: a shaft with **a doorway at every floor**, a
+shutter on each doorway, a car, and a state machine — `idle → closing → moving → opening`
+— that nothing outside can shortcut.
+
+What that buys, and what each part is for:
+
+- **A gate is a collider that slides.** It is solid unless the car is docked at *that*
+  floor. Lifting every gate together is the bug that makes a shaft a hole, and it is the
+  first thing the tests caught.
+- **A rider is anyone in the car's footprint, on its roof.** Not `groundId === car`: a car
+  docked at a floor is flush with the floor it serves, so on a city street the physics
+  picks the street. The system owns that rule, and the game asks it.
+- **The top floor has no gate.** The shaft's walls stop below the roof, so the car arrives
+  in the open air and stepping out is stepping onto the roof.
+- **The roof is a ring** round the shaft, because a deck across the whole tower would bury
+  the car in itself on the last half-metre of its travel.
+
+In the old town the two towers connect the works level, the home roof and a new skydeck 30 m
+up; their shafts have **doors on two sides**, because the floors they serve are on opposite
+sides of them — which is the sort of thing you only find by standing in the lift and
+pressing the button.
+
+### Smoother walking
+
+V0.6.1 eased the joints, and the walk was still not right, because the *phase* was the
+problem rather than the angles: a pose is derived once per simulation step, so on a display
+faster than the tick rate the legs — and the camera's bob — advance in 60 Hz jumps. The gait
+is a function of distance travelled, so the phase between steps is already known: the
+fraction `alpha` of the next step has happened, and the phase has moved that fraction of
+`bobPhaseStep`. Both the body and the camera now use the phase *at the moment being drawn*.
+
+The cycle itself got three things that a pair of sine waves does not have: the shoulders
+swing against the hips, the foot rolls rather than pointing the same way all cycle, and the
+hip bob is a raised cosine whose bottom is round rather than kinked.
 
 ---
 
@@ -812,12 +895,13 @@ off the level, so it gets the same overlay and respawn.
 
 ## Models and surfaces
 
-Every prop is an instance of a model from `src/game/level/models.ts` — twenty-nine of
-them now, from a five-part `crate` to a ten-part `pipe-vertical`: the V0.5
-`neon-strip`, `lift-platform` and `data-shard`, and the four sign silhouettes V0.6.1
-added (`neon-bar`, `neon-blade`, `neon-frame`, `neon-badge`). A model can also declare
-itself `mounted` rather than stacked, which is how the level's "nothing floats" rule
-knows that a sign hangs on a wall instead of standing on something.
+Every prop is an instance of a model from `src/game/level/models.ts` — thirty-eight of
+them now, from a five-part `crate` to a ten-part `pipe-vertical`: the V0.5 `neon-strip`,
+`lift-platform` and `data-shard`, the four sign silhouettes V0.6.1 added, and V0.7's ten -
+`ladder`, `solar-panel`, `billboard`, `crane`, `scaffold`, `construction-slab`,
+`construction-column`, `crown`, `elevator-cab` and `elevator-gate`. A model can also declare
+itself `mounted` rather than stacked, which is how the level's "nothing floats" rule knows
+that a sign hangs on a wall instead of standing on something.
 
 Parts are expressed in **normalised** coordinates: `[0, 1]` across the prop's own
 bounding box, with `y` from its underside to its top. Any model fits any prop size.
@@ -1354,7 +1438,7 @@ half.
 
 ---
 
-## Out of scope for V0.6.1
+## Out of scope for V0.7
 
 The roadmap continues past this demo. Nothing below is implemented, and none of it is
 stubbed:
@@ -1389,4 +1473,8 @@ V0.6.1 fixed the three things playing V0.6 turned up: a body that moved in cuts,
 district whose surfaces shared planes and shimmered for it, and six signs that were
 one sign.
 
-The next milestone is V0.7: polish, and labelling the district as Level 1.
+V0.7, this version, is the largest change the project has had: the district became a city
+of four and a half thousand props, the platform lifts became buildings you call, and the
+walk got the one fix that a smooth set of joints was never going to provide.
+
+The next milestone is V0.8: polish, and labelling the district as Level 1.

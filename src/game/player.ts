@@ -186,6 +186,16 @@ export interface PlayerState {
   peakFallSpeed: number;
   /** Head-bob phase in radians, advanced by distance travelled. */
   bobPhase: number;
+  /**
+   * How far `bobPhase` moved in the last step, in radians.
+   *
+   * The renderer needs this and not the phase: it draws between two simulation steps,
+   * and the gait is a function of *distance*, so the phase at the moment being drawn is
+   * the last step's plus whatever fraction of the next one has already happened. Without
+   * it the legs (and the camera's bob) only move when the simulation does, which on a
+   * 120 Hz display is a visible stutter at 60 Hz.
+   */
+  bobPhaseStep: number;
   /** Head-bob amplitude multiplier, 0..1, faded in and out. */
   bobAmount: number;
   /**
@@ -312,6 +322,7 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     maneuver: null,
     peakFallSpeed: 0,
     bobPhase: 0,
+    bobPhaseStep: 0,
     bobAmount: 0,
     // Closed until the player has actually stood on something: a player who starts
     // in mid-air has not "just left the ground", and must not be given a jump for
@@ -419,6 +430,7 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.maneuver = null;
   state.peakFallSpeed = 0;
   state.bobPhase = 0;
+  state.bobPhaseStep = 0;
   state.bobAmount = 0;
   state.coyote = Number.POSITIVE_INFINITY;
   state.jumpBuffer = 0;
@@ -1705,7 +1717,10 @@ export function advanceHeadBob(
     const speed = lengthXZ(state.velocity);
     const sprinting = speed > options.config.walkSpeed * 1.02;
     const length = sprinting ? bob.strideLength.sprint : stride;
-    state.bobPhase = (state.bobPhase + (travelled / length) * Math.PI * 2) % (Math.PI * 2);
+    state.bobPhaseStep = (travelled / length) * Math.PI * 2;
+    state.bobPhase = (state.bobPhase + state.bobPhaseStep) % (Math.PI * 2);
+  } else {
+    state.bobPhaseStep = 0;
   }
 
   // `damp` takes a *fraction* of the remaining distance per second, while the
@@ -1742,14 +1757,15 @@ export function headBobOffset(
   state: PlayerState,
   config: GameConfig,
   out: Vec3 = vec3(),
+  gaitPhase: number = state.bobPhase,
 ): Vec3 {
   const bob = config.headBob;
   const amount = state.bobAmount * headBobAmplitudeScale(state, config);
   const basis = yawBasis(state.yaw);
-  const lateral = Math.sin(state.bobPhase) * bob.lateralAmplitude * amount;
+  const lateral = Math.sin(gaitPhase) * bob.lateralAmplitude * amount;
 
   out.x = basis.right.x * lateral;
-  out.y = Math.sin(state.bobPhase * 2) * bob.verticalAmplitude * amount;
+  out.y = Math.sin(gaitPhase * 2) * bob.verticalAmplitude * amount;
   out.z = basis.right.z * lateral;
   return out;
 }
@@ -1760,12 +1776,27 @@ export function eyePosition(
   config: GameConfig,
   out: Vec3 = vec3(),
   interpolatedFeet: ReadonlyVec3 = state.position,
+  gaitPhase: number = state.bobPhase,
 ): Vec3 {
-  const offset = headBobOffset(state, config);
+  const offset = headBobOffset(state, config, vec3(), gaitPhase);
   out.x = interpolatedFeet.x + offset.x;
   out.y = interpolatedFeet.y + eyeHeight(state, config.player) + offset.y;
   out.z = interpolatedFeet.z + offset.z;
   return out;
+}
+
+/**
+ * The gait phase at a moment between two simulation steps.
+ *
+ * `advanceHeadBob` moves the phase by distance travelled, once per step, so between
+ * steps it is *already known*: the fraction `alpha` of the next step's travel has
+ * happened, and the phase has moved that fraction of `bobPhaseStep`. Without this the
+ * legs and the camera's bob advance in 60 Hz jumps whatever the display is doing, which
+ * is exactly the stutter this exists to remove.
+ */
+export function gaitPhaseAt(state: PlayerState, alpha: number): number {
+  const wrapped = state.bobPhase + state.bobPhaseStep * clamp(alpha, 0, 1);
+  return wrapped % (Math.PI * 2);
 }
 
 /**

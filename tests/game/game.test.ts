@@ -42,7 +42,7 @@ class FakeView implements GameViewLike {
   readonly frames: RenderedFrame[] = [];
   readonly sizes: { width: number; height: number }[] = [];
   readonly doors: { id: string; open: number }[] = [];
-  readonly lifts: { id: string; topY: number }[] = [];
+  readonly lifts: { id: string; topY: number; floor: number; doorsOpen: number }[] = [];
   readonly pickups: { id: string; visible: boolean }[] = [];
   readonly animations: number[] = [];
   readonly fovs: number[] = [];
@@ -62,8 +62,8 @@ class FakeView implements GameViewLike {
     this.doors.push({ id, open });
   }
 
-  setLift(id: string, topY: number): void {
-    this.lifts.push({ id, topY });
+  setElevator(id: string, topY: number, floor: number, doorsOpen: number): void {
+    this.lifts.push({ id, topY, floor, doorsOpen });
   }
 
   setCollectibleVisible(id: string, visible: boolean): void {

@@ -301,10 +301,10 @@ export interface CheckpointConfig {
  * is a place to stand and look around, and a fast one is a ride.
  */
 export interface ElevatorConfig {
-  /** Seconds a lift waits at each end before it starts back (s). */
-  readonly dwellSeconds: number;
-  /** Travel speed while moving (m/s). */
+  /** Travel speed between floors (m/s). */
   readonly speed: number;
+  /** Seconds a gate takes to open or close on its own face (s). */
+  readonly doorSeconds: number;
 }
 
 /** Pickups: how close the player has to pass to take one. */
@@ -537,10 +537,10 @@ export const DEFAULT_CONFIG: GameConfig = {
     heightTolerance: 2.5,
   },
   elevator: {
-    // Slow, with a real pause at each end: a lift is where the route stops being
-    // about momentum for a moment, and a rider should be able to look around.
-    dwellSeconds: 2.4,
-    speed: 3.2,
+    // Brisk, but slow enough that the ride is a thing that happens rather than a
+    // cutaway: a storey takes about a second and a half, and the gate is quick.
+    speed: 3.4,
+    doorSeconds: 0.5,
   },
   collectible: {
     // Tighter than a checkpoint: a pickup is a *thing to get*, so it should feel

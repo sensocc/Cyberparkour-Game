@@ -1,178 +1,273 @@
 /**
- * Lifts.
+ * Elevators: cars in shafts, called and sent.
  *
- * A lift is the one piece of geometry that moves, so there are two things to
- * pin down: that its *collider* travels with it (otherwise the platform is a
- * picture), and that whoever is standing on it comes along (otherwise the floor
- * slides out from under them).
+ * The whole of this is a state machine, so the tests are about *time*: that a call is
+ * refused while a car is already moving, that a gate is shut the whole way between
+ * floors, and that an interrupted ride is impossible rather than merely unlikely.
  */
 
 import { describe, expect, it } from 'vitest';
 
-import { vec3 } from '../../src/core/vec3.js';
-import { createPlayerState, stepPlayer } from '../../src/game/player.js';
+import { DEFAULT_CONFIG } from '../../src/core/config.js';
+import { collider, world } from '../helpers/player.js';
 import { ElevatorSystem, carryRider } from '../../src/game/level/elevators.js';
 import type { ElevatorDefinition } from '../../src/game/level/levelData.js';
-import { CONFIG, STEP, collider, input, optionsFor, spawnAt, world } from '../helpers/player.js';
+import { vec3 } from '../../src/core/vec3.js';
 
-/** One lift, from the deck up four metres, in two seconds, pausing a second. */
-const LIFT: ElevatorDefinition = {
-  id: 'lift',
+const OPTIONS = { speed: 4, doorSeconds: 0.5 };
+const STEP = 1 / 60;
+
+/** A three-floor shaft: works, roof, skydeck. */
+const SHAFT: ElevatorDefinition = {
+  id: 'lift-test',
   at: [0, 0],
-  size: [4, 4],
+  size: [2, 2],
   thickness: 0.6,
-  lowTop: 0,
-  highTop: 4,
+  floors: [-5, 0, 20],
+  names: ['Service', 'Roof', 'Skydeck'],
+  start: 1,
 };
 
-const LIFT_COLLIDER = collider('lift', vec3(0, -0.3, 0), vec3(4, 0.6, 4), 'floor');
-const TIMING = { dwellSeconds: 1, speed: 2 };
-
-function setup(definitions: readonly ElevatorDefinition[] = [LIFT]) {
-  const collisionWorld = world(LIFT_COLLIDER);
-  const lifts = new ElevatorSystem(definitions, collisionWorld, TIMING);
-  return { world: collisionWorld, lifts };
+/** The car and one gate per floor, as the level would declare them. */
+function buildShaft(shaft: ElevatorDefinition = SHAFT): ReturnType<typeof world> {
+  const colliders = [
+    collider(shaft.id, vec3(shaft.at[0], (shaft.floors[shaft.start ?? 0] as number) - 0.3, shaft.at[1]), vec3(2, 0.6, 2), 'floor'),
+  ];
+  for (let index = 0; index < shaft.floors.length; index += 1) {
+    colliders.push(
+      collider(
+        `${shaft.id}-gate-${index}`,
+        vec3(shaft.at[0], (shaft.floors[index] as number) + 1.25, shaft.at[1] + 1),
+        vec3(2.1, 2.5, 0.22),
+        'wall',
+      ),
+    );
+  }
+  return world(...colliders);
 }
 
-describe('the travel', () => {
-  it('waits at the bottom, rises, waits at the top, then falls', () => {
-    const { lifts } = setup();
+function system(shaft: ElevatorDefinition = SHAFT): ElevatorSystem {
+  return new ElevatorSystem([shaft], buildShaft(shaft), OPTIONS);
+}
 
-    expect(lifts.topOf('lift')).toBe(0);
-    lifts.update(1);
-    expect(lifts.topOf('lift'), 'still waiting at the bottom').toBe(0);
-    lifts.update(1);
-    expect(lifts.topOf('lift'), 'half way').toBeCloseTo(2, 6);
-    lifts.update(1);
-    expect(lifts.topOf('lift'), 'arrived').toBeCloseTo(4, 6);
-    lifts.update(1);
-    expect(lifts.topOf('lift'), 'waiting at the top').toBe(4);
-    lifts.update(2);
-    expect(lifts.topOf('lift'), 'back down').toBeCloseTo(0, 6);
+/** Runs the system for `seconds`, collecting the states it passed through. */
+function run(lift: ElevatorSystem, seconds: number): string[] {
+  const states: string[] = [];
+  const steps = Math.round(seconds / STEP);
+  for (let step = 0; step < steps; step += 1) {
+    for (const car of lift.update(STEP)) {
+      if (states[states.length - 1] !== car.state) states.push(car.state);
+    }
+  }
+  return states;
+}
+
+describe('a car at rest', () => {
+  it('starts on the floor it was told to, with its gate open', () => {
+    const lift = system();
+    const [car] = lift.update(STEP);
+    expect(car?.topY).toBe(0);
+    expect(car?.state).toBe('idle');
+    expect(car?.doorsOpen).toBe(1);
   });
 
-  it('starts at the top when the level says so', () => {
-    const { lifts } = setup([{ ...LIFT, start: 'high' }]);
-    expect(lifts.topOf('lift')).toBe(4);
+  it('serves its floors in order, with names', () => {
+    const floors = system().floors('lift-test');
+    expect(floors.map((floor) => floor.y)).toEqual([-5, 0, 20]);
+    expect(floors[0]?.name).toBe('Service');
+    expect(floors[2]?.name).toBe('Skydeck');
   });
 
-  it('is a pure function of elapsed time, so one long step equals several short ones', () => {
-    const stepwise = setup();
-    const single = setup();
-
-    for (let tick = 0; tick < 40; tick += 1) stepwise.lifts.update(0.05);
-    single.lifts.update(2);
-
-    expect(single.lifts.topOf('lift')).toBeCloseTo(stepwise.lifts.topOf('lift') ?? -1, 9);
+  it('shuts the gate that is not the car', () => {
+    // A shaft with every gate open is a shaft you can walk into from any floor, at any
+    // time, including when the car is somewhere else - which is how you fall down one.
+    const lift = system();
+    const car = lift.update(STEP)[0];
+    expect(car?.doorsOpen).toBe(1);
   });
 
-  it('reports only the lifts that actually moved', () => {
-    const { lifts } = setup();
-    expect(lifts.update(0.5), 'waiting').toEqual([]);
-
-    const moving = lifts.update(0.75);
-    expect(moving).toHaveLength(1);
-    expect(moving[0]?.id).toBe('lift');
-    expect(moving[0]?.deltaY).toBeGreaterThan(0);
-    expect(moving[0]?.topY).toBeCloseTo(0.5, 6);
-  });
-
-  it('ignores a zero or negative step rather than moving', () => {
-    const { lifts } = setup();
-    expect(lifts.update(0)).toEqual([]);
-    expect(lifts.update(-5)).toEqual([]);
-    expect(lifts.topOf('lift')).toBe(0);
+  it('has no car for a shaft it does not know', () => {
+    expect(system().call('nope', 0)).toBe(false);
+    expect(system().floors('nope')).toEqual([]);
+    expect(system().floorOf('nope')).toBeNull();
   });
 });
 
-describe('the collider', () => {
-  it('travels with the platform, so the surface is real at every height', () => {
-    const { world: collisionWorld, lifts } = setup();
-    const box = () => collisionWorld.colliders.find((entry) => entry.id === 'lift')?.box;
+describe('being sent somewhere', () => {
+  it('closes, moves, opens, and arrives at the right height', () => {
+    const lift = system();
+    expect(lift.call('lift-test', 2)).toBe(true);
 
-    expect(box()?.max.y).toBeCloseTo(0, 9);
-    expect(box()?.min.y).toBeCloseTo(-0.6, 9);
+    const states = run(lift, 8);
+    expect(states[0]).toBe('closing');
+    expect(states).toContain('moving');
+    expect(states[states.length - 1]).toBe('idle');
 
-    lifts.update(2);
-    expect(box()?.max.y).toBeCloseTo(2, 6);
-    // The thickness is what keeps the sub-step from stepping through it.
-    expect(box()?.min.y).toBeCloseTo(2 - 0.6, 6);
+    const [car] = lift.update(STEP);
+    expect(car?.topY).toBe(20);
+    expect(car?.doorsOpen).toBe(1);
+    expect(car?.floor).toBe(2);
   });
 
-  it('keeps its footprint', () => {
-    const { world: collisionWorld, lifts } = setup();
-    lifts.update(3);
-    const box = collisionWorld.colliders.find((entry) => entry.id === 'lift')?.box;
-    expect(box?.min.x).toBeCloseTo(-2, 9);
-    expect(box?.max.x).toBeCloseTo(2, 9);
-    expect(box?.min.z).toBeCloseTo(-2, 9);
-    expect(box?.max.z).toBeCloseTo(2, 9);
+  it('shuts the gates the whole way between floors', () => {
+    // A gap in a shaft wall at the wrong height is a hole to fall through.
+    const lift = system();
+    lift.call('lift-test', 2);
+
+    let sawMoving = false;
+    for (let step = 0; step < 600; step += 1) {
+      const [car] = lift.update(STEP);
+      if (car?.state === 'moving') {
+        sawMoving = true;
+        expect(car.doorsOpen).toBe(0);
+      }
+    }
+    expect(sawMoving).toBe(true);
+  });
+
+  it('refuses a second destination while it is already moving', () => {
+    const lift = system();
+    lift.call('lift-test', 2);
+    run(lift, 1);
+    expect(lift.call('lift-test', 0)).toBe(false);
+    // ...and it still arrives where it was first sent.
+    run(lift, 8);
+    expect(lift.update(STEP)[0]?.topY).toBe(20);
+  });
+
+  it('refuses the floor it is already on', () => {
+    expect(system().call('lift-test', 1)).toBe(false);
+  });
+
+  it('clamps a floor index it could not have', () => {
+    const lift = system();
+    expect(lift.call('lift-test', 99)).toBe(true);
+    run(lift, 10);
+    expect(lift.update(STEP)[0]?.floor).toBe(2);
+  });
+
+  it('comes back down, and the carry is signed', () => {
+    const lift = system();
+    lift.call('lift-test', 0);
+    let descended = false;
+    for (let step = 0; step < 600; step += 1) {
+      const [car] = lift.update(STEP);
+      if (car && car.deltaY < 0) descended = true;
+    }
+    expect(descended).toBe(true);
+    expect(lift.update(STEP)[0]?.topY).toBe(-5);
   });
 });
 
-describe('the system', () => {
-  it('lists its lifts and snapshots their heights', () => {
-    const { lifts } = setup();
-    expect(lifts.ids).toEqual(['lift']);
-    expect(lifts.snapshot()).toEqual([{ id: 'lift', deltaY: 0, topY: 0 }]);
-    expect(lifts.topOf('nope')).toBeNull();
+describe('where a player is, relative to a shaft', () => {
+  it('finds the shaft they are standing in front of', () => {
+    const lift = system();
+    const near = lift.approach({ x: 0, y: 0.1, z: 2.5 });
+    expect(near?.id).toBe('lift-test');
+    expect(near?.floor).toBe(1);
+    expect(near?.docked).toBe(true);
+    expect(near?.inside).toBe(false);
   });
 
-  it('returns every lift to the start of its cycle', () => {
-    const { world: collisionWorld, lifts } = setup();
-    lifts.update(3.5);
-    expect(lifts.topOf('lift')).toBeGreaterThan(2);
-
-    lifts.reset();
-    expect(lifts.topOf('lift')).toBe(0);
-    expect(collisionWorld.colliders.find((entry) => entry.id === 'lift')?.box.max.y).toBeCloseTo(0, 9);
+  it('knows when they are inside the car', () => {
+    const lift = system();
+    expect(lift.approach({ x: 0, y: 0.1, z: 0 })?.inside).toBe(true);
+    expect(lift.riding({ x: 0, y: 0.1, z: 0 })).toBe('lift-test');
+    expect(lift.riding({ x: 6, y: 0.1, z: 0 })).toBeNull();
   });
 
-  it('skips a definition whose collider is not in the world', () => {
-    const { lifts } = setup([{ ...LIFT, id: 'ghost' }]);
-    expect(lifts.ids).toEqual([]);
-    expect(lifts.update(1)).toEqual([]);
+  it('is out of reach from across the roof, and from another floor', () => {
+    const lift = system();
+    expect(lift.approach({ x: 30, y: 0, z: 0 })).toBeNull();
+    expect(lift.approach({ x: 0, y: 9, z: 2 })).toBeNull();
+  });
+
+  it('reports the car as away once it has been sent elsewhere', () => {
+    const lift = system();
+    lift.call('lift-test', 2);
+    run(lift, 8);
+    expect(lift.approach({ x: 0, y: 0.1, z: 2.5 })?.docked).toBe(false);
+    expect(lift.approach({ x: 0, y: 20.1, z: 2.5 })?.docked).toBe(true);
   });
 });
 
 describe('carrying a rider', () => {
-  it('moves the feet and the interpolated twin together', () => {
-    const rider = { position: { y: 0.01 }, previousPosition: { y: 0.01 } };
-    carryRider(rider, 1.2);
-    expect(rider.position.y).toBeCloseTo(1.21, 9);
-    // Both, or the renderer smears the rider across the travel for a frame.
-    expect(rider.previousPosition.y).toBeCloseTo(1.21, 9);
+  it('moves both the position and its interpolated twin', () => {
+    // Shifting only the current position smears the rider across the whole travel for
+    // a frame, which is a jolt on the frame the car starts moving.
+    const rider = { position: { y: 3 }, previousPosition: { y: 3 } };
+    carryRider(rider, 0.4);
+    expect(rider.position.y).toBeCloseTo(3.4, 6);
+    expect(rider.previousPosition.y).toBeCloseTo(3.4, 6);
   });
 
-  it('lifts a player standing on it', () => {
-    const collisionWorld = world(LIFT_COLLIDER);
-    const lifts = new ElevatorSystem([{ ...LIFT, lowTop: 0, highTop: 6 }], collisionWorld, TIMING);
-    const player = createPlayerState(spawnAt(0, 0.001, 0), CONFIG);
-    const options = optionsFor(collisionWorld);
+  it('is a no-op for a car that did not move', () => {
+    const rider = { position: { y: 3 }, previousPosition: { y: 3 } };
+    carryRider(rider, 0);
+    expect(rider.position.y).toBe(3);
+  });
+});
 
-    // Settle onto the platform.
-    for (let tick = 0; tick < 10; tick += 1) stepPlayer(player, input(), STEP, options);
-    expect(player.groundId).toBe('lift');
+describe('resetting', () => {
+  it('puts the car back where it started, gate open', () => {
+    const lift = system();
+    lift.call('lift-test', 2);
+    run(lift, 8);
+    lift.reset();
 
-    const before = player.position.y;
+    const [car] = lift.update(STEP);
+    expect(car?.topY).toBe(0);
+    expect(car?.state).toBe('idle');
+    expect(car?.doorsOpen).toBe(1);
+  });
 
-    // Ride exactly the way the game does it: move the lift, carry the rider,
-    // then step - so the ground probe sees the new surface, not the old one.
-    for (let tick = 0; tick < 180; tick += 1) {
-      for (const ride of lifts.update(STEP)) {
-        if (player.groundId === ride.id) carryRider(player, ride.deltaY);
-      }
-      stepPlayer(player, input(), STEP, options);
+  it('survives a shaft with no colliders to drive', () => {
+    const lift = new ElevatorSystem([SHAFT], world(), OPTIONS);
+    expect(lift.ids).toEqual([]);
+    expect(() => lift.update(STEP)).not.toThrow();
+  });
+});
+
+describe('time', () => {
+  it('ignores a zero or backwards step', () => {
+    const lift = system();
+    lift.call('lift-test', 2);
+    expect(lift.update(0)).toEqual([]);
+    expect(() => lift.update(-1)).not.toThrow();
+  });
+
+  it('travels the same distance whether it is stepped finely or coarsely', () => {
+    // The ride is a function of time, not of frame count, so a long frame cannot move
+    // a car further than the time it had.
+    const fine = system();
+    const coarse = system();
+    fine.call('lift-test', 2);
+    coarse.call('lift-test', 2);
+    run(fine, 2);
+    for (let step = 0; step < 20; step += 1) coarse.update(0.1);
+    // Within a step's worth of travel: whether the gate finishes closing *on* a step
+    // boundary is a floating-point accident, and one step of travel is the most that
+    // can cost.
+    expect(Math.abs((fine.update(STEP)[0]?.topY ?? 0) - (coarse.update(STEP)[0]?.topY ?? 0))).toBeLessThan(0.2);
+  });
+});
+
+describe('the shipped district', () => {
+  it('builds its elevators from the definitions the level declares', async () => {
+    const { DEMO_DISTRICT } = await import('../../src/game/level/levelData.js');
+    const { buildLevel } = await import('../../src/game/level/level.js');
+    const built = buildLevel(DEMO_DISTRICT, {
+      maxSubStep: DEFAULT_CONFIG.world.maxCollisionSubStep,
+      player: { radius: 0.35, height: 1.8 },
+    });
+    const lift = new ElevatorSystem(DEMO_DISTRICT.elevators ?? [], built.world, OPTIONS);
+
+    expect(lift.ids.length).toBeGreaterThanOrEqual(2);
+    for (const id of lift.ids) {
+      const floors = lift.floors(id);
+      expect(floors.length).toBeGreaterThanOrEqual(3);
+      // The top floor of every tower is a skydeck, which is the whole point of it.
+      expect(floors[floors.length - 1]?.name).toMatch(/skydeck/i);
     }
-
-    expect(player.position.y).toBeGreaterThan(before + 1);
-    expect(player.groundId).toBe('lift');
-  });
-
-  it('does not lift a player who is not standing on it', () => {
-    // A rider in the air above a rising lift is not attached to it; if it were,
-    // a jump would be hijacked by whatever happened to be underneath.
-    const rider = { position: { y: 10 }, previousPosition: { y: 10 } };
-    expect(rider.position.y).toBe(10);
   });
 });

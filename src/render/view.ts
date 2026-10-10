@@ -95,12 +95,23 @@ export class GameView implements GameViewLike {
   private readonly camera: THREE.PerspectiveCamera;
   private readonly doorAngles: ReadonlyMap<string, number>;
   private readonly liftThickness: ReadonlyMap<string, number>;
+  /** Floors per lift, for working out where a gate's opening is. */
+  private readonly liftFloors: ReadonlyMap<string, readonly number[]>;
+  /** How tall each gate is, which is how far it has to travel to be out of the way. */
+  private readonly gateHeights: ReadonlyMap<string, number>;
   private readonly pickupHome: ReadonlyMap<string, ReadonlyVec3>;
   /** Borrowed, not owned: the loader disposes them, and settings re-filter them. */
   private readonly assets: SceneAssets;
   private quality: QualityPreset = QUALITY_PRESETS.high;
   private readonly body: PlayerBody;
   private readonly config: GameConfig;
+  /**
+   * Where the sun sits relative to the point it lights.
+   *
+   * Taken from the scene as built, so there is one authority on where the light is: the
+   * level's own sun direction.
+   */
+  private readonly sunOffset: { x: number; y: number; z: number };
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -157,6 +168,11 @@ export class GameView implements GameViewLike {
     this.assets = options.assets ?? NO_ASSETS;
     this.config = options.config;
     this.built = buildScene(options.definition, this.assets);
+    this.sunOffset = {
+      x: this.built.sun.position.x - this.built.sun.target.position.x,
+      y: this.built.sun.position.y,
+      z: this.built.sun.position.z - this.built.sun.target.position.z,
+    };
 
     // The player's own body: in the world, casting a shadow, and visible when the
     // player looks down at themselves.
@@ -167,6 +183,14 @@ export class GameView implements GameViewLike {
     );
     this.liftThickness = new Map(
       (options.definition.elevators ?? []).map((lift) => [lift.id, lift.thickness] as const),
+    );
+    this.liftFloors = new Map(
+      (options.definition.elevators ?? []).map((lift) => [lift.id, lift.floors] as const),
+    );
+    this.gateHeights = new Map(
+      (options.definition.props ?? [])
+        .filter((prop) => prop.model === 'elevator-gate')
+        .map((prop) => [prop.id, prop.size.y] as const),
     );
     this.pickupHome = new Map(
       (options.definition.collectibles ?? []).map((pickup) => [pickup.id, pickup.position] as const),
@@ -220,6 +244,8 @@ export class GameView implements GameViewLike {
   render(eye: ReadonlyVec3, orientation: Orientation): void {
     if (this.disposed) return;
 
+    this.followWithShadow(eye);
+
     this.camera.position.set(eye.x, eye.y, eye.z);
     // Roll is in degrees on the way in (it comes from the settings-facing effect
     // values) and radians on the way out, which is the one conversion the renderer
@@ -244,13 +270,24 @@ export class GameView implements GameViewLike {
     group.rotation.y = clamp01(open) * angle;
   }
 
-  /** Moves a lift's car so its walking surface sits at `topY`. */
-  setLift(id: string, topY: number): void {
+  /** Places an elevator car, and slides its gates. */
+  setElevator(id: string, topY: number, floor: number, doorsOpen: number): void {
     if (this.disposed) return;
     const group = this.built.lifts.get(id);
     const thickness = this.liftThickness.get(id);
-    if (!group || thickness === undefined) return;
-    group.position.y = topY - thickness;
+    if (group && thickness !== undefined) group.position.y = topY - thickness;
+
+    // A gate is a shutter that rolls *up* by its own height, so "open" is a gate
+    // parked in the wall above the opening and "shut" is a gate in the opening.
+    const floors = this.liftFloors.get(id);
+    if (!floors) return;
+    for (let index = 0; index < floors.length; index += 1) {
+      const gate = this.built.gates.get(`${id}-gate-${index}`);
+      if (!gate) continue;
+      // Only the gate at the car's own floor is up; the rest are shut.
+      const height = this.gateHeights.get(`${id}-gate-${index}`) ?? 0;
+      gate.position.y = index === floor ? Math.max(0, Math.min(1, doorsOpen)) * height : 0;
+    }
   }
 
   /** Hides a pickup that has been taken. */
@@ -292,6 +329,41 @@ export class GameView implements GameViewLike {
     this.body.root.position.set(feet.x, feet.y, feet.z);
     this.body.root.rotation.y = yaw;
     posePlayerBody(this.body, pose, this.config, dt);
+  }
+
+  /**
+   * Keeps the shadow volume over the player, snapped to its own texel grid.
+   *
+   * V0.5 fixed the shadow camera to the origin, which was right when the district was
+   * the whole level: at a 110 m half-extent it covered everything, and the map never had
+   * to change. The city is a kilometre across, so a fixed volume means shadows that are
+   * either a blur or - past its edge - not there at all, and a player with no shadow is
+   * a player with no idea how high they are.
+   *
+   * Moving it every frame would make the shadows swim, because a shadow texel covers
+   * about 5 cm of ground and the sampling grid would slide under the geometry on every
+   * frame. Snapping the volume to a whole number of texels is the standard fix: the
+   * shadows stay where they are on the ground and the volume steps along with the player.
+   */
+  private followWithShadow(eye: ReadonlyVec3): void {
+    const sun = this.built.sun;
+    const shadow = sun.shadow;
+    if (!shadow) return;
+
+    const extent = Math.max(1, shadow.camera.right);
+    const texel = (extent * 2) / Math.max(1, shadow.mapSize.width);
+    const snappedX = Math.round(eye.x / texel) * texel;
+    const snappedZ = Math.round(eye.z / texel) * texel;
+
+    // The light and the target move together, so the *direction* of the sunlight never
+    // changes - only where its map is looking.
+    sun.target.position.set(snappedX, 0, snappedZ);
+    sun.target.updateMatrixWorld();
+    sun.position.set(
+      snappedX + this.sunOffset.x,
+      this.sunOffset.y,
+      snappedZ + this.sunOffset.z,
+    );
   }
 
   /** Sets the vertical field of view. */

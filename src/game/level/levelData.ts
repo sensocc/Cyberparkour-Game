@@ -116,22 +116,44 @@ export interface DoorDefinition {
  * that is what matters: a lift's job is to arrive flush with the floor at each
  * end, so the numbers a level author cares about are the two floors.
  */
+/**
+ * An elevator: a car in a shaft, serving the floors of a building.
+ *
+ * V0.7 replaced V0.5's platform - a slab that cycled up and down on a timer - with
+ * these. The shape of the data is what the difference is: a platform has a `lowTop`
+ * and a `highTop` and goes between them for ever, and an elevator has a *list of
+ * floors* and goes where it is sent.
+ *
+ * The car, and one gate per floor, are props in the level like any other, and the
+ * names are a contract: the car is `<id>`, and the gates are `<id>-gate-0`, `-1`, and
+ * so on, one per entry in `floors`, lowest first. The system moves them.
+ */
 export interface ElevatorDefinition {
   readonly id: string;
-  /** Centre of the platform on X/Z. */
+  /** Centre of the car on X/Z. */
   readonly at: readonly [number, number];
-  /** Footprint of the platform (X by Z). */
+  /** Footprint of the car (X by Z). */
   readonly size: readonly [number, number];
-  /** Thickness of the platform (m). The mesh and the collider must agree. */
+  /** Thickness of the car floor (m). The mesh and the collider must agree. */
   readonly thickness: number;
-  /** Y of the platform's top surface at the bottom of its travel. */
-  readonly lowTop: number;
-  /** Y of the platform's top surface at the top of its travel. */
-  readonly highTop: number;
-  /** Where it starts, and therefore where the phase is measured from. */
-  readonly start?: 'low' | 'high';
-  /** Seconds of offset into its cycle, so a bank of lifts is not in lockstep. */
-  readonly phase?: number;
+  /**
+   * The floors it serves, in metres, lowest first.
+   *
+   * Each is the Y of a walkable surface the car's floor sits flush with when it is
+   * docked there, so stepping out is a step and not a drop.
+   */
+  readonly floors: readonly number[];
+  /** The floor it starts on, as an index into `floors`. */
+  readonly start?: number;
+  /** What each floor is called, low to high, for the in-car display. */
+  readonly names?: readonly string[];
+  /**
+   * Which way the openings face, so the shaft knows where its doorways are.
+   *
+   * Not used by the car itself - the gate props are placed by the level - but it is
+   * what tells the builder which walls to leave a hole in.
+   */
+  readonly facing?: 'x+' | 'x-' | 'z+' | 'z-';
 }
 
 /** A pickup: a thing to collect on the way, and part of the run's score. */
@@ -306,22 +328,215 @@ function checkpoint(id: string, at: readonly [number, number, number], yaw?: num
 }
 
 /**
- * A lift, as a level author thinks of one: two floors and a footprint.
+ * A lift tower, built in full: the shaft, an opening and a shutter at every floor, and
+ * the car to go in it.
  *
- * The thickness is the one number that is not about the *idea* of the lift - it
- * is how deep the platform is - so it is filled in here rather than repeated at
- * every call site, and the mesh and the collider are guaranteed to agree.
+ * V0.5's lift was two floors and a footprint; V0.7's is a building. The difference is
+ * not decoration - it is that this one has a *doorway on every floor*, and a gate on
+ * each doorway that is only open when the car is docked there. That is what makes it a
+ * lift you use rather than a platform you happen to be standing on.
+ *
+ * The geometry is derived from the floors rather than listed, so the openings line up
+ * with the car at every level by construction: an opening is one storey tall and starts
+ * at the floor's own height, and the gate fills it exactly.
+/**
+ * A lift tower, built in full: the shaft, a doorway and a gate at every floor below the
+ * top, the car to go in it, and the roof it opens onto.
+ *
+ * V0.5's lift was two floors and a footprint; V0.7's is a building. The difference is
+ * not decoration - it is that this one has a *doorway on every floor*, and a gate on
+ * each doorway that is only open when the car is docked there. That is what makes it a
+ * lift you use rather than a platform you happen to be standing on.
+ *
+ * Three details are worth knowing before changing anything here:
+ *
+ *  - **The top floor has no gate.** The shaft's walls stop just under the roof, so the
+ *    car arrives in the open air at roof level and stepping out of it is stepping onto
+ *    the roof. A gate up there would be a gate for nothing.
+ *  - **The roof is a ring.** Four slabs round the shaft's footprint rather than one big
+ *    deck, because a deck across the whole tower would bury the car in itself on the
+ *    last half-metre of its travel - and because a roof with a lift shaft coming up
+ *    through it is what the top of a building looks like.
+ *  - **Everything is derived from the floors**, so an opening lines up with the car at
+ *    every level by construction rather than by four numbers agreeing.
  */
-function lift(spec: {
+export function liftTower(spec: {
   readonly id: string;
+  /** Centre of the car on X/Z. */
   readonly at: readonly [number, number];
+  /** Footprint of the car. The shaft is this plus a wall on every side. */
   readonly size: readonly [number, number];
-  readonly lowTop: number;
-  readonly highTop: number;
-  readonly start?: 'low' | 'high';
-  readonly phase?: number;
-}): ElevatorDefinition {
-  return { ...spec, thickness: 0.6 };
+  /** Floors served, lowest first. The top one is the roof. */
+  readonly floors: readonly number[];
+  readonly names?: readonly string[];
+  /** Which side the doorways are on. */
+  readonly facing: 'x+' | 'x-' | 'z+' | 'z-';
+  /**
+   * A second side to put doorways on.
+   *
+   * For a tower whose floors are on opposite sides of it: one shaft, two ways out of
+   * every floor, and both gates open together because there is one car behind them.
+   */
+  readonly alsoFacing?: 'x+' | 'x-' | 'z+' | 'z-';
+  /** Where the tower's solid body starts, below the lowest floor. */
+  readonly base: number;
+  readonly tint?: string;
+  readonly tintDark?: string;
+  /** Wall thickness. Thick enough for a doorway to read as a doorway. */
+  readonly wall?: number;
+}): { readonly props: PropDefinition[]; readonly elevator: ElevatorDefinition } {
+  const [cx, cz] = spec.at;
+  const [carWidth, carDepth] = spec.size;
+  const wall = spec.wall ?? 0.4;
+  /** One storey: how tall a doorway is, and how far apart the floors can be. */
+  const opening = 2.5;
+  /** How far below the lowest floor the shaft's floor sits. */
+  const pit = 0.9;
+  /** The roof slab's own thickness. */
+  const cap = 0.9;
+
+  const floors = spec.floors;
+  const lowest = floors[0] as number;
+  const top = floors[floors.length - 1] as number;
+  /** The shaft's walls stop here, so the car arrives at roof level in the open. */
+  const wallTop = top - cap;
+  const outerWidth = carWidth + wall * 2;
+  const outerDepth = carDepth + wall * 2;
+  const bottom = lowest - pit;
+
+  const tints = {
+    concrete: spec.tint ?? '#5f6874',
+    'concrete-dark': spec.tintDark ?? '#4d5560',
+    metal: '#77808d',
+    'metal-dark': '#454e5c',
+  };
+  const props: PropDefinition[] = [];
+  const panel = (
+    id: string,
+    x: number,
+    z: number,
+    size: readonly [number, number, number],
+    bottomY: number,
+  ): void => {
+    props.push(box(`${spec.id}-${id}`, { at: [x, z], bottom: bottomY, size, kind: 'wall', model: 'slab', tints }));
+  };
+
+  // ---- the body: a pillar from wherever the tower stands, up to the shaft's floor
+  const pillar = lowest - spec.base - pit;
+  if (pillar > 0.05) {
+    panel('body', cx, cz, [outerWidth - 0.7, pillar, outerDepth - 0.7], spec.base);
+  }
+
+  // ---- the shaft: solid sides, and doorways cut into one or two of them
+  //
+  // The two walls that run the full depth are the ones the others fit *between*: two
+  // panels that both spanned the whole footprint would put their outer faces on the same
+  // plane at every corner, and a corner drawn twice at one depth is a flickering seam.
+  const sideX = outerWidth / 2 - wall / 2;
+  const sideZ = outerDepth / 2 - wall / 2;
+  const height = wallTop - bottom;
+  const onZ = spec.facing === 'z+' || spec.facing === 'z-';
+  if (onZ) {
+    panel('wall-w', cx - sideX, cz, [wall, height, outerDepth], bottom);
+    panel('wall-e', cx + sideX, cz, [wall, height, outerDepth], bottom);
+  } else {
+    panel('wall-n', cx, cz - sideZ, [outerWidth, height, wall], bottom);
+    panel('wall-s', cx, cz + sideZ, [outerWidth, height, wall], bottom);
+  }
+  // A doorway panel sits *inside* the two side walls rather than overlapping them, or
+  // its faces land on theirs and the corners flicker.
+  const pierWidth = outerWidth - wall * 2;
+  const pierDepth = outerDepth - wall * 2;
+
+  /**
+   * The sides that carry doorways.
+   *
+   * A lift in a building serves floors on *different* sides of it: the east tower's
+   * service level opens south onto the works deck and its home roof opens north onto the
+   * old town. A shaft with one doorway would have a floor nobody could walk out of, so a
+   * tower may name a second side, and both of a floor's gates open together - there is
+   * one car behind them.
+   */
+  const faces = [
+    { key: '', facing: spec.facing },
+    ...(spec.alsoFacing ? [{ key: '-back', facing: spec.alsoFacing }] : []),
+  ];
+
+  /** The wall bands on a doorway side: everything that is not a doorway. */
+  const bands: number[] = [bottom];
+  for (const floor of floors) {
+    bands.push(floor);
+    bands.push(floor + opening);
+  }
+
+  for (const face of faces) {
+    const alongZ = face.facing === 'z+' || face.facing === 'z-';
+    const atX = alongZ ? cx : cx + (face.facing === 'x+' ? sideX : -sideX);
+    const atZ = alongZ ? cz + (face.facing === 'z+' ? sideZ : -sideZ) : cz;
+
+    for (let index = 0; index < bands.length - 1; index += 1) {
+      const from = bands[index] as number;
+      const to = Math.min(bands[index + 1] as number, wallTop);
+      if (to - from < 0.05) continue;
+      if (floors.some((floor) => Math.abs(from - floor) < 1e-6)) continue;
+      panel(
+        `${alongZ ? 'pier' : 'pierx'}-${index}${face.key}`,
+        atX,
+        atZ,
+        alongZ ? [pierWidth, to - from, wall] : [wall, to - from, pierDepth],
+        from,
+      );
+    }
+
+    // ---- a shutter for every doorway, which is every floor but the roof
+    for (let index = 0; index < floors.length - 1; index += 1) {
+      const floor = floors[index] as number;
+      props.push(
+        box(`${spec.id}-gate-${index}${face.key}`, {
+          at: [atX, atZ],
+          bottom: floor,
+          size: alongZ ? [carWidth + 0.1, opening, 0.22] : [0.22, opening, carDepth + 0.1],
+          kind: 'wall',
+          model: 'elevator-gate',
+          tints,
+        }),
+      );
+    }
+  }
+
+  // ---- the roof: four slabs round the shaft, resting on the walls below
+  const clearHalfX = outerWidth / 2;
+  const clearHalfZ = outerDepth / 2;
+  /** How far the roof reaches past the shaft. */
+  const lip = 1.6;
+  // Each cap reaches *into* the wall below it, so the two overlap in plan and the roof
+  // is resting on something. Its outer faces then sit a wall's thickness inside the
+  // shaft's own, which is also what keeps the two off each other's planes.
+  // The caps are a frame the same way the walls are: the two that run the full depth
+  // of the ring, and two that fit between them. Each reaches half a wall's thickness
+  // *inwards*, so the roof rests on the shaft rather than beside it.
+  const capReach = lip + wall / 2;
+  panel('cap-w', cx - clearHalfX - (lip - wall) / 2, cz, [capReach, cap, outerDepth + lip * 2], wallTop);
+  panel('cap-e', cx + clearHalfX + (lip - wall) / 2, cz, [capReach, cap, outerDepth + lip * 2], wallTop);
+  panel('cap-n', cx, cz - clearHalfZ - (lip - wall) / 2, [outerWidth - wall, cap, capReach], wallTop);
+  panel('cap-s', cx, cz + clearHalfZ + (lip - wall) / 2, [outerWidth - wall, cap, capReach], wallTop);
+  // No parapet. Every roof in this game is bare at its edges - V0.0 walled them in
+  // because a fall had no consequence, and fall damage, respawn and checkpoints all
+  // exist now, so the drop *is* the obstacle. A rail here would be a railing round the
+  // best thing about being up here.
+
+  return {
+    props,
+    elevator: {
+      id: spec.id,
+      at: spec.at,
+      size: spec.size,
+      thickness: 0.6,
+      floors,
+      ...(spec.names ? { names: spec.names } : {}),
+      facing: spec.facing,
+    },
+  };
 }
 
 /**
@@ -500,6 +715,88 @@ function sign(spec: {
 /** The sign silhouettes. All of them glow out of their +Z face. */
 type NeONSignModel = 'neon-sign' | 'neon-bar' | 'neon-blade' | 'neon-frame' | 'neon-badge';
 
+/**
+ * The two lift towers of the home district, defined before the district that uses them.
+ *
+ * Each serves three floors: the works level, the roof the old platform lift reached,
+ * and a **skydeck** 26-30 m up that nothing else in the level can reach. That last one
+ * is the point of the tower - a lift that only did what a parkour route already does
+ * would be scenery - and it is where the district's verticality now ends.
+ */
+const LIFT_TOWER_A = liftTower({
+  id: 'lift-sky-east',
+  // Nudged 20 cm off the works deck's edge: a shared plane between a tower wall and the
+  // deck beside it is two faces at one depth, which is a flickering line down the joint.
+  at: [14.2, 14],
+  size: [6, 3.6],
+  floors: [-4.8, 0, 30],
+  names: ['Service level', 'Home roof', 'Skydeck'],
+  // North to the old town's home roof, south to the works deck: the two floors this
+  // shaft serves from the district are on opposite sides of it.
+  facing: 'z-',
+  alsoFacing: 'z+',
+  base: -34.8,
+});
+const LIFT_TOWER_B = liftTower({
+  id: 'lift-sky-far',
+  at: [95, 13.5],
+  size: [6, 4.4],
+  floors: [-5, 1.2, 26],
+  names: ['Service level', 'Far roof', 'Skydeck'],
+  facing: 'z-',
+  alsoFacing: 'z+',
+  base: -34.8,
+});
+
+/**
+ * A skydeck: the roof a lift tower opens onto, as a building in its own right.
+ *
+ * It stands *beside* the tower at the same height, so the two roofs are one surface -
+ * which is what makes the lift's top floor a place rather than a ledge. The body
+ * underneath is what holds it up, and it is the reason this is a roof and not a
+ * platform in the air.
+ */
+function skydeck(spec: {
+  readonly id: string;
+  readonly at: readonly [number, number];
+  readonly size: readonly [number, number];
+  readonly top: number;
+  readonly base: number;
+  readonly tint?: string;
+  readonly tintDark?: string;
+}): PropDefinition[] {
+  const [x, z] = spec.at;
+  const [width, depth] = spec.size;
+  return [
+    box(`${spec.id}-deck`, {
+      at: [x, z],
+      bottom: spec.top - 0.8,
+      size: [width, 0.8, depth],
+      kind: 'floor',
+      model: 'deck',
+    }),
+    box(`${spec.id}-body`, {
+      at: [x, z],
+      bottom: spec.base,
+      size: [width - 1.6, spec.top - 0.8 - spec.base, depth - 1.6],
+      model: 'slab',
+      tints: { concrete: spec.tint ?? '#4a5361', 'concrete-dark': spec.tintDark ?? '#3d4550' },
+    }),
+    // Rooftop kit, so the roof is somewhere rather than a surface.
+    box(`${spec.id}-solar-a`, { at: [x - 5, z - 3.5], bottom: spec.top, size: [6.5, 1.3, 3.6], model: 'solar-panel' }),
+    box(`${spec.id}-solar-b`, { at: [x + 1.5, z - 3.5], bottom: spec.top, size: [6.5, 1.3, 3.6], model: 'solar-panel' }),
+    box(`${spec.id}-tank`, { at: [x + 6, z + 4], bottom: spec.top, size: [3.2, 3.4, 3.2], model: 'water-tank' }),
+    box(`${spec.id}-mast`, { at: [x - 7, z + 4], bottom: spec.top, size: [1.1, 11, 1.1], model: 'antenna-mast' }),
+    // On top of the aerial mast, and overlapping it in plan so the level's
+    // nothing-floats rule can see what holds it up.
+    box(`${spec.id}-dish`, { at: [x - 7, z + 4], bottom: spec.top + 11, size: [2.4, 2, 2.4], model: 'satellite-dish' }),
+    box(`${spec.id}-ac`, { at: [x + 2.6, z + 4.3], bottom: spec.top, size: [3, 1.6, 2.2], model: 'ac-unit' }),
+    // Inset at both ends, so its faces are not on the same planes as the side rails'.
+    // No parapet: see the note in `liftTower`. A roof this high has a better edge than
+    // a railing, and the game's whole rule is that every edge is a way down.
+  ];
+}
+
 /** The two walk-in rooms, so their props and doors are authored together. */
 const EAST_ROOM = room({
   id: 'east-room',
@@ -609,6 +906,14 @@ export const DEMO_DISTRICT: LevelDefinition = {
     ...roof({ id: 'east', at: [32, 0], size: [24, 22], top: 1.2, bodyTint: '#3d4759', bodyTintDark: '#313a49' }),
     ...roof({ id: 'high', at: [61, 0], size: [22, 22], top: 3.6, bodyTint: '#4a5468', bodyTintDark: '#3a4354' }),
     ...roof({ id: 'far', at: [95, 0], size: [22, 22], top: 1.2, bodyTint: '#394354', bodyTintDark: '#2d3543' }),
+    // The two lift towers, and the skydecks they open onto: roofs 26 and 30 m up,
+    // which nothing in the district can be reached from except through the lift.
+    ...LIFT_TOWER_A.props,
+    ...LIFT_TOWER_B.props,
+    // The skydecks those towers open onto, with the rooftop kit that makes them read
+    // as the top of a building rather than as a platform in the air.
+    ...skydeck({ id: 'skydeck-east', at: [14, 27], size: [22, 20], top: 30, base: -34.8 }),
+    ...skydeck({ id: 'skydeck-far', at: [95, 27], size: [20, 20], top: 26, base: -34.8 }),
 
     // ------------------------------------------------------- the wall-run canyon
     // Tall enough to be run along from any height a fall from `high` reaches, and
@@ -840,14 +1145,7 @@ export const DEMO_DISTRICT: LevelDefinition = {
     }),
   ],
   doors: [EAST_ROOM.door, FAR_ROOM.door],
-  elevators: [
-    // The two lifts are what turn the district into a loop. One drops you from the
-    // roof route into the works, the other brings you back up to `home`; both
-    // arrive flush with the floor at each end, and both start at the end the
-    // player meets first.
-    lift({ id: 'lift-down', at: [95, 13.5], size: [8, 5], lowTop: -5, highTop: 1.2, start: 'high' }),
-    lift({ id: 'lift-up', at: [14, 14], size: [8, 4], lowTop: -4.8, highTop: 0, start: 'low' }),
-  ],
+  elevators: [LIFT_TOWER_A.elevator, LIFT_TOWER_B.elevator],
   collectibles: [
     // Eight shards, spread so that taking them all means using the district
     // rather than just crossing it: two need the climbable routes, one needs the

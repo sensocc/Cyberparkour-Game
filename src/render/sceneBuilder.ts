@@ -16,7 +16,7 @@ import * as THREE from 'three';
 
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
-import { resolvePropParts } from '../game/level/level.js';
+import { isElevatorGateOf, resolvePropParts } from '../game/level/level.js';
 import { modelById, resolveModelParts, type ModelDefinition } from '../game/level/models.js';
 import { surfaceById } from '../game/level/surfaces.js';
 import type { SmokeEmitter } from './effects.js';
@@ -47,6 +47,13 @@ export interface BuiltScene {
    * than the player's.
    */
   readonly lifts: ReadonlyMap<string, THREE.Object3D>;
+  /**
+   * Elevator gates, keyed by the gate prop's id.
+   *
+   * Groups rather than loose meshes, because a gate slides: it is the one prop part
+   * that moves without the level saying so.
+   */
+  readonly gates: ReadonlyMap<string, THREE.Object3D>;
   /** Pickups, keyed by id. Hidden once taken. */
   readonly collectibles: ReadonlyMap<string, THREE.Object3D>;
   /** Every smoke sprite, with its emitter, for the animation pass. */
@@ -297,23 +304,40 @@ export function buildScene(
     doors.set(door.id, group);
   }
 
-  // ------------------------------------------------------------------ lifts
-  // A lift is a platform whose collider the game moves, so its meshes have to
-  // move with it. The group sits at the platform's south-west underside and the
-  // game only ever changes its height.
+  // -------------------------------------------------------------- elevators
+  // A car is a platform whose collider the game moves, so its meshes have to move with
+  // it: the group sits at the car's south-west underside and only its height changes.
+  //
+  // The gates are ordinary props with an extruded model, but each one is *pulled out
+  // of the props loop into its own group*, because the gate has to slide. A prop's
+  // parts are added straight to the scene, and a group is the only thing the game can
+  // translate as a unit.
   const lifts = new Map<string, THREE.Object3D>();
-  const liftModel = modelById('lift-platform');
+  const gates = new Map<string, THREE.Object3D>();
+  const carModel = modelById('elevator-car') ?? modelById('lift-platform');
   for (const elevator of definition.elevators ?? []) {
-    if (!liftModel) break;
+    if (!carModel) break;
     const size = { x: elevator.size[0], y: elevator.thickness, z: elevator.size[1] };
-    const group = modelGroup(`lift:${elevator.id}`, liftModel, { x: 0, y: 0, z: 0 }, size);
-    group.position.set(
-      elevator.at[0] - size.x / 2,
-      elevator.lowTop - size.y,
-      elevator.at[1] - size.z / 2,
-    );
+    const group = modelGroup(`lift:${elevator.id}`, carModel, { x: 0, y: 0, z: 0 }, size);
+    const startY = elevator.floors[elevator.start ?? 0] ?? 0;
+    group.position.set(elevator.at[0] - size.x / 2, startY - size.y, elevator.at[1] - size.z / 2);
     scene.add(group);
     lifts.set(elevator.id, group);
+
+    for (const prop of definition.props) {
+      if (!isElevatorGateOf(elevator.id, prop.id)) continue;
+      const gateModel = modelById(prop.model);
+      if (!gateModel) continue;
+      const origin = {
+        x: prop.position.x - prop.size.x / 2,
+        y: prop.position.y - prop.size.y / 2,
+        z: prop.position.z - prop.size.z / 2,
+      };
+      const gate = modelGroup(`gate:${prop.id}`, gateModel, origin, prop.size);
+      gate.position.set(0, 0, 0);
+      scene.add(gate);
+      gates.set(prop.id, gate);
+    }
   }
 
   // ----------------------------------------------------------- collectibles
@@ -476,8 +500,9 @@ export function buildScene(
     sun,
     meshes,
     doors,
-    lifts,
     collectibles,
+    lifts,
+    gates,
     smoke,
     lamps,
     materials,

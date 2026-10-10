@@ -307,6 +307,10 @@ export function posePlayerBody(
   // raised cosine rather than the absolute value of a sine: `|sin|` has a kink at the
   // bottom of every step, and a kink in the hips is a jolt in the whole body.
   const bob = (1 - Math.cos(phase * 2)) * 0.5;
+  // The shoulders swing against the hips, the way they do when a person walks: it is
+  // the one detail that turns a pair of moving legs into somebody walking, and it costs
+  // a single rotation.
+  const shoulderTwist = -Math.sin(phase) * 0.13 * stride;
   const hipsTarget =
     HIPS_Y - crouch * (HIPS_Y - config.player.crouchHeight * 0.52) - bob * 0.022 * stride;
   body.hips.position.y = travel(body.hips.position.y, hipsTarget, JOINT_RATE.hips, JOINT_SPEED.hips, step);
@@ -316,6 +320,7 @@ export function posePlayerBody(
   // folding towards the knees rather than a standing figure spinning.
   const curl = pose.stance === 'rolling' ? 0.9 * (1 - Math.abs(progress - 0.5) * 2) : 0;
   body.torso.rotation.x = travel(body.torso.rotation.x, lean + curl, JOINT_RATE.torso, JOINT_SPEED.torso, step);
+  body.torso.rotation.y = travel(body.torso.rotation.y, shoulderTwist, JOINT_RATE.torso, JOINT_SPEED.torso, step);
 
   const swing = 0.7 * stride;
   const knee = 0.75 * stride;
@@ -357,7 +362,8 @@ function applyLeg(
       // only ever bends one way.
       upper = Math.sin(phase) * sign * swing;
       lower = -Math.max(0, Math.cos(phase) * sign) * knee - crouch * 0.7;
-      end = Math.max(0, Math.cos(phase) * sign) * 0.35;
+      // The foot rolls: toe down as it leaves the ground, heel first as it lands.
+      end = Math.max(0, Math.cos(phase) * sign) * 0.42 - Math.max(0, -Math.cos(phase) * sign) * 0.18;
       break;
     }
     case 'tuck': {

@@ -33,7 +33,13 @@ export type LegAction = 'stride' | 'tuck' | 'hang' | 'brace';
 
 /** Everything the body's animation needs. */
 export interface PlayerPose {
-  /** Gait phase in radians: one full cycle per stride. */
+  /**
+   * Gait phase in radians: one full cycle per stride.
+   *
+   * The phase *at the moment being drawn*, which is not the phase of the last
+   * simulation step: the renderer draws between steps, and a gait that only moves when
+   * the simulation does is a gait that stutters on a fast display.
+   */
   gaitPhase: number;
   /**
    * How much of the stride to apply, 0..1.
@@ -102,13 +108,18 @@ export function emptyPose(): PlayerPose {
  * the renderer, because "a vault reaches forward with both hands" is a fact about
  * the manoeuvre, and not about how a shoulder happens to be drawn.
  */
-export function describePose(state: PlayerState, config: GameConfig, out: PlayerPose = emptyPose()): PlayerPose {
+export function describePose(
+  state: PlayerState,
+  config: GameConfig,
+  out: PlayerPose = emptyPose(),
+  gaitPhase: number = state.bobPhase,
+): PlayerPose {
   const maneuver = state.maneuver?.kind ?? null;
   const piping = state.pipeId !== null;
   const crouchAmount = state.crouching ? 1 : 0;
   const speedFraction = Math.min(1, horizontalSpeed(state) / Math.max(1e-6, config.player.sprintSpeed));
 
-  out.gaitPhase = state.bobPhase;
+  out.gaitPhase = gaitPhase;
   // The bob amount is already the game's own answer to "how much is this player
   // moving", faded in and out rather than switched, so the legs want exactly the
   // same answer rather than a second opinion.

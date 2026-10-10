@@ -56,8 +56,14 @@ export interface GameViewLike {
    * the renderer knows about them.
    */
   setDoorOpen(id: string, open: number): void;
-  /** Moves a lift so its walking surface sits at `topY` (m). */
-  setLift(id: string, topY: number): void;
+  /**
+   * Places an elevator car, and slides its gates.
+   *
+   * One call rather than two because they are one fact: a car is at a height and its
+   * gates are as open as `doorsOpen` says. A gate that lags its car by a frame is a
+   * gate you can see through at the wrong moment.
+   */
+  setElevator(id: string, topY: number, floor: number, doorsOpen: number): void;
   /** Shows or hides a pickup, which is gone once it has been taken. */
   setCollectibleVisible(id: string, visible: boolean): void;
   /**

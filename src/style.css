@@ -294,6 +294,49 @@ body {
   color: var(--muted);
 }
 
+/* ---------------------------------------------------------------- prompt --- */
+
+/* What the player can do where they are standing: a lift to call, a floor to pick.
+   Centred and above the crosshair, because it is about the thing in front of them,
+   and only on screen while it is true. */
+.prompt {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 2px;
+  justify-items: center;
+  padding: 8px 14px;
+  background: rgba(4, 9, 16, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.prompt[hidden] {
+  display: none;
+}
+
+.prompt[data-kind='select'] {
+  border-color: var(--border-strong);
+}
+
+.prompt__title {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+
+.prompt__detail {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* -------------------------------------------------------------- settings --- */
 
 /* The only screen with inputs, so it is the only one that needs to be wider than

@@ -9,7 +9,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
-import { createPlayerState, type ManeuverMove, type ScriptedMove } from '../../src/game/player.js';
+import {
+  createPlayerState,
+  gaitPhaseAt,
+  type ManeuverMove,
+  type ScriptedMove,
+} from '../../src/game/player.js';
 import { describePose, emptyPose, type PlayerPose } from '../../src/game/pose.js';
 import type { SpawnPoint } from '../../src/game/level/levelData.js';
 
@@ -226,5 +231,43 @@ describe('the wall side', () => {
 
   it('is zero when there is no wall at all', () => {
     expect(poseOf(onDeck()).wallSide).toBe(0);
+  });
+});
+
+describe('the gait phase between simulation steps', () => {
+  it('extrapolates the last step by the fraction of the next one that has happened', () => {
+    // A pose derived only from the last step's phase moves in 60 Hz jumps whatever the
+    // display does, which is the stutter this exists to remove.
+    const state = onDeck();
+    state.bobPhase = 1;
+    state.bobPhaseStep = 0.4;
+
+    expect(gaitPhaseAt(state, 0)).toBeCloseTo(1, 6);
+    expect(gaitPhaseAt(state, 0.5)).toBeCloseTo(1.2, 6);
+    expect(gaitPhaseAt(state, 1)).toBeCloseTo(1.4, 6);
+  });
+
+  it('wraps, so a long run does not lose precision', () => {
+    const state = onDeck();
+    state.bobPhase = Math.PI * 2 - 0.1;
+    state.bobPhaseStep = 0.4;
+    const phase = gaitPhaseAt(state, 1);
+    expect(phase).toBeGreaterThanOrEqual(0);
+    expect(phase).toBeLessThan(Math.PI * 2);
+    expect(phase).toBeCloseTo(0.3, 6);
+  });
+
+  it('clamps a fraction outside the step, which would be a step the simulation has not taken', () => {
+    const state = onDeck();
+    state.bobPhase = 0;
+    state.bobPhaseStep = 1;
+    expect(gaitPhaseAt(state, -2)).toBeCloseTo(0, 6);
+    expect(gaitPhaseAt(state, 4)).toBeCloseTo(1, 6);
+  });
+
+  it('stands still when the player does', () => {
+    const state = onDeck();
+    state.bobPhaseStep = 0;
+    expect(gaitPhaseAt(state, 1)).toBeCloseTo(state.bobPhase, 6);
   });
 });

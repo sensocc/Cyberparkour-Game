@@ -449,6 +449,208 @@ const dataShard: ModelDefinition = {
   ],
 };
 
+// ------------------------------------------------------------------ V0.7: city
+
+/**
+ * A ladder.
+ *
+ * Climbing it needs no new movement code: the climb ability already ascends a
+ * `climbable` face and hands over to a mantle at the top, which is exactly what a
+ * ladder is. What a ladder *does* need is rungs close enough together to read - which
+ * is why rungs are a fixed count per model rather than a fraction of the height, and
+ * why the city stacks several short ladders up a tall wall instead of stretching one.
+ */
+const ladder: ModelDefinition = {
+  id: 'ladder',
+  note: 'A rung ladder with rails. Climb the face that faces +Z.',
+  mounted: true,
+  parts: [
+    part([0, 0, 0], [0.09, 1, 0.09], 'metal-light'),
+    part([0.91, 0, 0], [1, 1, 0.09], 'metal-light'),
+    // Ten rungs, so a 5 m ladder has them half a metre apart.
+    ...[0.04, 0.14, 0.24, 0.34, 0.44, 0.54, 0.64, 0.74, 0.84, 0.94].map((y): ModelPart =>
+      part([0.09, y, 0], [0.91, y + 0.035, 0.07], 'metal-warm'),
+    ),
+    // Stand-offs, so the rails are not flush against the wall.
+    part([0, 0.02, -0.06], [0.09, 0.08, 0], 'metal-dark'),
+    part([0.91, 0.02, -0.06], [1, 0.08, 0], 'metal-dark'),
+  ],
+};
+
+/** A solar array: a dark cell grid in an aluminium frame, raised on a kerb. */
+const solarPanel: ModelDefinition = {
+  id: 'solar-panel',
+  note: 'A photovoltaic array: cells in a frame, clear of the roof on a kerb.',
+  parts: [
+    part([0, 0, 0], [1, 0.22, 1], 'metal-dark'),
+    part([0.02, 0.22, 0.02], [0.98, 0.3, 0.98], 'glass'),
+    // Cell gaps: one bar each way across the glass, so it reads as an array.
+    part([0.49, 0.3, 0.02], [0.51, 0.31, 0.98], 'metal-dark'),
+    part([0.02, 0.3, 0.49], [0.98, 0.31, 0.51], 'metal-dark'),
+    part([0, 0.3, 0.02], [0.98, 0.34, 0.06], 'metal-light'),
+    part([0, 0.3, 0.94], [0.98, 0.34, 0.98], 'metal-light'),
+  ],
+};
+
+/**
+ * A giant billboard.
+ *
+ * The whole face is the emissive surface, so it glows edge to edge - which is what
+ * separates a billboard from a sign: a sign has glyphs on a dark panel, a billboard
+ * *is* the light. The truss behind it is what stops it looking like a floating sheet.
+ */
+const billboard: ModelDefinition = {
+  id: 'billboard',
+  note: 'A lit hoarding on a truss, glowing out of +Z.',
+  mounted: true,
+  parts: [
+    part([0, 0, 0], [1, 1, 0.14], 'metal-dark'),
+    part([0.015, 0.02, 0.14], [0.985, 0.98, 0.2], 'neon'),
+    // The frame, proud of the face, so the light has an edge.
+    part([0, 0, 0.14], [1, 0.045, 0.24], 'metal'),
+    part([0, 0.955, 0.14], [1, 1, 0.24], 'metal'),
+    part([0, 0.045, 0.14], [0.045, 0.955, 0.24], 'metal'),
+    part([0.955, 0.045, 0.14], [1, 0.955, 0.24], 'metal'),
+    // A truss: two posts and two chords, reaching back to the wall.
+    part([0.12, 0.34, -0.5], [0.2, 0.66, 0], 'metal-dark'),
+    part([0.8, 0.34, -0.5], [0.88, 0.66, 0], 'metal-dark'),
+    part([0.12, 0.44, -0.5], [0.88, 0.56, -0.42], 'metal'),
+  ],
+};
+
+/**
+ * A tower crane: mast, jib, counterweight and hook.
+ *
+ * The one model in the library that is deliberately an L, because that is what a
+ * crane is - so the prop's box covers the whole swing and the parts place themselves
+ * inside it.
+ */
+const crane: ModelDefinition = {
+  id: 'crane',
+  note: 'A tower crane: lattice mast, jib and hook. The mast is at the +X end.',
+  parts: [
+    // Mast: four posts and a few horizontal ties.
+    part([0.44, 0, 0.44], [0.5, 1, 0.5], 'hazard'),
+    part([0.5, 0, 0.44], [0.56, 1, 0.5], 'hazard'),
+    part([0.44, 0, 0.5], [0.5, 1, 0.56], 'hazard'),
+    part([0.5, 0, 0.5], [0.56, 1, 0.56], 'hazard'),
+    ...[0.08, 0.24, 0.4, 0.56, 0.72, 0.88].map((y): ModelPart =>
+      part([0.43, y, 0.43], [0.57, y + 0.02, 0.57], 'metal-light'),
+    ),
+    // The jib, running out from the mast head.
+    part([0, 0.94, 0.46], [1, 0.99, 0.54], 'hazard'),
+    part([0, 0.86, 0.48], [1, 0.88, 0.52], 'metal-light'),
+    part([0.02, 0.88, 0.46], [0.04, 0.94, 0.54], 'metal-light'),
+    part([0.3, 0.88, 0.46], [0.32, 0.94, 0.54], 'metal-light'),
+    part([0.6, 0.88, 0.46], [0.62, 0.94, 0.54], 'metal-light'),
+    part([0.88, 0.88, 0.46], [0.9, 0.94, 0.54], 'metal-light'),
+    // Counterweight, and the hook hanging off the working end.
+    part([0, 0.82, 0.42], [0.1, 0.9, 0.58], 'concrete-dark'),
+    part([0.99, 0.34, 0.48], [1, 0.86, 0.52], 'metal-dark'),
+    part([0.94, 0.24, 0.44], [1, 0.34, 0.56], 'metal-warm'),
+  ],
+};
+
+/** Scaffolding: standards, ledgers and three boarded lifts. */
+const scaffold: ModelDefinition = {
+  id: 'scaffold',
+  note: 'Scaffolding with three boarded levels. Open on the +Z side.',
+  parts: [
+    ...corners('metal-light', 0.06, 0, 1),
+    ...[0.0, 0.33, 0.66].map((y): ModelPart =>
+      part([-0.01, y, -0.01], [1.01, y + 0.03, 1.01], 'metal-light'),
+    ),
+    ...[0.32, 0.65, 0.98].map((y): ModelPart =>
+      part([0, y, 0], [1, y + 0.05, 0.94], 'metal-warm'),
+    ),
+    ...[0.32, 0.65, 0.98].map((y): ModelPart =>
+      part([0, y + 0.05, 0], [1, y + 0.09, 0.06], 'hazard'),
+    ),
+  ],
+};
+
+/** An unfinished floor: a slab with column stubs and starter bars. */
+const constructionSlab: ModelDefinition = {
+  id: 'construction-slab',
+  note: 'A poured floor with column stubs and starter bars poking out of it.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'concrete-dark'),
+    band(0.94, 1, 'concrete'),
+    // Columns that stop dead, which is what makes a carcass a carcass.
+    ...[
+      [0.06, 0.06],
+      [0.84, 0.06],
+      [0.06, 0.84],
+      [0.84, 0.84],
+      [0.45, 0.06],
+      [0.45, 0.84],
+    ].map(([x, z]): ModelPart =>
+      part([x as number, 1, z as number], [(x as number) + 0.1, 1.5, (z as number) + 0.1], 'concrete'),
+    ),
+    ...[
+      [0.11, 0.11],
+      [0.89, 0.11],
+      [0.11, 0.89],
+    ].map(([x, z]): ModelPart =>
+      part([x as number, 1.5, z as number], [(x as number) + 0.02, 1.66, (z as number) + 0.02], 'rust'),
+    ),
+  ],
+};
+
+/** A bare concrete column, for the frame of a building under construction. */
+const constructionColumn: ModelDefinition = {
+  id: 'construction-column',
+  note: 'A bare column: shuttered concrete with a rough cap.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'concrete'),
+    band(0, 0.04, 'concrete-dark'),
+    band(0.96, 1, 'concrete-dark'),
+    part([0.1, 1, 0.1], [0.9, 1.02, 0.9], 'rust'),
+  ],
+};
+
+/** A crown: the stepped top of a megablock, with its aerial cluster. */
+const crown: ModelDefinition = {
+  id: 'crown',
+  note: 'A stepped roof crown with masts, for the tallest buildings.',
+  parts: [
+    part([0, 0, 0], [1, 0.42, 1], 'metal-dark'),
+    part([0.12, 0.42, 0.12], [0.88, 0.72, 0.88], 'metal'),
+    part([0.26, 0.72, 0.26], [0.74, 0.92, 0.74], 'metal-dark'),
+    part([0.46, 0.92, 0.44], [0.54, 1, 0.56], 'metal-light'),
+    part([0.16, 0.72, 0.46], [0.2, 0.98, 0.54], 'rust'),
+    part([0.8, 0.72, 0.46], [0.84, 0.92, 0.54], 'rust'),
+    part([0.46, 0.62, 0.1], [0.54, 0.78, 0.18], 'hazard'),
+  ],
+};
+
+/** An elevator cab: floor, ceiling, three walls, a lit strip, a rail. */
+const elevatorCab: ModelDefinition = {
+  id: 'elevator-cab',
+  note: 'A lift car, open on +Z. Its collider is the car floor.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'metal-dark'),
+    part([0.04, 0.06, 0.04], [0.96, 0.12, 0.96], 'deck'),
+    part([0.04, 0.88, 0.04], [0.96, 0.94, 0.96], 'metal-light'),
+    // A lit panel in the ceiling: the one thing you see while you wait.
+    part([0.22, 0.92, 0.28], [0.78, 0.96, 0.72], 'neon'),
+    part([0.04, 0.4, 0.9], [0.96, 0.46, 0.96], 'metal-warm'),
+  ],
+};
+
+/** An elevator gate: a slatted shutter that rolls up out of the way. */
+const elevatorGate: ModelDefinition = {
+  id: 'elevator-gate',
+  note: 'A rolling shutter for a lift opening. Slides up its own face.',
+  parts: [
+    part([0, 0, 0], [1, 1, 1], 'metal-dark'),
+    ...Array.from({ length: 8 }, (_, row): ModelPart =>
+      part([0.03, row / 8, 0.5], [0.97, row / 8 + 0.1, 0.62], 'metal-light'),
+    ),
+    part([0, 0.96, 0.5], [1, 1, 0.7], 'hazard'),
+  ],
+};
+
 const MODELS: readonly ModelDefinition[] = [
   slab,
   deck,
@@ -478,6 +680,16 @@ const MODELS: readonly ModelDefinition[] = [
   neonStrip,
   liftPlatform,
   dataShard,
+  ladder,
+  solarPanel,
+  billboard,
+  crane,
+  scaffold,
+  constructionSlab,
+  constructionColumn,
+  crown,
+  elevatorCab,
+  elevatorGate,
 ];
 
 const BY_ID = new Map(MODELS.map((model) => [model.id, model]));

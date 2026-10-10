@@ -14,6 +14,7 @@
 import './style.css';
 
 import { DEFAULT_CONFIG } from './core/config.js';
+import { buildCity } from './game/level/city.js';
 import { DEFAULT_SETTINGS, normaliseSettings, readSettings, type GameSettings } from './core/settings.js';
 import { logger, type LogBuffer } from './core/log.js';
 import { APP_VERSION, DEMO_LABEL } from './core/version.js';
@@ -84,6 +85,15 @@ function createAudioBackend(): AudioOutput {
   return createAudio({ config: DEFAULT_CONFIG });
 }
 
+/**
+ * The level: the hand-authored district, with the city built around it.
+ *
+ * Built once at module load rather than per game, because it is deterministic: the same
+ * seed is the same city, and the only reason to build it twice would be to waste the
+ * forty milliseconds.
+ */
+const CITY = buildCity(DEMO_DISTRICT);
+
 function createShell(): Shell {
   const app = requireElement('app');
   const canvasHost = requireElement('canvas-host');
@@ -114,7 +124,7 @@ function createShell(): Shell {
   const ui = new GameUi({
     root: uiRoot,
     version: APP_VERSION,
-    levelName: DEMO_DISTRICT.name,
+    levelName: CITY.name,
     settings,
     callbacks: {
       onStart: () => holder.game?.start(),
@@ -238,7 +248,7 @@ function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
     crashReporter: shell.reporter,
     logBuffer: logger,
     config: DEFAULT_CONFIG,
-    level: DEMO_DISTRICT,
+    level: CITY,
     store: shell.store,
     settings: shell.settings,
     onSettingsChange: (next) => shell.ui.setSettings(next),

@@ -36,6 +36,7 @@ import { vec3, type Vec3 } from '../core/vec3.js';
 import type { CrashReporter } from '../diagnostics/crashReporter.js';
 import { FrameStats, type StatsSnapshot } from '../diagnostics/stats.js';
 import { DomInput } from '../input/domInput.js';
+import { floorFromAction } from '../input/bindings.js';
 import type { InputState } from '../input/inputState.js';
 import { CameraEffects, type MotionSample } from './camera.js';
 import { applyLook, type Orientation } from './look.js';
@@ -49,6 +50,7 @@ import { DEMO_DISTRICT, type CollectibleDefinition, type LevelDefinition } from 
 import {
   createPlayerState,
   eyePosition,
+  gaitPhaseAt,
   interpolatePlayerPosition,
   resetPlayerState,
   respawnPlayer,
@@ -59,7 +61,7 @@ import {
   type PlayerState,
 } from './player.js';
 import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '../render/types.js';
-import type { GameHud } from '../ui/gameHud.js';
+import type { ElevatorPrompt, GameHud } from '../ui/gameHud.js';
 import type { DebugHud, HudSnapshot } from '../ui/hud.js';
 import type { GameUi } from '../ui/screens.js';
 
@@ -133,6 +135,13 @@ export class Game {
   /** What the view does in response to the body: see `camera.ts`. */
   private readonly effects = new CameraEffects();
   private readonly scratchOrientation: Orientation = { yaw: 0, pitch: 0, roll: 0 };
+  /**
+   * What the lift in front of the player is offering, or null.
+   *
+   * Recomputed every frame from where they are standing, and pushed to the HUD, so
+   * there is no state here to go stale.
+   */
+  private elevatorPrompt: ElevatorPrompt | null = null;
   /** The body's pose, rewritten every frame so the render path allocates nothing. */
   private readonly scratchPose: PlayerPose = emptyPose();
   private readonly scratchSample: MotionSample & {
@@ -224,8 +233,8 @@ export class Game {
     this.pipes = collectPipeIds(this.level.colliders);
     this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
     this.elevators = new ElevatorSystem(this.definition.elevators ?? [], this.level.world, {
-      dwellSeconds: this.config.elevator.dwellSeconds,
       speed: this.config.elevator.speed,
+      doorSeconds: this.config.elevator.doorSeconds,
     });
     this.collectibles = this.definition.collectibles ?? [];
     this.run = new RunState({
@@ -619,6 +628,7 @@ export class Game {
       collected: run.collected,
       collectibleCount: run.collectibleCount,
       goalArmed: run.goalArmed,
+      prompt: this.elevatorPrompt,
     });
   }
 
@@ -678,8 +688,8 @@ export class Game {
     this.pipes = collectPipeIds(this.level.colliders);
     this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
     this.elevators = new ElevatorSystem(this.definition.elevators ?? [], this.level.world, {
-      dwellSeconds: this.config.elevator.dwellSeconds,
       speed: this.config.elevator.speed,
+      doorSeconds: this.config.elevator.doorSeconds,
     });
     this.run.begin();
     this.effectsSeconds = 0;
@@ -705,7 +715,9 @@ export class Game {
   private applyWorldState(): void {
     if (!this.view) return;
     for (const door of this.doors.snapshot()) this.view.setDoorOpen(door.id, door.open);
-    for (const lift of this.elevators.snapshot()) this.view.setLift(lift.id, lift.topY);
+    for (const car of this.elevators.snapshot()) {
+      this.view.setElevator(car.id, car.topY, car.floor, car.doorsOpen);
+    }
     for (const pickup of this.collectibles) {
       this.view.setCollectibleVisible(pickup.id, !this.run.hasCollected(pickup.id));
     }
@@ -895,10 +907,95 @@ export class Game {
    * in the air above a rising lift should be caught by it, not dragged up by it.
    */
   private updateElevators(dt: number): void {
-    for (const ride of this.elevators.update(dt)) {
-      if (this.player.groundId === ride.id) carryRider(this.player, ride.deltaY);
-      this.view?.setLift(ride.id, ride.topY);
+    const feet = this.player.position;
+    // Which car the player is in, asked once: the system owns the rule, so the game and
+    // the tests cannot disagree about what "riding" means.
+    const riding = this.elevators.riding(feet);
+    const riders = new Set(riding === null ? [] : [riding]);
+    for (const car of this.elevators.update(dt)) {
+      // Whoever is standing on the car rides with it - and only them: a player in the air
+      // above a rising car should be caught by it, not dragged up by it.
+      //
+      // "Standing on it" is not simply `groundId === car.id`, because a car docked at a
+      // floor is *flush* with the floor it serves: its top and the deck's top are the same
+      // height, the physics picks whichever collider comes first, and on a city street
+      // that is the street. So the test is where the player is, not what the bookkeeping
+      // says: inside the car's footprint, and on its roof.
+      if (riders.has(car.id) && car.deltaY !== 0) carryRider(this.player, car.deltaY);
+      this.view?.setElevator(car.id, car.topY, car.floor, car.doorsOpen);
     }
+    this.refreshElevatorPrompt();
+  }
+
+  /**
+   * What the player can do with the lift in front of them.
+   *
+   * Worked out fresh every frame rather than kept as state, because it is a fact
+   * about where they are standing: a prompt that has to be cleared is a prompt that
+   * gets left on the screen.
+   */
+  private refreshElevatorPrompt(): void {
+    if (this.status !== 'playing') return;
+    const near = this.elevators.approach(this.player.position);
+    if (!near) {
+      this.elevatorPrompt = null;
+      return;
+    }
+
+    const inside = this.elevators.riding(this.player.position);
+    if (inside) {
+      const floors = this.elevators.floors(inside);
+      const here = this.elevators.floorOf(inside) ?? 0;
+      this.elevatorPrompt = {
+        kind: 'select',
+        title: 'SELECT A FLOOR',
+        detail: floors
+          .map((floor, index) => `${index + 1} ${floor.name}${index === here ? ' *' : ''}`)
+          .join('  ·  '),
+      };
+      return;
+    }
+
+    const floors = this.elevators.floors(near.id);
+    const name = floors[near.floor]?.name ?? 'this floor';
+    this.elevatorPrompt = {
+      kind: near.docked ? 'enter' : 'call',
+      title: near.docked ? 'LIFT HERE' : 'LIFT AWAY',
+      detail: near.docked ? `Walk in - ${name}` : 'Press E to call it',
+    };
+  }
+
+  /**
+   * Sends a lift to the floor the player is standing on, if they are at one.
+   *
+   * @returns whether a car was called.
+   */
+  private callElevator(): boolean {
+    const near = this.elevators.approach(this.player.position);
+    if (!near || near.docked) return false;
+    const called = this.elevators.call(near.id, near.floor);
+    if (called) {
+      this.playCue({ kind: 'ui-click' });
+      this.options.ui.toast(`LIFT CALLED - ${this.elevators.floors(near.id)[near.floor]?.name ?? ''}`);
+    }
+    return called;
+  }
+
+  /**
+   * Sends the car the player is standing in to a floor.
+   *
+   * @returns whether the car is on its way.
+   */
+  private sendElevator(floor: number): boolean {
+    const inside = this.elevators.riding(this.player.position);
+    if (!inside) return false;
+    const car = this.elevators.call(inside, floor);
+    if (car) {
+      const name = this.elevators.floors(inside)[floor]?.name ?? '';
+      this.playCue({ kind: 'checkpoint' });
+      this.options.ui.toast(`LIFT TO ${name.toUpperCase()}`);
+    }
+    return car;
   }
 
   /**
@@ -910,7 +1007,7 @@ export class Game {
    */
   private updateEffects(dt: number): void {
     // The pose is derived first: the camera's lean is one of the things it says.
-    describePose(this.player, this.config, this.scratchPose);
+    describePose(this.player, this.config, this.scratchPose, gaitPhaseAt(this.player, this.accumulator.alpha));
     const sample = this.scratchSample;
     const speed = Math.hypot(this.player.velocity.x, this.player.velocity.z);
     sample.speedFraction = speed / Math.max(1e-6, this.config.player.sprintSpeed);
@@ -978,7 +1075,10 @@ export class Game {
     const feet = interpolatePlayerPosition(this.player, this.accumulator.alpha, this.scratchFeet);
     // Eye height follows the stance and the head bob, so crouching visibly drops
     // the camera and running visibly rocks it.
-    eyePosition(this.player, this.motionConfig, this.scratchEye, feet);
+    // The gait phase at the moment being drawn, not at the last simulation step: on a
+    // display faster than the tick rate the difference is a stutter you can see.
+    const gaitPhase = gaitPhaseAt(this.player, this.accumulator.alpha);
+    eyePosition(this.player, this.motionConfig, this.scratchEye, feet, gaitPhase);
 
     // The camera effects are a *view* offset on top of that: they never move the
     // player, so a shake cannot be mistaken for the body moving.
@@ -1001,7 +1101,7 @@ export class Game {
     this.view.setPlayerBody(
       feet,
       this.player.yaw,
-      describePose(this.player, this.config, this.scratchPose),
+      describePose(this.player, this.config, this.scratchPose, gaitPhase),
       dt,
     );
 
@@ -1052,6 +1152,14 @@ export class Game {
 
   private processActions(): void {
     for (const action of this.options.input.consumeActions()) {
+      // The lift's floor buttons are one action each (`floor1`..`floor8`), so they are
+      // caught here rather than as eight arms of the switch below.
+      const floor = floorFromAction(action);
+      if (floor !== null) {
+        if (this.status === 'playing') this.sendElevator(floor);
+        continue;
+      }
+
       switch (action) {
         case 'toggleDebug': {
           const visible = this.options.hud.toggle();
@@ -1072,6 +1180,7 @@ export class Game {
           // Only while playing: on the title screen, or frozen behind a results
           // screen, a stray E must not swing a door somewhere off-camera.
           if (this.status !== 'playing') break;
+          if (this.callElevator()) break;
           const worked = this.doors.toggleNear(this.player.position);
           if (worked !== null) this.log?.debug('game', 'door worked', { door: worked });
           break;

@@ -18,7 +18,17 @@ export type KeyAction =
   | 'toggleDebug'
   | 'mute'
   | 'pause'
-  | 'restart';
+  | 'restart'
+  /** The lift's floor buttons. There are eight, which is more floors than any
+   *  building in the city has, and each one is rebindable like any other key. */
+  | 'floor1'
+  | 'floor2'
+  | 'floor3'
+  | 'floor4'
+  | 'floor5'
+  | 'floor6'
+  | 'floor7'
+  | 'floor8';
 
 export type Bindings = Record<KeyAction, readonly string[]>;
 
@@ -40,7 +50,34 @@ export const DEFAULT_BINDINGS: Bindings = {
   mute: ['KeyM'],
   pause: ['Escape'],
   restart: ['KeyR'],
+  // The floor buttons, on the row the hand is already on.
+  floor1: ['Digit1'],
+  floor2: ['Digit2'],
+  floor3: ['Digit3'],
+  floor4: ['Digit4'],
+  floor5: ['Digit5'],
+  floor6: ['Digit6'],
+  floor7: ['Digit7'],
+  floor8: ['Digit8'],
 };
+
+/** The lift's floor buttons, in order. */
+export const FLOOR_ACTIONS: readonly KeyAction[] = [
+  'floor1',
+  'floor2',
+  'floor3',
+  'floor4',
+  'floor5',
+  'floor6',
+  'floor7',
+  'floor8',
+];
+
+/** Which floor a `floorN` action asks for, or null for anything else. */
+export function floorFromAction(action: KeyAction): number | null {
+  const index = FLOOR_ACTIONS.indexOf(action);
+  return index === -1 ? null : index;
+}
 
 /**
  * Actions that are held down as part of movement.
@@ -59,7 +96,14 @@ export const MOVEMENT_ACTIONS: readonly KeyAction[] = [
 ];
 
 /** Actions triggered by a key press and drained once per frame. */
-export const UI_ACTIONS: readonly KeyAction[] = ['interact', 'toggleDebug', 'mute', 'pause', 'restart'];
+export const UI_ACTIONS: readonly KeyAction[] = [
+  'interact',
+  'toggleDebug',
+  'mute',
+  'pause',
+  'restart',
+  ...FLOOR_ACTIONS,
+];
 
 export function isUiAction(action: KeyAction): boolean {
   return UI_ACTIONS.includes(action);
@@ -97,6 +141,7 @@ export const ACTION_ORDER: readonly KeyAction[] = [
   'restart',
   'toggleDebug',
   'mute',
+  ...FLOOR_ACTIONS,
 ];
 
 /** What each action is called where a player can see it. */
@@ -108,11 +153,19 @@ export const ACTION_LABELS: Record<KeyAction, string> = {
   sprint: 'Sprint',
   jump: 'Jump · pull up · wall kick',
   crouch: 'Crouch · slide · roll',
-  interact: 'Open a door',
+  interact: 'Open a door · call a lift',
   toggleDebug: 'Debug HUD',
   mute: 'Mute',
   pause: 'Pause',
   restart: 'Restart run',
+  floor1: 'Lift floor 1',
+  floor2: 'Lift floor 2',
+  floor3: 'Lift floor 3',
+  floor4: 'Lift floor 4',
+  floor5: 'Lift floor 5',
+  floor6: 'Lift floor 6',
+  floor7: 'Lift floor 7',
+  floor8: 'Lift floor 8',
 };
 
 /**

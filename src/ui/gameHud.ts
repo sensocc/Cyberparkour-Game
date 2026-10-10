@@ -36,6 +36,21 @@ export interface GameHudSnapshot {
   readonly collectibleCount: number;
   /** Whether crossing the finish would count. */
   readonly goalArmed: boolean;
+  /** What the lift in front of the player is offering, if anything. */
+  readonly prompt?: ElevatorPrompt | null;
+}
+
+/**
+ * Something the player can do *right here*: a door, a lift, a floor.
+ *
+ * Its own shape rather than a string, because a prompt is two lines of text with a
+ * different weight to each, and because the game should not have to know how a prompt
+ * is drawn to say what it is.
+ */
+export interface ElevatorPrompt {
+  readonly kind: 'call' | 'enter' | 'select';
+  readonly title: string;
+  readonly detail: string;
 }
 
 /** Health as 0..1, guarding against a missing or absurd maximum. */
@@ -91,6 +106,10 @@ export class GameHud {
   private pips = 0;
   /** Last checkpoint index the pips were filled to. */
   private lastCheckpoint = -1;
+  /** The lift prompt: two lines, hidden when there is nothing to do here. */
+  private readonly prompt: HTMLElement;
+  private readonly promptTitle: HTMLElement;
+  private readonly promptDetail: HTMLElement;
 
   constructor() {
     this.healthFill = document.createElement('div');
@@ -128,6 +147,18 @@ export class GameHud {
     trial.className = 'vitals__trial';
     trial.append(this.timeLabel, this.pickupLabel);
     this.element.append(trial);
+
+    // The prompt sits in the middle of the screen rather than in the corner: it is
+    // about what is *in front* of the player, and it is only there while it is true.
+    this.prompt = document.createElement('div');
+    this.prompt.className = 'prompt';
+    this.promptTitle = document.createElement('p');
+    this.promptTitle.className = 'prompt__title';
+    this.promptDetail = document.createElement('p');
+    this.promptDetail.className = 'prompt__detail';
+    this.prompt.append(this.promptTitle, this.promptDetail);
+    this.prompt.hidden = true;
+    this.element.append(this.prompt);
   }
 
   update(snapshot: GameHudSnapshot): void {
@@ -167,6 +198,15 @@ export class GameHud {
       // `replaceChildren` resets the pips to unfilled, so the fill has to be
       // redone even if the reached index itself did not change.
       this.lastCheckpoint = -1;
+    }
+
+    // The prompt, shown only while there is something to do.
+    const prompt = snapshot.prompt ?? null;
+    this.prompt.hidden = prompt === null;
+    if (prompt) {
+      this.prompt.dataset['kind'] = prompt.kind;
+      this.setText(this.promptTitle, prompt.title);
+      this.setText(this.promptDetail, prompt.detail);
     }
 
     if (snapshot.checkpoint !== this.lastCheckpoint) {

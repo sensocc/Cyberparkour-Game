@@ -15,7 +15,14 @@ import { DEFAULT_CONFIG, fixedStep } from '../../src/core/config.js';
 import { FixedStepAccumulator } from '../../src/core/delta.js';
 import { copyVec3, lengthVec3, vec3, type Vec3 } from '../../src/core/vec3.js';
 import { aabbFromCenterSize, overlaps } from '../../src/game/physics/aabb.js';
-import { buildLevel, groundHeightAt, propBounds, type BuiltLevel } from '../../src/game/level/level.js';
+import { buildCity } from '../../src/game/level/city.js';
+import {
+  buildLevel,
+  climbableIds as collectClimbableIds,
+  groundHeightAt,
+  propBounds,
+  type BuiltLevel,
+} from '../../src/game/level/level.js';
 import { DEMO_DISTRICT, type PropDefinition } from '../../src/game/level/levelData.js';
 import { ElevatorSystem, carryRider } from '../../src/game/level/elevators.js';
 import {
@@ -378,28 +385,34 @@ describe('the V0.3 abilities, on the district that ships', () => {
     expect(trace.worstPenetration).toBe(0);
   });
 
-  it('rides the lift from the works back up to the home roof', () => {
+  it('calls a lift, rides it, and arrives flush with the roof it serves', () => {
     const { level, player, climbables } = createSimulation();
     const lifts = new ElevatorSystem(DEMO_DISTRICT.elevators ?? [], level.world, {
-      dwellSeconds: CONFIG.elevator.dwellSeconds,
       speed: CONFIG.elevator.speed,
+      doorSeconds: CONFIG.elevator.doorSeconds,
     });
     const options = stepOptions(level, climbables);
 
-    // Stand on `lift-up` at the bottom of its travel. It sits in the gap between
-    // the works roof and `home`, so the platform is the only thing underfoot.
-    placeAt(player, 14, 14);
+    // Stand in the east tower's car, on the works level.
+    placeAt(player, 14.2, 14);
     player.position.y = -4.79;
     player.previousPosition = { ...player.position };
+    player.groundId = 'lift-sky-east';
+
+    const floors = lifts.floors('lift-sky-east');
+    expect(floors[0]?.y).toBeCloseTo(-4.8, 6);
+
+    // Call the roof - which is what pressing 2 in the car does.
+    expect(lifts.call('lift-sky-east', 1)).toBe(true);
 
     let highest = player.position.y;
     let lowest = player.position.y;
-
-    for (let tick = 0; tick < 600; tick += 1) {
-      // Exactly the order the game uses: the lift moves, the rider is carried,
-      // then the physics steps onto the new surface.
-      for (const ride of lifts.update(STEP)) {
-        if (player.groundId === ride.id) carryRider(player, ride.deltaY);
+    for (let tick = 0; tick < 900; tick += 1) {
+      // Exactly the order the game uses: the car moves, the rider is carried, then the
+      // physics steps onto the new surface.
+      const riding = lifts.riding(player.position);
+      for (const car of lifts.update(STEP)) {
+        if (car.id === riding) carryRider(player, car.deltaY);
       }
       stepPlayer(player, STILL, STEP, options);
       highest = Math.max(highest, player.position.y);
@@ -408,8 +421,30 @@ describe('the V0.3 abilities, on the district that ships', () => {
 
     // It arrives at the home roof - flush, at y = 0 - and took the player with it.
     expect(highest).toBeGreaterThan(-0.05);
-    // ...and the floor never slid out from under them on the way.
+    // ...and the car never slid out from under them on the way.
     expect(lowest).toBeGreaterThan(-5.1);
+  });
+
+  it('shuts a gate on a floor the car is not at, and opens it when it arrives', () => {
+    // The one thing that makes a lift shaft safe: you can only walk into it where the
+    // car is, which is exactly where the gate is up.
+    const { level } = createSimulation();
+    const lifts = new ElevatorSystem(DEMO_DISTRICT.elevators ?? [], level.world, {
+      speed: CONFIG.elevator.speed,
+      doorSeconds: CONFIG.elevator.doorSeconds,
+    });
+    const gate = (index: number) =>
+      level.world.colliders.find((collider) => collider.id === `lift-sky-east-gate-${index}`)?.box;
+
+    // The car starts on the lowest floor, so that gate is up and every other is shut.
+    expect(gate(0)?.min.y ?? 0).toBeCloseTo(-4.8 + 2.5, 6);
+    expect(gate(1)?.min.y ?? 0).toBeCloseTo(0, 6);
+
+    // ...and it is the *gate at the car's floor* that moves as the car does.
+    expect(lifts.call('lift-sky-east', 2)).toBe(true);
+    for (let tick = 0; tick < 60; tick += 1) lifts.update(STEP);
+    expect(gate(0)?.min.y ?? 0).toBeCloseTo(-4.8, 6);
+    expect(gate(1)?.min.y ?? 0).toBeCloseTo(0, 6);
   });
 
   it('climbs the machine room pipe up to its roof', () => {
@@ -633,5 +668,65 @@ describe('crash-report snapshot', () => {
     expect(eyeHeight(player, PLAYER)).toBe(PLAYER.standEyeHeight);
     player.crouching = true;
     expect(eyeHeight(player, PLAYER)).toBe(PLAYER.crouchEyeHeight);
+  });
+});
+
+describe('a city lift, from the street to the roof', () => {
+  it('calls, carries and delivers on a generated tower', () => {
+    // The V0.7 lift, end to end, on a tower the generator built: this is the whole
+    // feature - call it, walk in, send it, arrive somewhere parkour cannot reach.
+    const city = buildCity(DEMO_DISTRICT, { seed: 21, radius: 260 });
+    const built = buildLevel(city, {
+      maxSubStep: CONFIG.world.maxCollisionSubStep,
+      player: standingSize(CONFIG.player),
+    });
+    const lifts = new ElevatorSystem(city.elevators ?? [], built.world, {
+      speed: CONFIG.elevator.speed,
+      doorSeconds: CONFIG.elevator.doorSeconds,
+    });
+
+    const tower = (city.elevators ?? []).find((lift) => lift.id.startsWith('city-'));
+    expect(tower).toBeDefined();
+    if (!tower) return;
+
+    const floors = lifts.floors(tower.id);
+    expect(floors.length).toBeGreaterThanOrEqual(3);
+    const top = floors[floors.length - 1] as { index: number; y: number; name: string };
+    const streetY = floors[0]?.y as number;
+
+    const player = createPlayerState(city.spawn, CONFIG);
+    // The city's own kill plane: its streets are 35 m down, and the district's plane
+    // would make every one of them lethal.
+    const options = {
+      ...stepOptions(built, collectClimbableIds(built.colliders)),
+      killPlaneY: city.killPlaneY,
+    };
+
+    // Stand in the car, on the street, and send it to the top.
+    player.position.x = tower.at[0];
+    player.position.z = tower.at[1];
+    player.position.y = streetY + 0.05;
+    player.previousPosition = { ...player.position };
+    player.groundId = tower.id;
+
+    expect(lifts.call(tower.id, top.index)).toBe(true);
+
+    // A city tower is a hundred metres of travel at a few metres a second: this is a
+    // long ride, and the test has to sit through all of it.
+    let highest = player.position.y;
+    for (let tick = 0; tick < 3000; tick += 1) {
+      const riding = lifts.riding(player.position);
+      for (const car of lifts.update(STEP)) {
+        if (car.id === riding) carryRider(player, car.deltaY);
+      }
+      stepPlayer(player, STILL, STEP, options);
+      highest = Math.max(highest, player.position.y);
+      // The shaft holds them in: a rider cannot leave the car between floors.
+      expect(player.alive, `fell out at tick ${tick}`).toBe(true);
+    }
+
+    // It arrived, and it took them the whole way.
+    expect(highest).toBeGreaterThan(top.y - 0.4);
+    expect(player.position.y).toBeCloseTo(top.y, 1);
   });
 });

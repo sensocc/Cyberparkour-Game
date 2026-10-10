@@ -382,16 +382,38 @@ describe('buildScene V0.5 content', () => {
     }
   });
 
-  it('parks every lift at the bottom of its travel, ready to be told where it is', () => {
-    // The scene is built before the game exists, so it can only place a lift where
-    // the *level* says it starts. The game moves it into position before the first
-    // frame - see `Game.applyWorldState`.
+  it('parks every car on the floor it starts on, ready to be sent', () => {
+    // The scene is built before the game exists, so it can only place a car where the
+    // *level* says it starts. The game moves it into position before the first frame -
+    // see `Game.applyWorldState`.
     const built = buildScene(DEMO_DISTRICT, assetTextures());
     try {
       for (const lift of DEMO_DISTRICT.elevators ?? []) {
         const group = built.lifts.get(lift.id);
-        expect(group?.position.y, lift.id).toBeCloseTo(lift.lowTop - lift.thickness, 6);
+        const startY = lift.floors[lift.start ?? 0] as number;
+        expect(group?.position.y, lift.id).toBeCloseTo(startY - lift.thickness, 6);
       }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('gives every gate a group of its own, because a gate slides', () => {
+    // A prop's parts are added straight to the scene; a gate has to move as a unit, so
+    // it is built into a group instead and the game translates that.
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      let gates = 0;
+      for (const lift of DEMO_DISTRICT.elevators ?? []) {
+        // Every floor but the roof: the top floor has no wall to hang a gate in.
+        for (let index = 0; index < lift.floors.length - 1; index += 1) {
+          const id = `${lift.id}-gate-${index}`;
+          expect(built.gates.get(id), id).toBeDefined();
+          gates += 1;
+        }
+      }
+      // Two towers, three floors each, and no gate on the roof of either.
+      expect(gates).toBeGreaterThanOrEqual(4);
     } finally {
       built.dispose();
     }

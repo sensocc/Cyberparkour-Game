@@ -85,7 +85,17 @@ export function resolvePropParts(prop: PropDefinition): ResolvedPart[] {
  * a concrete roof without the physics layer knowing what a surface is.
  */
 export function toColliders(definition: LevelDefinition): Collider[] {
-  const colliders: Collider[] = definition.props.map((prop) => {
+  // A gate is a prop for its *mesh*, but the elevator system owns its collider - it
+  // moves, and the level cannot say where to. Skipping it here keeps one collider per
+  // gate rather than two, one of which would sit in a doorway for ever.
+  const gateIds = new Set<string>();
+  for (const prop of definition.props) {
+    if ((definition.elevators ?? []).some((elevator) => isElevatorGateOf(elevator.id, prop.id))) {
+      gateIds.add(prop.id);
+    }
+  }
+
+  const colliders: Collider[] = definition.props.filter((prop) => !gateIds.has(prop.id)).map((prop) => {
     const model = modelById(prop.model);
     const acoustic = model ? acousticForSurface(topSurface(model) ?? '') : undefined;
 
@@ -109,21 +119,51 @@ export function toColliders(definition: LevelDefinition): Collider[] {
     });
   }
 
-  // A lift is a floor that moves. It starts at the bottom of its travel; the
-  // elevator system rewrites the box from there.
+  // An elevator car is a floor that moves, and its gates are walls that slide. Both
+  // are colliders the elevator system rewrites; their starting boxes are the floor the
+  // car begins on and an opening that is shut. Gates are props as well - the level
+  // authors a shutter mesh at each opening - but the collider is this one, because the
+  // gate has to move independently of anything the level can express.
   for (const elevator of definition.elevators ?? []) {
+    const startY = elevator.floors[elevator.start ?? 0] ?? 0;
     colliders.push({
       id: elevator.id,
       kind: 'floor',
       box: aabbFromCenterSize(
-        { x: elevator.at[0], y: elevator.lowTop - elevator.thickness / 2, z: elevator.at[1] },
+        { x: elevator.at[0], y: startY - elevator.thickness / 2, z: elevator.at[1] },
         { x: elevator.size[0], y: elevator.thickness, z: elevator.size[1] },
       ),
       surface: 'metal',
     });
+
+    // A floor may have a gate on each of its two sides, and both are colliders: they are
+    // the same opening seen from two directions.
+    for (const prop of definition.props) {
+      if (!isElevatorGateOf(elevator.id, prop.id)) continue;
+      colliders.push({
+        id: prop.id,
+        kind: 'wall',
+        box: aabbFromCenterSize(prop.position, prop.size),
+        surface: 'metal',
+      });
+    }
   }
 
   return colliders;
+}
+
+/**
+ * Whether a prop is one of an elevator's gates.
+ *
+ * The names are a contract between the level and the system: `<id>-gate-<floor>`, with an
+ * optional `-back` for a floor that opens on two sides. Parsed rather than listed, so a
+ * tower can have as many doorways as its building has sides.
+ */
+export function isElevatorGateOf(id: string, propId: string): boolean {
+  const prefix = `${id}-gate-`;
+  if (!propId.startsWith(prefix)) return false;
+  const rest = propId.slice(prefix.length).replace('-back', '');
+  return /^\d+$/.test(rest);
 }
 
 /** The collision tag for a prop: pipes and climbables are specialisations. */
@@ -232,19 +272,25 @@ export function validateLevel(
     }
   }
   for (const elevator of definition.elevators ?? []) {
-    // The whole shaft, not just where the car happens to be: a spawn inside a
-    // lift well is a spawn that will be run over by one.
-    const span = elevator.highTop - elevator.lowTop + elevator.thickness;
+    // The whole shaft, not just where the car happens to be: a spawn inside a lift
+    // well is a spawn that will be run over by one.
+    const floors = elevator.floors;
+    const lowest = Math.min(...floors);
+    const highest = Math.max(...floors);
+    if (!Number.isFinite(lowest) || !Number.isFinite(highest)) {
+      add(`elevator "${elevator.id}" has no floors`, elevator.id);
+      continue;
+    }
     const shaft = aabbFromCenterSize(
       {
         x: elevator.at[0],
-        y: (elevator.lowTop - elevator.thickness + elevator.highTop) / 2,
+        y: (lowest - elevator.thickness + highest) / 2,
         z: elevator.at[1],
       },
-      { x: elevator.size[0], y: span, z: elevator.size[1] },
+      { x: elevator.size[0], y: highest - lowest + elevator.thickness, z: elevator.size[1] },
     );
     if (overlaps(box, shaft)) {
-      add(`spawn point is inside lift "${elevator.id}"'s shaft`, elevator.id);
+      add(`spawn point is inside the shaft of elevator "${elevator.id}"`, elevator.id);
     }
   }
 
@@ -350,14 +396,32 @@ function validateElevators(
     seenIds.add(elevator.id);
 
     if (!(elevator.size[0] > 0) || !(elevator.size[1] > 0)) {
-      add('lift size must be > 0 on both axes', elevator.id);
+      add('elevator size must be > 0 on both axes', elevator.id);
     }
     if (!(elevator.thickness >= maxSubStep)) {
-      add(`lift thickness must be at least the ${maxSubStep}m collision sub-step`, elevator.id);
+      add(`elevator thickness must be at least the ${maxSubStep}m collision sub-step`, elevator.id);
     }
-    if (!(elevator.highTop > elevator.lowTop)) add('lift highTop must be above its lowTop', elevator.id);
-    if (elevator.phase !== undefined && !Number.isFinite(elevator.phase)) {
-      add('lift phase must be finite', elevator.id);
+    if (elevator.floors.length < 2) add('elevator must serve at least two floors', elevator.id);
+    if (elevator.floors.some((y) => !Number.isFinite(y))) {
+      add('every elevator floor must be a finite height', elevator.id);
+    }
+    // Lowest first is a contract, not a nicety: the gate ids, the floor indices and
+    // the in-car list are all positions in this array.
+    if (elevator.floors.some((y, index) => index > 0 && y <= (elevator.floors[index - 1] as number))) {
+      add('elevator floors must be listed lowest first, without repeats', elevator.id);
+    }
+    if (elevator.start !== undefined && (elevator.start < 0 || elevator.start >= elevator.floors.length)) {
+      add('elevator start must be one of its floors', elevator.id);
+    }
+    if (elevator.names !== undefined && elevator.names.length !== elevator.floors.length) {
+      add('elevator needs one name per floor, or none', elevator.id);
+    }
+    // A gate for every floor but the top: the top floor is the roof, where there is no
+    // wall to put one in.
+    for (let index = 0; index < elevator.floors.length - 1; index += 1) {
+      if (!definition.props.some((prop) => prop.id === `${elevator.id}-gate-${index}`)) {
+        add(`elevator needs a gate prop "${elevator.id}-gate-${index}" for every floor but the roof`, elevator.id);
+      }
     }
   }
 }
