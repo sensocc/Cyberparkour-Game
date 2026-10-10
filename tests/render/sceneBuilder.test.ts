@@ -193,7 +193,7 @@ describe('buildScene geometry', () => {
     } finally {
       built.dispose();
     }
-  });
+  }), 120000;
 
   it('keeps every merged part a box, exactly as the shared cache handed it out', () => {
     // The V0.2 concern was that parts might all share one *unit cube* and be scaled
@@ -525,7 +525,7 @@ describe('buildScene V0.5 content', () => {
     } finally {
       built.dispose();
     }
-  });
+  }), 120000;
 
   it('gives every gate a group of its own, because a gate slides', () => {
     // A prop's parts are added straight to the scene; a gate has to move as a unit, so

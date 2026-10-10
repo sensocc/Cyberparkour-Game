@@ -446,3 +446,57 @@ describe('the elevators, which are inside now', () => {
     expect(checked).toBeGreaterThan(0);
   });
 });
+
+describe('the city is where the district is', () => {
+  const city = buildCity(DEMO_DISTRICT);
+  const report = generateCity().report;
+  /** The level's own walkable surfaces, which is where the player actually is. */
+  const decks = DEMO_DISTRICT.props.filter(
+    (prop) => prop.kind === 'floor' && prop.size.x * prop.size.z < 5000,
+  );
+  const box = {
+    minX: Math.min(...decks.map((prop) => prop.position.x - prop.size.x / 2)),
+    maxX: Math.max(...decks.map((prop) => prop.position.x + prop.size.x / 2)),
+    minZ: Math.min(...decks.map((prop) => prop.position.z - prop.size.z / 2)),
+    maxZ: Math.max(...decks.map((prop) => prop.position.z + prop.size.z / 2)),
+  };
+  const generated = city.props.slice(DEMO_DISTRICT.props.length);
+
+  it('starts at the district’s own edge, rather than sixty metres away from it', () => {
+    // V0.7 cleared a rectangle twice the district's size and filled what was left, which
+    // put the nearest generated building sixty metres from the old town's edge: a city you
+    // could see from the playable map and not walk to. The clearance is measured from the
+    // district's own decks now, so the city begins at them.
+    const nearest = Math.min(
+      ...generated.map((prop) => {
+        const dx = Math.max(0, prop.position.x - prop.size.x / 2 - box.maxX, box.minX - (prop.position.x + prop.size.x / 2));
+        const dz = Math.max(0, prop.position.z - prop.size.z / 2 - box.maxZ, box.minZ - (prop.position.z + prop.size.z / 2));
+        return Math.hypot(dx, dz);
+      }),
+    );
+    expect(nearest).toBeLessThan(crossingGap(DEFAULT_CONFIG) * 3);
+  });
+
+  it('builds its inner ring at the district’s own height, not thirty metres over it', () => {
+    // The other half of the same mistake, and the reason moving the clearance alone could
+    // not fix it: V0.7's inner roofs were 22 to 34 m up, over a district standing at
+    // nothing. The innermost band starts at 1.2 m now - the district's own decks are at 0
+    // to 1.2 - and climbs outward from there, so the near city is a step rather than a
+    // cliff. The roof *heights* the generator draws from are asserted here; that the
+    // player can reach them is `reach.test.ts` and the map beneath them.
+    const rings = generated
+      .filter((prop) => prop.id.includes('-solar-'))
+      .map((prop) => prop.position.y + prop.size.y / 2);
+    const lowest = Math.min(...rings);
+    expect(lowest).toBeLessThan(12);
+  });
+
+  it('fills the space between the district’s own buildings and the city', () => {
+    // "Add more buildings between them": the level has its own towers standing off to the
+    // sides of the old town, and the city used to begin beyond them with nothing in
+    // between. The attachment pass bridges those gaps like any other.
+    expect((report.attachment ?? 0) + (report.infill ?? 0)).toBeGreaterThan(0);
+    const between = generated.filter((prop) => prop.id.startsWith('fill-'));
+    expect(between.length).toBeGreaterThan(2000);
+  });
+});

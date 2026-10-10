@@ -45,6 +45,14 @@ export interface CityOptions {
   readonly groundY?: number;
   /** Keep this rectangle clear for the hand-authored district, as `[x0, x1, z0, z1]`. */
   readonly keepClear?: readonly [number, number, number, number];
+  /**
+   * The level's own solid buildings, as the city needs to see them.
+   *
+   * Filled in by `buildCity`. They are two things at once: ground a city plot may not
+   * build over, and - the point of this version - the things the city has to *attach* to.
+   * A district standing alone in a cleared rectangle is a district nobody can walk out of.
+   */
+  readonly masses?: readonly Mass[];
 }
 
 interface Resolved {
@@ -54,6 +62,7 @@ interface Resolved {
   readonly street: number;
   readonly groundY: number;
   readonly keepClear: readonly [number, number, number, number];
+  readonly masses: readonly Mass[];
 }
 
 const DEFAULTS: Resolved = {
@@ -64,9 +73,44 @@ const DEFAULTS: Resolved = {
   pitch: 62,
   street: 18,
   groundY: -34.8,
-  // The district's own bounds, plus its street.
-  keepClear: [-120, 170, -110, 110],
+  // Overridden below, from the level itself. The literal is the fallback for a level with
+  // nothing to measure.
+  keepClear: [-16, 106, -12, 32],
+  masses: [],
 };
+
+/**
+ * How far the district's own ground is kept clear, from the district itself.
+ *
+ * V0.7 hard-coded a rectangle twice the district's size - 290 m by 220 m - and then filled
+ * the rest of the kilometre with city. The effect was a district standing on its own with
+ * sixty metres of nothing between it and the nearest generated building, which is exactly
+ * what "the city is a decoration outside the playable map" means.
+ *
+ * So the clearance is measured instead: the footprint of the level's own walkable decks,
+ * plus a street. The city then begins one street away from the district's edge, which is
+ * the distance the infill pass knows how to bridge.
+ */
+function clearanceFor(base: LevelDefinition, street: number): readonly [number, number, number, number] {
+  // Decks, not ground. The district has a 700 x 700 slab under everything (`city-ground`),
+  // and measuring *that* as the district's footprint is how the first attempt at this
+  // pushed the city back out to where it was: the clearance came out as the whole map.
+  // A surface bigger than a building is ground, and ground is what the city is built on.
+  const decks = base.props.filter(
+    (prop) => prop.kind === 'floor' && prop.size.x * prop.size.z < 5000,
+  );
+  if (decks.length === 0) return DEFAULTS.keepClear;
+
+  const minX = Math.min(...decks.map((prop) => prop.position.x - prop.size.x / 2));
+  const maxX = Math.max(...decks.map((prop) => prop.position.x + prop.size.x / 2));
+  const minZ = Math.min(...decks.map((prop) => prop.position.z - prop.size.z / 2));
+  const maxZ = Math.max(...decks.map((prop) => prop.position.z + prop.size.z / 2));
+  // Two metres of street, not one: the point is that the city's first rooftops are a jump
+  // from the district's edge, and every metre added here is a metre of air between the
+  // player's feet and the rest of the map.
+  const margin = Math.max(2, street * 0.12);
+  return [minX - margin, maxX + margin, minZ - margin, maxZ + margin];
+}
 
 /** Everything the generator hands back to the level. */
 export interface CityParts {
@@ -96,13 +140,26 @@ interface Band {
  * the skyline read as a city rather than as a field.
  */
 function bandFor(distance: number): Band {
-  if (distance < 190) {
-    return { roofs: [22, 24.2, 26.4, 28.6, 30.8, 33], construction: 0.14, hall: 0.16 };
+  // The innermost ring is level with the district's own roofs - its decks sit at 0 to 1.2,
+  // and its buildings' roofs between -0.8 and 2.8 - so the city's first ring of roofs is
+  // one pull-up from the district's edge rather than twenty-eight metres above it.
+  //
+  // That is the whole of V0.7.3. V0.7 put the inner city at 22-34 m, over a district
+  // standing at nothing, with the nearest building sixty metres away: a playable map
+  // 120 m long, and a kilometre of city visible from it and impossible to enter.
+  if (distance < 130) {
+    return { roofs: [1.2, 3.4, 5.6, 7.8, 10], construction: 0.1, hall: 0.12 };
   }
-  if (distance < 320) {
-    return { roofs: [14, 16.2, 18.4, 20.6, 22.8, 25], construction: 0.18, hall: 0.12 };
+  if (distance < 200) {
+    return { roofs: [10, 12.2, 14.4, 16.6, 18.8, 21], construction: 0.14, hall: 0.16 };
   }
-  return { roofs: [8, 10.2, 12.4, 14.6, 16.8, 19], construction: 0.12, hall: 0.08 };
+  if (distance < 290) {
+    return { roofs: [21, 23.2, 25.4, 27.6, 29.8, 32], construction: 0.18, hall: 0.12 };
+  }
+  if (distance < 390) {
+    return { roofs: [32, 34.2, 36.4, 38.6, 40.8, 43], construction: 0.16, hall: 0.1 };
+  }
+  return { roofs: [43, 45.2, 47.4, 49.6, 51.8, 54], construction: 0.12, hall: 0.08 };
 }
 
 /**
@@ -112,7 +169,11 @@ function bandFor(distance: number): Band {
  * through as they are, and everything this adds is appended.
  */
 export function buildCity(base: LevelDefinition, options: CityOptions = {}): LevelDefinition {
-  const parts = generateCity(options);
+  const parts = generateCity({
+    keepClear: clearanceFor(base, options.street ?? DEFAULTS.street),
+    masses: massesFor(base),
+    ...options,
+  });
 
   return {
     ...base,
@@ -138,6 +199,49 @@ export function buildCity(base: LevelDefinition, options: CityOptions = {}): Lev
   };
 }
 
+/** A solid building of the level's own, as the city generator sees it. */
+export interface Mass {
+  readonly id: string;
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minZ: number;
+  readonly maxZ: number;
+  /** The height of its roof, which is what a city building has to meet. */
+  readonly top: number;
+}
+
+/**
+ * The level's own buildings, by their footprint and their roof.
+ *
+ * Floors are not masses: a deck is a surface to stand on, and the city is *about* standing
+ * on surfaces. This is the walls and bodies - the things a generated plot may not be built
+ * through, and the things the infill pass attaches the city to.
+ */
+function massesFor(base: LevelDefinition): readonly Mass[] {
+  return base.props
+    .filter((prop) => {
+      const area = prop.size.x * prop.size.z;
+      const top = prop.position.y + prop.size.y / 2;
+      // A surface bigger than a building is ground, and ground is what the city is built
+      // on rather than something to attach to.
+      if (area < 16 || area > 5000) return false;
+      // The level's own roofs - its decks - are attach targets in their own right, because
+      // they are where the player's feet are. Attaching the city to the *buildings* and not
+      // to the roofs above them leaves a bridge from a wall to a city that the player
+      // standing on the old town's roof still cannot reach.
+      if (prop.kind === 'floor') return prop.size.x > 6 && prop.size.z > 6;
+      return top > DEFAULTS.groundY + 3;
+    })
+    .map((prop) => ({
+      id: prop.id,
+      minX: prop.position.x - prop.size.x / 2,
+      maxX: prop.position.x + prop.size.x / 2,
+      minZ: prop.position.z - prop.size.z / 2,
+      maxZ: prop.position.z + prop.size.z / 2,
+      top: prop.position.y + prop.size.y / 2,
+    }));
+}
+
 /** Just the generated half, for tests and for anything that wants it on its own. */
 export function generateCity(options: CityOptions = {}): CityParts {
   const config: Resolved = { ...DEFAULTS, ...options };
@@ -145,8 +249,6 @@ export function generateCity(options: CityOptions = {}): CityParts {
   const props: PropDefinition[] = [];
   const lights: NonNullable<LevelDefinition['lights']>[number][] = [];
   const elevators: NonNullable<LevelDefinition['elevators']>[number][] = [];
-  /** Every building placed, in the order it was placed. */
-  const buildings: Building[] = [];
   const report = new Map<string, number>();
   const count = (kind: string): void => {
     report.set(kind, (report.get(kind) ?? 0) + 1);
@@ -163,6 +265,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
    */
   const plots = new Map<string, Building>();
   const plotKey = (gx: number, gz: number): string => `${gx}|${gz}`;
+  let fillIds = 0;
+  const nextId = (): number => (fillIds += 1);
 
   for (let gx = -config.radius; gx <= config.radius; gx += config.pitch) {
     for (let gz = -config.radius; gz <= config.radius; gz += config.pitch) {
@@ -184,9 +288,23 @@ export function generateCity(options: CityOptions = {}): CityParts {
       ) {
         continue;
       }
+      // ...and so does every building of the level's own, wherever it stands: the city
+      // grows around them rather than through them, and the gaps that leaves are filled
+      // by the attachment pass below.
+      if (
+        config.masses?.some(
+          (mass) =>
+            cx + footprint > mass.minX &&
+            cx - footprint < mass.maxX &&
+            cz + footprint > mass.minZ &&
+            cz - footprint < mass.maxZ,
+        )
+      ) {
+        continue;
+      }
 
       const band = bandFor(distance);
-      const context = { props, lights, elevators, buildings, random, config, count, plots, gx, gz };
+      const context = { props, lights, elevators, random, config, count, plots, gx, gz, nextId };
 
       const roll = random();
       if (roll < band.construction) {
@@ -205,7 +323,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
         tower(context, cx, cz, footprint, band, random);
       } else {
         count('block');
-        block(context, cx, cz, footprint, band, random);
+        block(context, cx, cz, footprint, band, distance);
       }
 
       // Street furniture that does not need a building: nothing yet - a lamp post on
@@ -229,8 +347,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // asks for. Nothing here invents a route: it makes the ones the buildings already have
   // meet.
   const jumpGap = crossingGap(DEFAULT_CONFIG);
-  const reachUp = crossingRise(DEFAULT_CONFIG);
-  const filler = { props, lights, random, config, count };
+  const filler = { props, lights, random, config, count, nextId };
   for (const building of [...plots.values()]) {
     for (const [dx, dz] of [
       [config.pitch, 0],
@@ -256,18 +373,101 @@ export function generateCity(options: CityOptions = {}): CityParts {
         : Math.min(near.cx + near.halfX, far.cx + far.halfX);
       if (overlap1 - overlap0 < 4) continue;
 
-      // Inside the gap, with a jump's width left over at each end.
-      const margin = Math.min(jumpGap * 0.8, along / 3);
-      const span = along - margin * 2;
-      const centre = (dx !== 0 ? near.cx + near.halfX : near.cz + near.halfZ) + margin + span / 2;
-      const cx = dx !== 0 ? centre : (near.cx + far.cx) / 2;
-      const cz = dx !== 0 ? (overlap0 + overlap1) / 2 : centre;
-      const width = dx !== 0 ? span : (overlap1 - overlap0) * 0.86;
-      const depth = dx !== 0 ? (overlap1 - overlap0) * 0.86 : span;
-      if (Math.min(width, depth) < 3.5) continue;
+      // Inside the gap, as a staircase if the two roofs are far apart in height.
+      bridge(
+        filler,
+        dx !== 0 ? 'x' : 'z',
+        dx !== 0 ? near.cx + near.halfX : near.cz + near.halfZ,
+        along,
+        () => (overlap1 - overlap0) * 0.43,
+        near.roof,
+        far.roof,
+        config.keepClear,
+      );
+    }
+  }
 
-      const roof = Math.max(near.roof, far.roof) - reachUp * 0.7;
-      infill(filler, cx, cz, width, depth, roof);
+  // ------------------------------------------------------------- the attachment
+  //
+  // The city has to *meet* the district, and this is the pass that makes it.
+  //
+  // Everything above fills the gaps between two generated buildings. None of it knows
+  // about the level the city was built around, and the level's own buildings stand where
+  // they stand: five towers to the north and south of the old town, and the old town's own
+  // roofs, which sit at nothing - which is where the player's feet are. So each city
+  // building near one of them gets the same treatment: the gap is measured, and a building
+  // goes in it, with its roof between the two so the step is one move rather than thirty
+  // metres of air.
+  //
+  // V0.7 shipped without this pass and with a clearance rectangle twice the district's
+  // size, so the nearest generated building was sixty metres from the old town's edge and
+  // twenty-eight metres above it. The playable map was the district; the city was a
+  // skyline, and a skyline is decoration.
+  for (const building of plots.values()) {
+    // The nearest building of the level's own, and only that one: every one of them is a
+    // candidate for every plot, and filling the gap to all of them fills the same gap five
+    // times over - which is how this pass turned a city into a traffic jam.
+    let nearest: Mass | null = null;
+    let nearestGap = Number.POSITIVE_INFINITY;
+    for (const mass of config.masses) {
+      const dx = Math.max(building.cx - building.halfX - mass.maxX, mass.minX - (building.cx + building.halfX));
+      const dz = Math.max(building.cz - building.halfZ - mass.maxZ, mass.minZ - (building.cz + building.halfZ));
+      const away = Math.max(dx, dz);
+      if (away >= 0 && away < nearestGap) {
+        nearestGap = away;
+        nearest = mass;
+      }
+    }
+    // Close enough to be the level's neighbour rather than a building on the far side of
+    // the city that happens to point at it.
+    if (!nearest || nearestGap > 150) continue;
+    {
+      const mass = nearest;
+      // The facing gap on each axis, and how much of the wall they share.
+      const gx = Math.max(building.cx - building.halfX - mass.maxX, mass.minX - (building.cx + building.halfX));
+      const gz = Math.max(building.cz - building.halfZ - mass.maxZ, mass.minZ - (building.cz + building.halfZ));
+      const alongX = gx > 0;
+      const alongZ = gz > 0;
+
+      // Diagonal neighbours have no gap to fill: what is between them is a corner, and
+      // the corner of two buildings is not a street.
+      if (alongX === alongZ) continue;
+      const along = alongX ? gx : gz;
+      // A long gap is not a reason to skip the join - it is the one place the *number* of
+      // steps matters most. The steps stand shoulder to shoulder, so their length is what
+      // varies; only the jump at each end has to fit.
+      if (along <= jumpGap || along > config.pitch * 2.5) continue;
+
+      const shared0 = alongX
+        ? Math.max(building.cz - building.halfZ, mass.minZ)
+        : Math.max(building.cx - building.halfX, mass.minX);
+      const shared1 = alongX
+        ? Math.min(building.cz + building.halfZ, mass.maxZ)
+        : Math.min(building.cx + building.halfX, mass.maxX);
+      if (shared1 - shared0 < 4) continue;
+
+      const axis = alongX ? 'x' : 'z';
+      const towards = alongX
+        ? Math.sign(building.cx - mass.minX) // which side of the mass the building is on
+        : Math.sign(building.cz - mass.minZ);
+      const from = alongX
+        ? (towards > 0 ? mass.maxX : mass.minX)
+        : (towards > 0 ? mass.maxZ : mass.minZ);
+
+      // No, so the gap gets a staircase: as many buildings as the change of height needs,
+      // the first as close to the district's roof as the last is to the city's. This is the
+      // join, and without it the district is an island with a city visible from it.
+      const placed = bridge(
+        filler,
+        axis,
+        from,
+        along,
+        () => Math.min((shared1 - shared0) * 0.43, 12),
+        mass.top,
+        building.roof,
+        config.keepClear,
+      );
+      if (placed > 0) count('attachment');
     }
   }
 
@@ -316,6 +516,8 @@ interface Building {
 
 interface Context {
   readonly props: PropDefinition[];
+  /** A counter for the buildings that fill gaps, so two of them cannot share an id. */
+  readonly nextId: () => number;
   /** The plot this building stands on. */
   readonly gx: number;
   readonly gz: number;
@@ -338,6 +540,65 @@ interface Context {
  */
 function record(context: Context, building: Building): void {
   context.plots.set(`${building.gx}|${building.gz}`, building);
+}
+
+/**
+ * How many buildings it takes to get from one roof to another.
+ *
+ * A gap between a roof at 1 m and a roof at 11 m is not one step with a hole under it: it
+ * is ten metres of height, and the player has two and a half. Filling it with a single
+ * building in the middle leaves a six-metre wall on the low side and a four-metre drop on
+ * the high side, which is a gap with extra geometry in it. The gap gets as many buildings
+ * as the change of height needs, and they stand shoulder to shoulder - a staircase, which
+ * is the one shape that is climbable and descendable in both directions.
+ */
+function stepsFor(drop: number, rise: number): number {
+  return Math.max(1, Math.min(8, Math.ceil(Math.abs(drop) / rise)));
+}
+
+/**
+ * Fills the space between two roofs with a staircase of buildings.
+ *
+ * `from` is where the near building's wall is and `span` is how much room there is before
+ * the far one's, so a jump is left at each end and the steps between are adjacent.
+ */
+function bridge(
+  context: InfillContext,
+  axis: 'x' | 'z',
+  from: number,
+  span: number,
+  shared: (t: number) => number,
+  fromRoof: number,
+  toRoof: number,
+  /** Where the level's own ground is, so nothing is built on top of it. */
+  clear?: readonly [number, number, number, number],
+): number {
+  const rise = crossingRise(DEFAULT_CONFIG);
+  const margin = Math.min(crossingGap(DEFAULT_CONFIG) * 0.8, span / 3);
+  const room = span - margin * 2;
+  if (room < 3) return 0;
+
+  const steps = stepsFor(toRoof - fromRoof, rise * 0.8);
+  const each = room / steps;
+  let placed = 0;
+  for (let step = 0; step < steps; step += 1) {
+    const t = (step + 0.5) / steps;
+    const roof = fromRoof + (toRoof - fromRoof) * t;
+    const centre = from + margin + each * (step + 0.5);
+    const half = shared(t);
+    const width = axis === 'x' ? each : half * 2;
+    const depth = axis === 'x' ? half * 2 : each;
+    if (Math.min(width, depth) < 3) continue;
+    const atX = axis === 'x' ? centre : shared(0.5);
+    const atZ = axis === 'x' ? shared(0.5) : centre;
+    // A staircase runs *away* from the thing it is attached to, so the far steps of one
+    // attached to the old town's edge can land on the old town. There is no gap to fill
+    // inside the level's own ground.
+    if (clear && atX > clear[0] && atX < clear[1] && atZ > clear[2] && atZ < clear[3]) continue;
+    infill(context, atX, atZ, width, depth, roof);
+    placed += 1;
+  }
+  return placed;
 }
 
 /**
@@ -369,11 +630,18 @@ const INFILL_KIT = [
 type InfillKit = (typeof INFILL_KIT)[number];
 
 /** What an infill needs from the generator: somewhere to put things, and the dice. */
-type InfillContext = Pick<Context, 'props' | 'lights' | 'random' | 'config' | 'count'>;
+/**
+ * What the rooftop helpers need from the generator.
+ *
+ * A counter is part of it, because a staircase puts several buildings in one gap and the
+ * id used to be the rounded position and roof: unique for one building per gap, and
+ * colliding the moment two stand next to each other at the same height.
+ */
+type InfillContext = Pick<Context, 'props' | 'lights' | 'random' | 'config' | 'count' | 'nextId'>;
 
 /** Picks what this one is made of, and counts the answer. */
 function infillKit(context: InfillContext): readonly InfillKit[] {
-  const wanted = 3 + Math.floor(context.random() * 3);
+  const wanted = 3 + Math.floor(context.random() * 2);
   const pool = [...INFILL_KIT];
   const picked: InfillKit[] = [];
   for (let index = 0; index < wanted && pool.length > 0; index += 1) {
@@ -398,11 +666,14 @@ function infill(
   roof: number,
 ): void {
   const { props, random, config, lights } = context;
-  const id = `fill-${Math.round(cx)}-${Math.round(cz)}-${Math.round(roof)}`;
+  const id = `fill-${context.nextId()}-${Math.round(cx)}-${Math.round(cz)}-${Math.round(roof)}`;
   const kit = infillKit(context);
 
   roofKit(context, id, [cx, cz], width, depth, roof, { solar: false });
-  ladderUp(context, `${id}-ladder`, cx - width / 2 - 0.3, cz, roof);
+  // Coarse sections: ladder rungs are a third of the city's props, and an infill is a
+  // stepping stone - its roof is one move from its neighbours', and its ladder is the way
+  // down to the street rather than the way up onto a roof.
+  laddersUp(context, `${id}-ladder`, cx - width / 2 - 0.3, cz, roof, config.groundY, 14);
   context.count('infill');
 
   const halfX = width / 2;
@@ -612,15 +883,25 @@ function block(
   cz: number,
   footprint: number,
   band: Band,
-  random: () => number,
+  distance: number,
 ): void {
+  const { random } = context;
   // A block fills its plot. It used to take two thirds of it, which left forty metres of
   // nothing between one building and the next - wide enough to read as a city from the
   // air and far too wide to cross on foot, and the reason V0.7's streets were a place you
   // looked at rather than a route.
   const width = footprint * (1.62 + random() * 0.2);
   const depth = footprint * (1.58 + random() * 0.24);
-  const top = band.roofs[Math.floor(random() * band.roofs.length)] ?? band.roofs[0]!;
+
+  // Which roof it gets is a function of *where it is*, not a free roll.
+  //
+  // A free roll is how V0.7.2 did it, and it put a 21 m roof next to a 10 m one: the two
+  // are eleven metres apart, which is neither a jump nor a drop worth taking, and the city
+  // then needed four buildings in the gap to make it a route. Graded, the terraces still
+  // climb across the city - which is what they are for - but neighbours disagree by one
+  // step instead of five, and one building in the gap is enough.
+  const graded = Math.floor((distance + random() * 24) / 26) % band.roofs.length;
+  const top = band.roofs[Math.max(0, Math.min(band.roofs.length - 1, graded))] ?? band.roofs[0]!;
   const id = `city-${Math.round(cx)}-${Math.round(cz)}`;
 
   roofKit(context, id, [cx, cz], width, depth, top);
@@ -1006,6 +1287,8 @@ function laddersUp(
   z: number,
   top: number,
   from: number,
+  /** Section length. Longer sections are fewer props and sparser rungs. */
+  length_m = 7,
 ): void {
   const span = top - from;
   if (span < 3) return;
@@ -1013,7 +1296,7 @@ function laddersUp(
   // spaces them further apart - 70 cm instead of 50, which still reads as a ladder - and
   // every section is a prop. V0.7.2's buildings are twice as tall and there are twice as
   // many of them, and this is a third of the city's props.
-  const length = 7;
+  const length = length_m;
   const count = Math.max(1, Math.round(span / length));
   const each = span / count;
   for (let index = 0; index < count; index += 1) {

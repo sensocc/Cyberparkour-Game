@@ -41,50 +41,51 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.2 fixes](#what-v072-fixes)
-3. [What V0.7.1 optimises](#what-v071-optimises)
-4. [What V0.7 delivers](#what-v07-delivers)
-5. [What V0.6.1 fixes](#what-v061-fixes)
-6. [What V0.6 delivers](#what-v06-delivers)
-7. [What V0.5 delivered](#what-v05-delivered)
-8. [Quick start](#quick-start)
-9. [Controls](#controls)
-10. [What you should see](#what-you-should-see)
-11. [Settings](#settings)
-12. [Camera effects](#camera-effects)
-13. [Feel](#feel)
-14. [Your body](#your-body)
-15. [Optimisation](#optimisation)
-16. [Locomotion](#locomotion)
-17. [The movement state machine](#the-movement-state-machine)
-18. [The manoeuvre bands](#the-manoeuvre-bands)
-19. [Wall running](#wall-running)
-20. [Wall jumping](#wall-jumping)
-21. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-22. [The landing roll](#the-landing-roll)
-23. [Pipe climbing](#pipe-climbing)
-24. [Interiors and doors](#interiors-and-doors)
-25. [Lifts](#lifts)
-26. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-27. [Checkpoints and respawn](#checkpoints-and-respawn)
-28. [The district](#the-district)
-29. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-30. [Neon](#neon)
-31. [Fall damage and health](#fall-damage-and-health)
-32. [Models and surfaces](#models-and-surfaces)
-33. [Sound](#sound)
-34. [How the textures are made](#how-the-textures-are-made)
-35. [Architecture](#architecture)
-36. [How a frame works](#how-a-frame-works)
-37. [Collision](#collision)
-38. [Crash reporting](#crash-reporting)
-39. [The HUDs](#the-huds)
-40. [Testing](#testing)
-41. [Continuous integration](#continuous-integration)
-42. [Project layout](#project-layout)
-43. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-44. [Out of scope for V0.7](#out-of-scope-for-v07)
-45. [Roadmap](#roadmap)
+2. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+3. [What V0.7.2 fixes](#what-v072-fixes)
+4. [What V0.7.1 optimises](#what-v071-optimises)
+5. [What V0.7 delivers](#what-v07-delivers)
+6. [What V0.6.1 fixes](#what-v061-fixes)
+7. [What V0.6 delivers](#what-v06-delivers)
+8. [What V0.5 delivered](#what-v05-delivered)
+9. [Quick start](#quick-start)
+10. [Controls](#controls)
+11. [What you should see](#what-you-should-see)
+12. [Settings](#settings)
+13. [Camera effects](#camera-effects)
+14. [Feel](#feel)
+15. [Your body](#your-body)
+16. [Optimisation](#optimisation)
+17. [Locomotion](#locomotion)
+18. [The movement state machine](#the-movement-state-machine)
+19. [The manoeuvre bands](#the-manoeuvre-bands)
+20. [Wall running](#wall-running)
+21. [Wall jumping](#wall-jumping)
+22. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+23. [The landing roll](#the-landing-roll)
+24. [Pipe climbing](#pipe-climbing)
+25. [Interiors and doors](#interiors-and-doors)
+26. [Lifts](#lifts)
+27. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+28. [Checkpoints and respawn](#checkpoints-and-respawn)
+29. [The district](#the-district)
+30. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+31. [Neon](#neon)
+32. [Fall damage and health](#fall-damage-and-health)
+33. [Models and surfaces](#models-and-surfaces)
+34. [Sound](#sound)
+35. [How the textures are made](#how-the-textures-are-made)
+36. [Architecture](#architecture)
+37. [How a frame works](#how-a-frame-works)
+38. [Collision](#collision)
+39. [Crash reporting](#crash-reporting)
+40. [The HUDs](#the-huds)
+41. [Testing](#testing)
+42. [Continuous integration](#continuous-integration)
+43. [Project layout](#project-layout)
+44. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+45. [Out of scope for V0.7](#out-of-scope-for-v07)
+46. [Roadmap](#roadmap)
 
 ---
 
@@ -92,22 +93,59 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.2` |
+| Version | `0.7.3` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1107 across 42 files |
+| Tests | 1110 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.2 is finished and frozen: the city you can cross and the lifts you can only get into
-from inside. The district is *not* yet labelled Level 1 - that is V0.8's job.
+V0.7.3 is finished and frozen: the city surrounds the district instead of standing off from
+it. The district is *not* yet labelled Level 1 - that is V0.8's job.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.3 fixes: the city was in the wrong place
+
+The complaint was exact, and it was measurable. The map the player can run around was the
+hand-made district - about 120 m by 62 m - and the kilometre of city was *outside* it.
+
+Two numbers were wrong, and they compounded:
+
+- **The clearance.** V0.7 hard-coded a rectangle 290 m by 220 m to keep the city off the
+  district - twice the district's size in each direction. The nearest generated building
+  stood **64 m** from the old town's edge. It is measured from the district's own decks now,
+  plus two metres of street, so the city starts at the district.
+- **The height.** The innermost roofs were **22 to 34 m**, over a district standing at
+  nothing. Even a city at the district's edge would have been a wall: the player's feet are
+  at 0, the nearest roof was twenty-two metres up, and the streets were thirty-five metres
+  down. The bands start at **1.2 m** - level with the district's own decks - and climb
+  outward from there.
+
+A third thing was missing entirely: **nothing attached the two**. The city has filled the
+gaps between its own buildings since V0.7.2, which says nothing about the level it was built
+around. There is an attachment pass now: every city building near one of the level's own
+masses gets the same treatment as any other gap - measured, and filled with a staircase of
+buildings whose roofs walk from the district's height to the city's. It is also what fills
+the space around the district's five outlying towers, which had sixty metres of nothing
+between them and the city in both previous versions.
+
+What it is not, yet: **verified end to end in play**. The structural claims above are
+measured - the nearest generated geometry is 3 m from the district's deck box, the inner
+roof band starts at 1.2 m, the city's rooftops are within a jump of each other in 1,315 of
+1,319 cases - and the district-to-city jump has not been walked in a browser. That is the
+first thing V0.7.4 should do, and if it does not hold, the attachment staircase is where to
+look.
+
+The cost is real: filling the streets three deep took the city from 10,557 props to 16,690,
+and the frame from 471 draw calls and ~400k visible triangles to 706 and ~790k.
 
 ---
 
@@ -1705,5 +1743,10 @@ replaced.
 V0.7.2 joined the city up: it took the generator's own claims - a jump between roofs, a
 lift you have to go inside to use - and turned them into measurements with tests behind
 them, which is the only way either claim was worth making.
+
+V0.7.3 moved the city to where the player is, which is a thing a generator cannot be trusted
+to have done because it looks right from the air. It was found by walking the player west
+from the spawn and watching them fall thirty-five metres and die - the shortest measurement
+in the project so far, and the one that mattered most.
 
 The next milestone is V0.8: polish, and labelling the district as Level 1.

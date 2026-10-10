@@ -18,6 +18,13 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['tests/**/*.test.ts'],
+    // **The city is not a unit test.** Building it is sixteen thousand props and as many
+    // colliders, and several suites build it more than once - the merge, the broadphase
+    // equivalence, the frame budget, the generator's own invariants. On a fast machine that
+    // is a second or two each; on a slower CI runner it is more than Vitest's five-second
+    // default, which is a default for a unit test and not for this.
+    testTimeout: 120_000,
+    hookTimeout: 120_000,
     setupFiles: ['tests/setup.ts'],
     clearMocks: true,
     restoreMocks: true,

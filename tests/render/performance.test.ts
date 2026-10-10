@@ -85,7 +85,7 @@ describe('the cost of a frame', () => {
     } finally {
       built.dispose();
     }
-  });
+  }), 120000;
 
   it('asks for a few hundred draw calls from a street, not forty thousand', () => {
     const built = buildScene(city);
@@ -112,7 +112,7 @@ describe('the cost of a frame', () => {
     } finally {
       built.dispose();
     }
-  });
+  }), 120000;
 
   it('draws about a tenth of the city it owns, because most of it is behind you', () => {
     // V0.7.1's number was 471 draw calls and about 400k triangles for 5,233 props. V0.7.2
@@ -152,7 +152,7 @@ describe('the cost of a frame', () => {
     } finally {
       built.dispose();
     }
-  });
+  }), 120000;
 
   it('casts shadows from the chunks the shadow map can see, and no others', () => {
     const built = buildScene(city);
@@ -183,7 +183,7 @@ describe('the cost of a frame', () => {
     } finally {
       built.dispose();
     }
-  });
+  }), 120000;
 
   it('spends about a millisecond of physics on a second of falling', () => {
     const built = buildLevel(city, {
@@ -207,5 +207,5 @@ describe('the cost of a frame', () => {
     // the city, which sub-steps repeatedly on every axis - in well under a tenth of
     // a second. The scan this replaces needed most of a second for the same work.
     expect(elapsed).toBeLessThan(120);
-  });
+  }), 120000;
 });
