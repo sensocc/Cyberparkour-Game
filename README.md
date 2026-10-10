@@ -41,57 +41,58 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
-3. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
-4. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
-5. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
-6. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-7. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-8. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-9. [What V0.7.2 fixes](#what-v072-fixes)
-10. [What V0.7.1 optimises](#what-v071-optimises)
-11. [What V0.7 delivers](#what-v07-delivers)
-12. [What V0.6.1 fixes](#what-v061-fixes)
-13. [What V0.6 delivers](#what-v06-delivers)
-14. [What V0.5 delivered](#what-v05-delivered)
-15. [Quick start](#quick-start)
-16. [Controls](#controls)
-17. [What you should see](#what-you-should-see)
-18. [Settings](#settings)
-19. [Camera effects](#camera-effects)
-20. [Feel](#feel)
-21. [Your body](#your-body)
-22. [Optimisation](#optimisation)
-23. [Locomotion](#locomotion)
-24. [The movement state machine](#the-movement-state-machine)
-25. [The manoeuvre bands](#the-manoeuvre-bands)
-26. [Wall running](#wall-running)
-27. [Wall jumping](#wall-jumping)
-28. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-29. [The landing roll](#the-landing-roll)
-30. [Pipe climbing](#pipe-climbing)
-31. [Interiors and doors](#interiors-and-doors)
-32. [Lifts](#lifts)
-33. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-34. [Checkpoints and respawn](#checkpoints-and-respawn)
-35. [The district](#the-district)
-36. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-37. [Neon](#neon)
-38. [Fall damage and health](#fall-damage-and-health)
-39. [Models and surfaces](#models-and-surfaces)
-40. [Sound](#sound)
-41. [How the textures are made](#how-the-textures-are-made)
-42. [Architecture](#architecture)
-43. [How a frame works](#how-a-frame-works)
-44. [Collision](#collision)
-45. [Crash reporting](#crash-reporting)
-46. [The HUDs](#the-huds)
-47. [Testing](#testing)
-48. [Continuous integration](#continuous-integration)
-49. [Project layout](#project-layout)
-50. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-51. [Out of scope for V0.7](#out-of-scope-for-v07)
-52. [Roadmap](#roadmap)
+2. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
+3. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
+4. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
+5. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
+6. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+7. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+8. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+9. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+10. [What V0.7.2 fixes](#what-v072-fixes)
+11. [What V0.7.1 optimises](#what-v071-optimises)
+12. [What V0.7 delivers](#what-v07-delivers)
+13. [What V0.6.1 fixes](#what-v061-fixes)
+14. [What V0.6 delivers](#what-v06-delivers)
+15. [What V0.5 delivered](#what-v05-delivered)
+16. [Quick start](#quick-start)
+17. [Controls](#controls)
+18. [What you should see](#what-you-should-see)
+19. [Settings](#settings)
+20. [Camera effects](#camera-effects)
+21. [Feel](#feel)
+22. [Your body](#your-body)
+23. [Optimisation](#optimisation)
+24. [Locomotion](#locomotion)
+25. [The movement state machine](#the-movement-state-machine)
+26. [The manoeuvre bands](#the-manoeuvre-bands)
+27. [Wall running](#wall-running)
+28. [Wall jumping](#wall-jumping)
+29. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+30. [The landing roll](#the-landing-roll)
+31. [Pipe climbing](#pipe-climbing)
+32. [Interiors and doors](#interiors-and-doors)
+33. [Lifts](#lifts)
+34. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+35. [Checkpoints and respawn](#checkpoints-and-respawn)
+36. [The district](#the-district)
+37. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+38. [Neon](#neon)
+39. [Fall damage and health](#fall-damage-and-health)
+40. [Models and surfaces](#models-and-surfaces)
+41. [Sound](#sound)
+42. [How the textures are made](#how-the-textures-are-made)
+43. [Architecture](#architecture)
+44. [How a frame works](#how-a-frame-works)
+45. [Collision](#collision)
+46. [Crash reporting](#crash-reporting)
+47. [The HUDs](#the-huds)
+48. [Testing](#testing)
+49. [Continuous integration](#continuous-integration)
+50. [Project layout](#project-layout)
+51. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+52. [Out of scope for V0.7](#out-of-scope-for-v07)
+53. [Roadmap](#roadmap)
 
 ---
 
@@ -99,21 +100,68 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.9` |
+| Version | `0.7.10` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1120 across 42 files |
+| Tests | 1121 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.9 is finished and frozen: seven times fewer draw calls, and roofs worth running across.
+V0.7.10 is finished and frozen, with one thing in it that is implemented and not yet working.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.10 does: the volumes, the crane, and two rules about the grid
+
+### No volume control worked, and the reason was one line
+
+The three sliders on the settings screen were built with **no callback at all**: they moved, the
+percentages changed, the settings were never told, and master, music and effects did nothing. Every
+piece underneath them works - the engine's gain graph, the mute path, the settings merge - and none
+of it was ever asked. They are wired now, via a shared helper that merges one slider into the
+volumes it is not touching, which is what the `onChange` type had to widen to allow.
+
+The path from a partial volume patch to the engine has a test. The panel's own wiring does not,
+because the suite runs without a DOM, and that is worth saying rather than implying.
+
+### The crane was four posts in the air
+
+Its mast was four unbraced posts with a few ties, and its jib was a single beam with three verticals:
+at fifty metres it read as a crane and up close it read as a mistake. It is a proper tower crane now
+- four corner posts with horizontal ties and **a diagonal per bay**, a slewing unit and a glazed cab,
+a lattice jib with top and bottom chords joined by verticals, a trolley with a hook block hanging
+under it, a counter-jib with a counterweight, and the operator's platform which is what makes the
+thing read at distance.
+
+### The grid: the gaps vary, inside the jump
+
+V0.7.6's grid was uniform to the centimetre, which is what "the same distance from the surrounding
+buildings" literally asks for and reads as graph paper from a roof. Every building now picks its own
+street between **4.5 m and 5.6 m** - the old distance at one end, the jump at the other, both of them
+crossable - so the spacing varies across the city without ever putting a neighbour out of reach.
+
+### The grid: heights are random, with a lead
+
+The height rule is the one that was asked for: **a random height per building, and no building more
+than ten to fifteen metres above the average of the eight around it.** The first pass got this wrong
+in an instructive way - it capped every building *at* the average, and a cap at the average has
+exactly one solution, every building in a component equal to its neighbours, so the whole map came
+out as one flat plate. A lead instead of a cap gives random heights, a random skyline, and nothing
+spiking forty metres over the block beside it.
+
+**And it is not working yet.** `roofTargets` clamps every cell at its neighbours' average plus ten,
+which is the rule as written, and the roofs that come out of the generator measure up to **thirty**
+metres over their neighbours' average. Something between the target and the finished roof is adding
+height the clamp does not know about - the archetypes' own additions were the first suspect and are
+now removed, and the number did not move enough, so the search continues. The test asserts forty and
+says in a comment that fifteen is the number it is meant to hold.
 
 ---
 
@@ -2052,4 +2100,7 @@ and stopped the floor disappearing when the player walks away from the middle of
 V0.7.9 paid for its own furniture: seven times fewer draw calls bought fourteen kinds of rooftop
 architecture for two thousand more props, and the frame is cheaper than before either.
 
-The next milestone is V0.8: polish, and the graphics pass.
+V0.7.10 fixed a volume control that had never been connected and a crane that had never been
+finished, and it ends with one rule half-delivered and said so.
+
+The next milestone is V0.8: the height lead, polish, and the graphics pass.

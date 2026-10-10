@@ -550,30 +550,52 @@ const billboard: ModelDefinition = {
  */
 const crane: ModelDefinition = {
   id: 'crane',
-  note: 'A tower crane: lattice mast, jib and hook. The mast is at the +X end.',
+  note: 'A tower crane: lattice mast, slewing jib with a trolley and hook, counter-jib. Mast at the +X end.',
   parts: [
-    // Mast: four posts and a few horizontal ties.
-    part([0.44, 0, 0.44], [0.5, 1, 0.5], 'hazard'),
-    part([0.5, 0, 0.44], [0.56, 1, 0.5], 'hazard'),
-    part([0.44, 0, 0.5], [0.5, 1, 0.56], 'hazard'),
-    part([0.5, 0, 0.5], [0.56, 1, 0.56], 'hazard'),
-    ...[0.08, 0.24, 0.4, 0.56, 0.72, 0.88].map((y): ModelPart =>
-      part([0.43, y, 0.43], [0.57, y + 0.02, 0.57], 'metal-light'),
+    // ---- the mast: four corner posts, cross-braced every storey
+    part([0.42, 0, 0.42], [0.46, 1, 0.46], 'hazard'),
+    part([0.54, 0, 0.42], [0.58, 1, 0.46], 'hazard'),
+    part([0.42, 0, 0.54], [0.46, 1, 0.58], 'hazard'),
+    part([0.54, 0, 0.54], [0.58, 1, 0.58], 'hazard'),
+    // Horizontal ties, and a diagonal pair per bay so it reads as lattice rather than as four
+    // posts that happen to be near each other.
+    ...[0.06, 0.18, 0.3, 0.42, 0.54, 0.66, 0.78, 0.9].flatMap((y, index): ModelPart[] => [
+      part([0.42, y, 0.42], [0.58, y + 0.015, 0.44], 'metal-light'),
+      part([0.42, y, 0.56], [0.58, y + 0.015, 0.58], 'metal-light'),
+      part([0.42, y, 0.42], [0.44, y + 0.015, 0.58], 'metal-light'),
+      part([0.56, y, 0.42], [0.58, y + 0.015, 0.58], 'metal-light'),
+      part(index % 2 === 0 ? [0.43, y, 0.43] : [0.57, y, 0.43], [
+        index % 2 === 0 ? 0.45 : 0.59,
+        y + 0.12,
+        0.57,
+      ], 'metal-dark'),
+    ]),
+    // ---- the slewing unit and the cab
+    part([0.38, 0.9, 0.38], [0.62, 0.96, 0.62], 'metal-dark'),
+    part([0.36, 0.96, 0.4], [0.5, 1, 0.6], 'metal-light'),
+    part([0.34, 0.97, 0.44], [0.37, 0.99, 0.56], 'glass'),
+    // ---- the jib, out over the street: top chord, bottom chords, and verticals between
+    part([0.06, 0.96, 0.45], [1, 1, 0.49], 'hazard'),
+    part([0.06, 0.96, 0.55], [1, 1, 0.59], 'hazard'),
+    part([0.06, 0.86, 0.45], [1, 0.9, 0.49], 'metal-light'),
+    part([0.06, 0.86, 0.55], [1, 0.9, 0.59], 'metal-light'),
+    ...[0.12, 0.3, 0.48, 0.66, 0.84].map((x): ModelPart =>
+      part([x, 0.9, 0.46], [x + 0.02, 0.96, 0.58], 'metal-light'),
     ),
-    // The jib, running out from the mast head.
-    part([0, 0.94, 0.46], [1, 0.99, 0.54], 'hazard'),
-    part([0, 0.86, 0.48], [1, 0.88, 0.52], 'metal-light'),
-    part([0.02, 0.88, 0.46], [0.04, 0.94, 0.54], 'metal-light'),
-    part([0.3, 0.88, 0.46], [0.32, 0.94, 0.54], 'metal-light'),
-    part([0.6, 0.88, 0.46], [0.62, 0.94, 0.54], 'metal-light'),
-    part([0.88, 0.88, 0.46], [0.9, 0.94, 0.54], 'metal-light'),
-    // Counterweight, and the hook hanging off the working end.
-    part([0, 0.82, 0.42], [0.1, 0.9, 0.58], 'concrete-dark'),
-    part([0.99, 0.34, 0.48], [1, 0.86, 0.52], 'metal-dark'),
-    part([0.94, 0.24, 0.44], [1, 0.34, 0.56], 'metal-warm'),
+    // ---- the trolley, and the hook block hanging under it
+    part([0.66, 0.84, 0.42], [0.78, 0.88, 0.62], 'metal-warm'),
+    part([0.71, 0.4, 0.5], [0.73, 0.86, 0.52], 'metal-dark'),
+    part([0.66, 0.4, 0.44], [0.78, 0.5, 0.58], 'metal-warm'),
+    part([0.7, 0.3, 0.47], [0.74, 0.42, 0.55], 'metal-warm'),
+    // ---- the counter-jib and its counterweight
+    part([0, 0.94, 0.46], [0.12, 0.99, 0.58], 'hazard'),
+    part([0, 0.86, 0.48], [0.12, 0.9, 0.56], 'metal-light'),
+    part([0, 0.8, 0.4], [0.06, 0.96, 0.64], 'concrete-dark'),
+    part([0.03, 0.72, 0.42], [0.09, 0.82, 0.62], 'concrete-dark'),
+    // ---- the operator's platform, which is what makes it read at fifty metres
+    part([0.3, 0.62, 0.44], [0.34, 0.66, 0.58], 'metal-dark'),
   ],
 };
-
 /** Scaffolding: standards, ledgers and three boarded lifts. */
 const scaffold: ModelDefinition = {
   id: 'scaffold',

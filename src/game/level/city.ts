@@ -106,25 +106,82 @@ interface Band {
 /** The whole map: one kilometre square, gridded. */
 const GRID_SPAN = 1000;
 
-/** The street every building leaves. The same number everywhere, which is the point. */
+/**
+ * The street a building leaves, at each end of its range.
+ *
+ * V0.7.6's grid was uniform to the centimetre, which is what "the same distance from the
+ * surrounding buildings" literally asks for and reads as graph paper from a roof. Every building
+ * now picks its own street between the two - and both ends are inside the jump, so the variation
+ * is visible without ever putting a neighbour out of reach.
+ */
 const STREET = 4.5;
-
-/** Cells to a terrace tile, and the step between one tile and the next. */
-const TILE = 4;
-const TILE_STEP = 4;
+const STREET_MAX = 5.6;
 
 /**
- * The terrace a cell stands on.
+ * How tall a cell's buildings may be: **random, and no more than a lead over the neighbours.**
  *
- * A ramp across the tiles rather than a roll of the dice: a cell and the four around it are
- * in the same tile or one over, so the worst height difference between neighbours is one
- * step plus the three metres of variation inside a cell - under eight metres, where a free
- * roll put forty between two buildings on the same street.
+ * V0.7.6 ramped the height across tiles, which made a smooth skyline and a *predictable* one -
+ * a city of identical pitches is a staircase, not a city. V0.7.9's first pass at this capped every
+ * building at the *average* of the eight around it, and that is a rule with one solution: capped
+ * at the average, every building in a component ends up equal to its neighbours and the whole map
+ * comes out as one flat plate. Which is exactly what it did.
+ *
+ * The rule is a **lead** rather than a cap: a cell may stand up to `HEIGHT_LEAD` over the average
+ * of its neighbours, and no more. Random heights, a random skyline, and nothing spiking forty
+ * metres over the block beside it.
  */
-function blockTop(ix: number, iz: number): number {
-  const tile = Math.floor(ix / TILE) + Math.floor(iz / TILE);
-  const steps = ((tile % 7) + 7) % 7;
-  return 10 + steps * TILE_STEP;
+const ROOF_LOW = 12;
+const ROOF_HIGH = 58;
+const HEIGHT_LEAD = 10;
+
+/** A cell's key, so the target grid can be addressed by index. */
+function cellKey(ix: number, iz: number): string {
+  return `${ix}|${iz}`;
+}
+
+/**
+ * A random height for every cell, then every cell capped at the average of the eight around it.
+ *
+ * Built in one pass before anything is placed, so the rule is a property of the *layout* rather
+ * than of the order the buildings happened to be generated in - and so a cell at the edge of the
+ * map, with fewer than eight neighbours, is averaged over the ones it has.
+ */
+function roofTargets(cells: number, random: () => number): Map<string, number> {
+  const targets = new Map<string, number>();
+  for (let ix = 0; ix < cells; ix += 1) {
+    for (let iz = 0; iz < cells; iz += 1) {
+      targets.set(cellKey(ix, iz), ROOF_LOW + random() * (ROOF_HIGH - ROOF_LOW));
+    }
+  }
+
+  const capped = new Map<string, number>();
+  for (let ix = 0; ix < cells; ix += 1) {
+    for (let iz = 0; iz < cells; iz += 1) {
+      const mine = targets.get(cellKey(ix, iz)) as number;
+      let sum = 0;
+      let count = 0;
+      for (const [nx, nz] of neighbourhood(ix, iz)) {
+        const other = targets.get(cellKey(nx, nz));
+        if (other === undefined) continue;
+        sum += other;
+        count += 1;
+      }
+      capped.set(cellKey(ix, iz), count > 0 ? Math.min(mine, sum / count + HEIGHT_LEAD) : mine);
+    }
+  }
+  return capped;
+}
+
+/** The eight cells around one, and the cell itself. */
+function neighbourhood(ix: number, iz: number): readonly (readonly [number, number])[] {
+  const around: (readonly [number, number])[] = [];
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dz = -1; dz <= 1; dz += 1) {
+      if (dx === 0 && dz === 0) continue;
+      around.push([ix + dx, iz + dz]);
+    }
+  }
+  return around;
 }
 
 /**
@@ -248,6 +305,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // buildings together or to leave a roof with nothing beside it. This does not patch
   // anything. It is a grid, and a grid is what was asked for.
   const cells = Math.max(2, Math.round(GRID_SPAN / config.pitch));
+  const targets = roofTargets(cells, random);
+  // The widest a building may be, for the checks that ask whether a cell is clear of something.
   const half = (config.pitch - STREET) / 2;
 
   for (let ix = 0; ix < cells; ix += 1) {
@@ -285,10 +344,18 @@ export function generateCity(options: CityOptions = {}): CityParts {
       // within a step of each other and the skyline steps across the city instead of
       // spiking. Blocks of four cells step by six metres, which is the "no more than ten to
       // twenty metres taller than the building next door" rule with room to spare.
-      const top = blockTop(ix, iz);
-      // Never more than three metres of variation within a cell: a building and the one
-      // beside it are the same building at a different height, which is what a city grid is.
-      const band: Band = { roofs: [top, top + 1.5, top + 3], construction: 0.1, hall: 0.12 };
+      const top = targets.get(cellKey(ix, iz)) ?? ROOF_LOW;
+      // Its own street, somewhere between the old uniform width and the jump. The building is
+      // what is left of the pitch after it - so two neighbours share the average of their two,
+      // and both ends of the range stay crossable.
+      const street = STREET + random() * (STREET_MAX - STREET);
+      const footprint = (config.pitch - street) / 2;
+      // **One height per cell, and the cell's height is the rule's answer.** The archetypes used
+      // to add a few metres of their own on top - a tower several, a roof storey two - which put
+      // buildings up to twenty-seven metres over the neighbours their cell had been clamped
+      // against. The clamp is now the last word: a cell's roof is what the rule says it is, and
+      // the variety is in the random heights rather than in what each archetype adds to them.
+      const band: Band = { roofs: [top], construction: 0.1, hall: 0.12 };
       const context = {
         props,
         lights,
@@ -300,24 +367,25 @@ export function generateCity(options: CityOptions = {}): CityParts {
         gx: cx,
         gz: cz,
         nextId,
+        street,
       };
 
       const roll = random();
       if (roll < band.construction) {
         count('construction');
-        constructionSite(context, cx, cz, half, band);
+        constructionSite(context, cx, cz, footprint, band);
       } else if (roll < band.construction + band.hall) {
         count('hall');
-        hall(context, cx, cz, half, band);
+        hall(context, cx, cz, footprint, band);
       } else if (roll < 0.45) {
         count('interior');
-        interiorTower(context, cx, cz, half, band);
+        interiorTower(context, cx, cz, footprint, band);
       } else if (roll < 0.6) {
         count('tower');
-        tower(context, cx, cz, half, band);
+        tower(context, cx, cz, footprint, band);
       } else {
         count('block');
-        block(context, cx, cz, half, band);
+        block(context, cx, cz, footprint, band);
       }
     }
   }
@@ -459,6 +527,8 @@ interface Context {
   readonly props: PropDefinition[];
   /** A counter for the buildings that fill gaps, so two of them cannot share an id. */
   readonly nextId: () => number;
+  /** The street this building leaves, which its gangways have to span. */
+  readonly street: number;
 
   /** The plot this building stands on. */
   readonly gx: number;
@@ -729,7 +799,7 @@ function roofKit(
         // Over the street to the building next door: a walkway, not a bridge in the structural
         // sense - two posts and a deck 4.5 m long, which is exactly the street.
         const along = random() < 0.5 ? 'x' : 'z';
-        const length = STREET + 2.4;
+        const length = context.street + 2.4;
         const x = along === 'x' ? at[0] + width / 2 + length / 2 - 1 : at[0];
         const z = along === 'z' ? at[1] + depth / 2 + length / 2 - 1 : at[1];
         place(
@@ -876,7 +946,9 @@ function tower(
   const insideTop = floor + storeys * storey;
   // Ten to eighteen metres over its cell: enough to be a tower, inside the twenty the rule
   // allows, and reachable by the lift the tower exists to carry.
-  const roof = (band.roofs[band.roofs.length - 1] ?? 30) + 10 + Math.round(random() * 8);
+  // A tower is a building with a lift in it, not a spire: its roof is its cell's height, and the
+  // rule is what decides that.
+  const roof = band.roofs[band.roofs.length - 1] ?? 30;
   const tints = tintSet(context);
 
   const panel = (
@@ -1023,7 +1095,7 @@ function constructionSite(
   const width = footprint * 2;
   const depth = footprint * 2;
   // A carcass is a storey or two of its neighbours' height, not a spire.
-  const top = (band.roofs[0] ?? 20) + 4 + Math.round(random() * 8);
+  const top = band.roofs[0] ?? 20;
   const id = `site-${Math.round(cx)}-${Math.round(cz)}`;
   // The carcass as the street sees it. Its floors are inset as they rise, so the widest
   // mass - and the one a neighbour's gap runs into - is the lowest slab.

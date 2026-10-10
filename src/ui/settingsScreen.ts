@@ -35,7 +35,15 @@ import {
 
 export interface SettingsPanelCallbacks {
   /** Applies a change. */
-  readonly onChange: (patch: Partial<GameSettings>) => void;
+  /**
+   * A settings change, with the volumes *partial*.
+   *
+   * Moving one slider should not have to restate the other two, and the game merges what it is
+   * given - see `Game.applySettings`.
+   */
+  readonly onChange: (
+    patch: Partial<Omit<GameSettings, 'volumes'>> & { volumes?: Partial<VolumeSettings> },
+  ) => void;
   /** Puts everything back to the defaults. */
   readonly onReset: () => void;
   /** Leaves the screen. */
@@ -102,11 +110,26 @@ export class SettingsPanel {
 
   private readonly sensitivity: Slider;
   private readonly fov: Slider;
+  // **Wired to something.** These three were built with no callback at all, so the sliders
+  // moved, the numbers changed, the settings were never told, and no volume control in the game
+  // did anything - which is exactly how it was reported.
   private readonly volumes: Record<keyof VolumeSettings, Slider> = {
-    master: this.slider('Master', 0, 1, 0.05),
-    music: this.slider('Music', 0, 1, 0.05),
-    effects: this.slider('Effects', 0, 1, 0.05),
+    master: this.volumeSlider('Master', 'master'),
+    music: this.volumeSlider('Music', 'music'),
+    effects: this.volumeSlider('Effects', 'effects'),
   };
+
+  /** A volume slider, wired to the settings the audio engine actually reads. */
+  private volumeSlider(label: string, key: keyof VolumeSettings): Slider {
+    return this.slider(
+      label,
+      0,
+      1,
+      0.05,
+      (value) => `${Math.round(value * 100)}%`,
+      (value) => this.callbacks.onChange({ volumes: { ...this.last.volumes, [key]: value } }),
+    );
+  }
   private readonly invertY: Choices<'no' | 'yes'>;
   private readonly motion: Choices<MotionLevel>;
   private readonly quality: Choices<QualityLevel>;

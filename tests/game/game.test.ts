@@ -1336,6 +1336,24 @@ describe('settings, from the game', () => {
     };
   }
 
+  it('sends every volume the panel can move to the audio engine', () => {
+    // The bug this covers: the three sliders on the settings screen were built with no callback
+    // at all, so they moved, the numbers changed, the settings were never told, and no volume
+    // control in the game did anything. The panel's wiring cannot be tested here - the suite runs
+    // without a DOM - but the path it feeds can, and a partial patch of one volume has to arrive
+    // with the other two intact.
+    const audio = recordingAudio();
+    const harness = createHarness({ audio });
+    harness.game.start();
+    harness.game.updateSettings({ volumes: { master: 0.2 } });
+    harness.game.updateSettings({ volumes: { effects: 0.1 } });
+    harness.game.updateSettings({ volumes: { music: 0.05 } });
+    // The default 0.8 first, from the engine being handed the settings at construction, and then
+    // 0.2 three times: the effects and music sliders each moved without restating the master, and
+    // it was carried through every time. That is the part the panel had no way to do.
+    expect(audio.volumes).toEqual([0.8, 0.2, 0.2, 0.2]);
+  });
+
   /** An audio backend that records what it was asked for. */
   function recordingAudio(): AudioOutput & { cues: AudioCue[]; volumes: number[] } {
     const cues: AudioCue[] = [];

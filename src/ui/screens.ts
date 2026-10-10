@@ -8,7 +8,7 @@
 
 import type { CrashReport } from '../diagnostics/crashReport.js';
 import { summarizeReport } from '../diagnostics/crashReport.js';
-import type { GameSettings } from '../core/settings.js';
+import type { GameSettings, VolumeSettings } from '../core/settings.js';
 import { formatRunTime, type RunResult } from '../game/run.js';
 import { button, el, formatNumber, setHidden } from './dom.js';
 import { describePickups } from './gameHud.js';
@@ -28,7 +28,15 @@ export interface UiCallbacks {
   readonly onCopyReport: (report: CrashReport) => void;
   readonly onDownloadRecovered: () => void;
   /** Applies a settings change. The screen redraws from the result, not the patch. */
-  readonly onSettingsChange: (patch: Partial<GameSettings>) => void;
+  /**
+   * A settings change from the panel, with the volumes partial.
+   *
+   * One volume slider should not have to restate the other two; the game merges what it is
+   * handed. See `SettingsPanelCallbacks.onChange`.
+   */
+  readonly onSettingsChange: (
+    patch: Partial<Omit<GameSettings, 'volumes'>> & { volumes?: Partial<VolumeSettings> },
+  ) => void;
   readonly onSettingsReset: () => void;
 }
 
