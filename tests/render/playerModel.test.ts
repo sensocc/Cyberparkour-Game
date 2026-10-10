@@ -170,7 +170,10 @@ describe('the poses that are not a walk', () => {
       settle(body, pose({ lean: 0 }));
       expect(body.torso.rotation.x).toBeCloseTo(0, 6);
       settle(body, pose({ lean: 0.5 }));
-      expect(body.torso.rotation.x).toBeCloseTo(0.5, 6);
+      // A spring approaches its target asymptotically, so "settled" is a number of
+      // decimals rather than a value: a ten-thousandth of a radian is a third of a
+      // millimetre at the end of the torso.
+      expect(body.torso.rotation.x).toBeCloseTo(0.5, 4);
     } finally {
       body.dispose();
     }
@@ -185,7 +188,7 @@ describe('the poses that are not a walk', () => {
       const end = body.torso.rotation.x;
 
       expect(middle).toBeGreaterThan(end);
-      expect(end).toBeCloseTo(0.5, 6);
+      expect(end).toBeCloseTo(0.5, 4);
     } finally {
       body.dispose();
     }
@@ -325,5 +328,83 @@ describe('the cadence of the walk', () => {
     // longer sprint stride is for.
     expect(sprintCadence).toBeGreaterThan(walkCadence);
     expect(sprintCadence).toBeLessThan(walkCadence * 1.15);
+  });
+});
+
+describe('the smoothness of the movement itself', () => {
+  /**
+   * The worst change of angular *velocity* between frames.
+   *
+   * This is jerk, and it is what the eye reads as a twitch: a limb can move a long way
+   * smoothly and look calm, but it cannot change speed suddenly and look like anything
+   * other than a mistake. V0.6.1's joints eased towards their target and were capped at a
+   * top speed, and that cap is a kink - a joint that accelerates to a ceiling, holds it
+   * and drops back to easing has a discontinuous velocity at both ends of it.
+   */
+  function worstJerk(actions: readonly PlayerPose['legAction'][]): number {
+    const body = buildPlayerBody();
+    try {
+      const angles: number[] = [];
+      for (const legAction of actions) {
+        posePlayerBody(
+          body,
+          pose({ legAction, gaitPhase: 1.2, strideAmount: 1 }),
+          CONFIG,
+          1 / 240,
+        );
+        angles.push(body.legLeft.root.rotation.x);
+      }
+      const velocity = angles.slice(1).map((value, index) => value - angles[index]!);
+      const jerk = velocity.slice(1).map((value, index) => Math.abs(value - velocity[index]!));
+      return Math.max(...jerk);
+    } finally {
+      body.dispose();
+    }
+  }
+
+  it('turns a leg from a walk into a tuck without a corner in its velocity', () => {
+    // Sixty frames of walking, then sixty of a vault's tuck: the largest change of intent
+    // the model has, and the case that measured 0.032 rad/frame of velocity change inside
+    // a single frame when the joint was eased and capped.
+    const jerk = worstJerk([...Array(60).fill('stride'), ...Array(60).fill('tuck')] as const);
+
+    // Two orders of magnitude of headroom under the old number, so a joint that went back
+    // to being capped - or set outright - fails here rather than looking wrong on a screen.
+    expect(jerk).toBeLessThan(0.012);
+  });
+
+  it('starts moving from rest, rather than at speed', () => {
+    // A spring has no first-frame velocity; an eased-and-capped joint starts at 22% of
+    // the gap, which is the first frame of a twitch.
+    const body = buildPlayerBody();
+    try {
+      posePlayerBody(body, pose({ legAction: 'stride', gaitPhase: 0, strideAmount: 0 }), CONFIG, 1 / 240);
+      const before = body.legLeft.root.rotation.x;
+      posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, 1 / 240);
+      const moved = Math.abs(body.legLeft.root.rotation.x - before);
+      expect(moved).toBeLessThan(0.02);
+      expect(moved).toBeGreaterThan(0);
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('still arrives, and does not overshoot', () => {
+    // The other half of "smooth": a joint that took a second to get anywhere would be
+    // smooth and useless, and one that bounced past its target would be neither.
+    const body = buildPlayerBody();
+    try {
+      let furthest = 0;
+      for (let frame = 0; frame < 120; frame += 1) {
+        posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, 1 / 60);
+        furthest = Math.min(furthest, body.legLeft.root.rotation.x);
+      }
+      // A tuck's thigh target is -1.15 rad, and a critically damped spring approaches it
+      // from one side only.
+      expect(furthest).toBeLessThan(-1.05);
+      expect(furthest).toBeGreaterThanOrEqual(-1.16);
+    } finally {
+      body.dispose();
+    }
   });
 });

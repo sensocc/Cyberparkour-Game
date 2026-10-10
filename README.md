@@ -10,11 +10,12 @@ route indoors, V0.5 made it a level, and V0.6 gave the player a body and a setti
 screen. **V0.7 makes it a city.**
 
 The hand-authored district is still there, in the middle, exactly as it was — and around
-it is a kilometre of generated city: **4,462 props**, 4,475 colliders, streets 18 m wide
-between blocks, towers with setbacks, construction sites with carcasses and cranes,
-ladders up the walls, balconies to land on, halls you can walk into, solar arrays and
-billboards on the roofs, and **eleven elevators** that go where parkour cannot — up the
-inside of a building, out onto a roof 59 m above the street that nothing else reaches.
+it is a kilometre of generated city: **5,233 props**, 5,264 colliders, streets 18 m wide
+between blocks, towers with setbacks, 30 construction sites with carcasses and cranes,
+181 ladders up the walls, 125 balconies to land on, halls you can walk into, 21 interiors
+with *floors* in them, solar arrays and billboards on the roofs, and **29 elevators** that
+go where parkour cannot — up the inside of a building, out onto a roof 59 m above the
+street that nothing else reaches.
 
 The old platform lifts are gone. A lift is now a thing you *call*, walk into, send to a
 floor, and ride: the gate shuts, the car climbs, the gate opens, and you step out onto a
@@ -78,7 +79,7 @@ roof.
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1080 across 40 files |
+| Tests | 1086 across 40 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -97,12 +98,13 @@ changing it is something the server notices.
 
 | Feature | Where |
 | --- | --- |
-| A city, ~1 km across | `game/level/city.ts` — a seeded generator, 4,278 props on top of the district's 184 |
+| A city, ~1 km across | `game/level/city.ts` — a seeded generator, 5,049 props on top of the district's 184 |
 | Verticality, per building and in the skyline | Setbacks, two-storey blocks, terraced roof heights that rise towards the centre |
 | Ladders | A `ladder` model on a `climbable` face — the V0.3 climb ability already did the rest |
 | Balconies | Lips of deck on a bracket, at heights a player can use as a route |
 | Construction sites | `construction-slab` and `construction-column` carcasses, scaffold towers, and a tower crane over each |
-| Halls and interiors | Single volumes the size of a block, with columns, a mezzanine and a lit interior |
+| Halls | Single volumes the size of a block, with columns, a mezzanine and a lit interior |
+| Interiors with corridors | 21 buildings with three or four storeys inside, a corridor on each, and an atrium |
 | Indoor elevators | `game/level/elevators.ts` — call, enter, choose a floor, gates shut, ride |
 | Solar, billboards, megastructure | `solar-panel`, `billboard`, `crown` models, on roofs and on the tallest facades |
 | Smoother animation | The gait phase is extrapolated to the moment being drawn, and the joints have weight |
@@ -115,13 +117,13 @@ the generator produces:
 
 | | |
 | --- | --- |
-| Blocks | 133 mid-rise, 9 towers, 26 construction sites, 20 halls |
+| Blocks | 107 mid-rise, 6 towers, 30 construction sites, 23 halls, 21 interiors |
 | Roofs | Terraced in bands of 22-34 m near the old town, 8-20 m at the edge |
-| Ladders | 179, stacked 5 m at a time so the rungs stay rungs |
-| Balconies | 160 |
-| Cranes | 26, each over a site with four poured floors and columns that stop dead |
+| Ladders | 181, stacked 5 m at a time so the rungs stay rungs |
+| Balconies | 125 |
+| Cranes | 30, each over a site with four poured floors and columns that stop dead |
 | Billboards | On the tallest facades, facing the old town |
-| Lifts | 9 city towers, each serving street, mid, roof and a skydeck 7 m above the roof |
+| Lifts | 6 city towers and 21 interiors, serving street, each floor, and a roof or skydeck |
 
 Four rules are what make it *playable* rather than merely large, and each has a test:
 
@@ -132,6 +134,12 @@ Four rules are what make it *playable* rather than merely large, and each has a 
   reachable height — nothing in the city is decoration you can only look at.
 - **The lifts go where parkour cannot.** The top of a tower is 59 m above its street, and
   the only way up is to use the city.
+- **Indoors is not one room.** A hall is one volume the size of a block. An *interior* is
+  a building with three or four storeys inside it, a corridor down each with partitions
+  and ways past them, a lit ceiling on every floor, a lift on one side of a central atrium
+  and a ladderwell on the other. Every floor is a **ring** of four slabs round the well
+  rather than a plate, which is what lets the lift pass *through* every floor instead of
+  into it, and lets the well run from the street to the sky.
 - **The streets are a place.** They are at -34.8 m, which is why V0.7 lowered the kill
   plane: with the district's plane 12 m below the roofs, every street in the city would
   have been instantly fatal. A fall from a roof is still fatal on its own — 35 m of it is
@@ -174,6 +182,21 @@ fraction `alpha` of the next step has happened, and the phase has moved that fra
 The cycle itself got three things that a pair of sine waves does not have: the shoulders
 swing against the hips, the foot rolls rather than pointing the same way all cycle, and the
 hip bob is a raised cosine whose bottom is round rather than kinked.
+
+**And the joins.** V0.6.1's joints eased towards their target and were capped at a top
+speed, and checking that properly in V0.7 showed why the walk was still wrong. A cap is a
+kink: a joint that accelerates to a ceiling, holds it and drops back to easing has a
+*discontinuous velocity* at both ends of the ceiling, and it is the discontinuity — far
+more than the size of a movement — that an eye reads as a jerk. Measured at 240 Hz on a leg
+whipping from a standing pose into a vault's tuck it was a change of **0.032 rad per frame
+of velocity, inside one frame**.
+
+The joints are critically damped springs now. No ceiling, no overshoot, no corner:
+acceleration is a continuous function of position and velocity, so a limb starts from rest,
+arrives without a bounce, and never has a kink. The same measurement is **0.0072** — a 4.5x
+reduction in that one-frame spike, with the limb still reaching the same speed. Both halves
+of it are tests: the spike has a ceiling, and the spring has to arrive, from one side,
+without bouncing.
 
 ---
 

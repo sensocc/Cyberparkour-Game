@@ -28,7 +28,7 @@
 import * as THREE from 'three';
 
 import type { GameConfig } from '../core/config.js';
-import { clamp01, easeToward } from '../core/math.js';
+import { clamp01 } from '../core/math.js';
 import type { PlayerPose } from '../game/pose.js';
 
 /**
@@ -79,6 +79,11 @@ const HIP_HALF = 0.155;
  * The rates are ordered the way a body is: hips settle fastest because they carry the
  * weight, then the torso, then the limbs.
  */
+/**
+ * How quickly each joint catches up with the pose it has been given, as a spring rate in
+ * 1/s. Ordered the way a body is: the hips settle first because they carry the weight,
+ * then the torso, then out to the hands.
+ */
 const JOINT_RATE = {
   hips: 11,
   torso: 12,
@@ -88,26 +93,65 @@ const JOINT_RATE = {
 } as const;
 
 /**
- * And a ceiling on how fast a joint is allowed to travel.
+ * Critically damped springs, one per joint axis.
  *
- * An exponential approach is proportional: it moves a fixed *fraction* of the gap
- * each frame, so a large change still starts with a large step - a leg whipping from
- * a standing pose into a vault tuck covered seventeen degrees in one sixtieth of a
- * second, which is exactly the jolt this is here to remove. Capping the step as well
- * means a big change takes longer instead of arriving faster, which is what a heavy
- * limb does.
+ * Every angle in this file is a *target*, and the joint travels to it. That much was
+ * V0.6. V0.7 changed *how* it travels, and the reason is worth keeping.
  *
- * Metres per second for the hips, radians per second for everything else.
+ * An exponential ease is smooth in position, but a big change used to be capped at a top
+ * speed - and a cap is a kink. A joint that accelerates to a ceiling, holds it, and drops
+ * back to easing has a *discontinuous velocity* at both ends of the ceiling, and it is the
+ * discontinuity, far more than the size of the movement, that an eye reads as a jerk. On a
+ * leg whipping from a standing pose into a vault tuck it measured 0.032 rad per frame of
+ * velocity change - inside a single frame, at 240 Hz.
+ *
+ * A critically damped spring has no ceiling, no overshoot and no corner: acceleration is a
+ * continuous function of position and velocity, so the limb starts from rest, arrives
+ * without a bounce, and never has a kink in its velocity. That is the whole difference
+ * between a movement and a twitch.
  */
-const JOINT_SPEED = {
-  hips: 1.2,
-  torso: 6,
-  upper: 7.5,
-  lower: 9,
-  end: 11,
-} as const;
+class Joints {
+  private readonly velocity = new Map<string, number>();
+  /** Written by `integrate` and read by its caller, so nothing here allocates. */
+  private value = 0;
 
-/** One limb, as the chain of groups that has to be rotated to pose it. */
+  /** Turns a joint about one axis, towards `target` radians. */
+  rotation(
+    object: THREE.Object3D,
+    axis: 'x' | 'y' | 'z',
+    target: number,
+    rate: number,
+    dt: number,
+  ): void {
+    this.integrate(`${object.uuid}:r${axis}`, object.rotation[axis], target, rate, dt);
+    object.rotation[axis] = this.value;
+  }
+
+  /** Moves a joint up or down, for the one that travels instead of turning. */
+  height(object: THREE.Object3D, target: number, rate: number, dt: number): void {
+    this.integrate(`${object.uuid}:y`, object.position.y, target, rate, dt);
+    object.position.y = this.value;
+  }
+
+  /**
+   * One step of a critically damped spring.
+   *
+   * `a = w^2 (target - x) - 2w v`, integrated semi-implicitly - velocity first, then
+   * position - which is stable at the step sizes a frame can have. A very long frame is
+   * clamped rather than allowed out of that region: it settles a little slower instead of
+   * exploding.
+   */
+  private integrate(key: string, current: number, target: number, rate: number, dt: number): void {
+    const step = Math.min(1 / 30, Math.max(0, dt));
+    const velocity = this.velocity.get(key) ?? 0;
+    const acceleration = rate * rate * (target - current) - 2 * rate * velocity;
+    const next = velocity + acceleration * step;
+    this.velocity.set(key, next);
+    this.value = current + next * step;
+  }
+}
+
+/** One limb, as the chain of groups that has to be turned to pose it. */
 interface Limb {
   readonly root: THREE.Group;
   readonly mid: THREE.Group;
@@ -124,9 +168,22 @@ export interface PlayerBody {
   readonly armRight: Limb;
   /** Every geometry and material, for disposal. */
   readonly resources: (THREE.BufferGeometry | THREE.Material)[];
+  /**
+   * One spring per joint axis.
+   *
+   * On the rig rather than in a module: two bodies - a real one and a test's - must not
+   * share a set of velocities.
+   */
+  readonly joints: Joints;
   dispose(): void;
 }
 
+/** A number that is safe to put into a matrix. */
+function finite(value: number, fallback = 0): number {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/** A box of the body's own, tracked for disposal. */
 function box(
   width: number,
   height: number,
@@ -143,27 +200,6 @@ function box(
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
-}
-
-/**
- * Moves one joint towards its target: eased, but never faster than its ceiling.
- *
- * Both halves matter. The ease is what makes small changes smooth and the ceiling is
- * what keeps a large one from being a cut; and because the ceiling is a *speed*, a
- * long frame moves further than a short one, which is what keeps the animation
- * frame-rate independent.
- */
-function travel(current: number, target: number, rate: number, maxSpeed: number, dt: number): number {
-  const eased = easeToward(current, target, rate, dt);
-  const delta = eased - current;
-  const limit = maxSpeed * dt;
-  if (Math.abs(delta) <= limit) return eased;
-  return current + Math.sign(delta) * limit;
-}
-
-/** A number that is safe to put into a matrix. */
-function finite(value: number, fallback = 0): number {
-  return Number.isFinite(value) ? value : fallback;
 }
 
 /** A two-jointed limb hanging from `attach`. */
@@ -269,6 +305,7 @@ export function buildPlayerBody(): PlayerBody {
     armLeft,
     armRight,
     resources,
+    joints: new Joints(),
     dispose(): void {
       for (const resource of resources) resource.dispose();
     },
@@ -313,14 +350,14 @@ export function posePlayerBody(
   const shoulderTwist = -Math.sin(phase) * 0.13 * stride;
   const hipsTarget =
     HIPS_Y - crouch * (HIPS_Y - config.player.crouchHeight * 0.52) - bob * 0.022 * stride;
-  body.hips.position.y = travel(body.hips.position.y, hipsTarget, JOINT_RATE.hips, JOINT_SPEED.hips, step);
+  body.joints.height(body.hips, hipsTarget, JOINT_RATE.hips, step);
 
   // A forward lean through the whole body. A roll curls the torso up as well: the
   // camera is inside the body for the whole of it, so what is visible is the chest
   // folding towards the knees rather than a standing figure spinning.
   const curl = pose.stance === 'rolling' ? 0.9 * (1 - Math.abs(progress - 0.5) * 2) : 0;
-  body.torso.rotation.x = travel(body.torso.rotation.x, lean + curl, JOINT_RATE.torso, JOINT_SPEED.torso, step);
-  body.torso.rotation.y = travel(body.torso.rotation.y, shoulderTwist, JOINT_RATE.torso, JOINT_SPEED.torso, step);
+  body.joints.rotation(body.torso, 'x', lean + curl, JOINT_RATE.torso, step);
+  body.joints.rotation(body.torso, 'y', shoulderTwist, JOINT_RATE.torso, step);
 
   const swing = 0.7 * stride;
   const knee = 0.75 * stride;
@@ -329,18 +366,19 @@ export function posePlayerBody(
     [body.legLeft, 1],
     [body.legRight, -1],
   ] as const) {
-    applyLeg(leg, pose, sign, phase, swing, knee, crouch, progress, step);
+    applyLeg(body, leg, pose, sign, phase, swing, knee, crouch, progress, step);
   }
 
   for (const [arm, sign] of [
     [body.armLeft, -1],
     [body.armRight, 1],
   ] as const) {
-    applyArm(arm, pose, sign, phase, swing, step);
+    applyArm(body, arm, pose, sign, phase, swing, step);
   }
 }
 
 function applyLeg(
+  body: PlayerBody,
   leg: Limb,
   pose: PlayerPose,
   sign: number,
@@ -394,12 +432,13 @@ function applyLeg(
     }
   }
 
-  leg.root.rotation.x = travel(leg.root.rotation.x, upper, JOINT_RATE.upper, JOINT_SPEED.upper, step);
-  leg.mid.rotation.x = travel(leg.mid.rotation.x, lower, JOINT_RATE.lower, JOINT_SPEED.lower, step);
-  leg.end.rotation.x = travel(leg.end.rotation.x, end, JOINT_RATE.end, JOINT_SPEED.end, step);
+  body.joints.rotation(leg.root, 'x', upper, JOINT_RATE.upper, step);
+  body.joints.rotation(leg.mid, 'x', lower, JOINT_RATE.lower, step);
+  body.joints.rotation(leg.end, 'x', end, JOINT_RATE.end, step);
 }
 
 function applyArm(
+  body: PlayerBody,
   arm: Limb,
   pose: PlayerPose,
   sign: number,
@@ -462,8 +501,8 @@ function applyArm(
     }
   }
 
-  arm.root.rotation.x = travel(arm.root.rotation.x, upper, JOINT_RATE.upper, JOINT_SPEED.upper, step);
-  arm.root.rotation.z = travel(arm.root.rotation.z, roll, JOINT_RATE.upper, JOINT_SPEED.upper, step);
-  arm.mid.rotation.x = travel(arm.mid.rotation.x, lower, JOINT_RATE.lower, JOINT_SPEED.lower, step);
-  arm.end.rotation.x = travel(arm.end.rotation.x, end, JOINT_RATE.end, JOINT_SPEED.end, step);
+  body.joints.rotation(arm.root, 'x', upper, JOINT_RATE.upper, step);
+  body.joints.rotation(arm.root, 'z', roll, JOINT_RATE.upper, step);
+  body.joints.rotation(arm.mid, 'x', lower, JOINT_RATE.lower, step);
+  body.joints.rotation(arm.end, 'x', end, JOINT_RATE.end, step);
 }

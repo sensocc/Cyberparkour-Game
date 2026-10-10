@@ -182,6 +182,9 @@ export function generateCity(options: CityOptions = {}): CityParts {
       } else if (roll < band.construction + band.hall) {
         count('hall');
         hall(context, cx, cz, footprint);
+      } else if (distance < 420 && random() < 0.22) {
+        count('interior');
+        interiorTower(context, cx, cz, footprint, random);
       } else if (distance < 260 && random() < 0.34) {
         // Towers: the ones with lifts in them. Only in the inner rings, so the lifts are
         // where a player actually is.
@@ -691,3 +694,131 @@ function balcony(context: Context, id: string, x: number, z: number, width: numb
 }
 
 const BILLBOARD_COLOURS: readonly string[] = ['#57e0ff', '#ff4fd8', '#ffc247', '#7dff9b', '#a06bff', '#eaf6ff'];
+
+/**
+ * A tower you can walk *into*: several floors, a corridor on each, and a way between them.
+ *
+ * The halls are one volume the size of a block, which is the "open planes" end of an
+ * interior. This is the other end: three or four storeys inside a building, a corridor on
+ * each with rooms off it, and an atrium in the middle with the lift on one side and the
+ * ladderwell on the other. Indoors in a city is not one room, and a floor you can only
+ * reach by lift is where a secret is.
+ *
+ * Every floor is a *ring* of four slabs round the atrium rather than a plate: the well
+ * runs from the street to the sky, the lift and the ladder both pass through it, and no
+ * slab has to be reasoned about in pieces. The ring mirrors the shell the way the shell's
+ * own walls do - two slabs the full width, two *between* them - because slabs that all
+ * spanned the footprint would share their outer faces, and a face drawn twice at one depth
+ * is a seam that flickers.
+ */
+function interiorTower(
+  context: Context,
+  cx: number,
+  cz: number,
+  footprint: number,
+  random: () => number,
+): void {
+  const { props, config, count, lights } = context;
+  const width = footprint * 0.92;
+  const depth = footprint * 0.8;
+  const wall = 0.6;
+  const floor = config.groundY;
+  const storey = 5.4;
+  const levels = 3 + Math.floor(random() * 2);
+  const roof = floor + storey * levels;
+  const id = `inside-${Math.round(cx)}-${Math.round(cz)}`;
+  const tints = tintSet(context);
+  const innerDepth = depth - wall * 2;
+  const innerWidth = width - wall * 2;
+
+  const panel = (
+    suffix: string,
+    x: number,
+    z: number,
+    size: readonly [number, number, number],
+    bottom: number,
+    kind: PropDefinition['kind'] = 'wall',
+  ): void => {
+    props.push(make(`${id}-${suffix}`, { at: [x, z], bottom, size, kind, model: 'slab', tints }));
+  };
+
+  // ---- the shell, with a doorway at street level on the +Z side
+  panel('wall-w', cx - width / 2 + wall / 2, cz, [wall, storey * levels, depth], floor);
+  panel('wall-e', cx + width / 2 - wall / 2, cz, [wall, storey * levels, depth], floor);
+  panel('wall-n', cx, cz - depth / 2 + wall / 2, [innerWidth, storey * levels, wall], floor);
+  const doorWidth = 5;
+  const sideWidth = (innerWidth - doorWidth) / 2;
+  panel('wall-s-l', cx - doorWidth / 2 - sideWidth / 2, cz + depth / 2 - wall / 2, [sideWidth, storey * levels, wall], floor);
+  panel('wall-s-r', cx + doorWidth / 2 + sideWidth / 2, cz + depth / 2 - wall / 2, [sideWidth, storey * levels, wall], floor);
+  panel('lintel', cx, cz + depth / 2 - wall / 2, [doorWidth, storey * levels - 3.6, wall], floor + 3.6);
+
+  // ---- the atrium, and the ring of slabs round it
+  const atriumHalfX = Math.min(5, innerWidth / 3);
+  const atriumHalfZ = Math.min(6, innerDepth / 3);
+  const bandX = (innerWidth / 2 - atriumHalfX) / 2;
+  const bandZ = (innerDepth / 2 - atriumHalfZ) / 2;
+  /** The slabs between the side ones, so the four do not share a plane. */
+  const infillWidth = innerWidth - 2 * (innerWidth / 2 - atriumHalfX);
+
+  for (let level = 1; level <= levels; level += 1) {
+    // The top of the ring *is* the roof: the well goes all the way up.
+    const y = level === levels ? roof : floor + storey * level - 0.6;
+    panel(`slab-${level}-w`, cx - atriumHalfX - bandX, cz, [innerWidth / 2 - atriumHalfX, 0.6, atriumHalfZ * 2], y, 'floor');
+    panel(`slab-${level}-e`, cx + atriumHalfX + bandX, cz, [innerWidth / 2 - atriumHalfX, 0.6, atriumHalfZ * 2], y, 'floor');
+    panel(`slab-${level}-n`, cx, cz - atriumHalfZ - bandZ, [infillWidth, 0.6, innerDepth / 2 - atriumHalfZ], y, 'floor');
+    panel(`slab-${level}-s`, cx, cz + atriumHalfZ + bandZ, [infillWidth, 0.6, innerDepth / 2 - atriumHalfZ], y, 'floor');
+
+    if (level === levels) break;
+
+    // A corridor is a room with a wall down it and gaps in the wall. Three partitions
+    // across the north band leave two ways past them.
+    for (let index = 0; index < 3; index += 1) {
+      const x = cx - innerWidth / 2 + ((index + 0.5) * innerWidth) / 3;
+      panel(
+        `part-${level}-${index}`,
+        x,
+        cz - atriumHalfZ - bandZ,
+        [(innerWidth / 3) * 0.62, storey - 1.4, 0.4],
+        floor + storey * (level - 1),
+      );
+    }
+    lights.push({
+      id: `${id}-lamp-${level}`,
+      position: { x: cx, y: floor + storey * level - 1.3, z: cz },
+      color: '#cfe4ff',
+      intensity: 8,
+      distance: 24,
+    });
+    count('interior-floor');
+  }
+
+  // Rooftop kit on the ring. Not a `roofKit`: that builds its own building underneath,
+  // and a body inside this shell is a building inside a building.
+  props.push(make(`${id}-solar-a-panel`, { at: [cx - innerWidth / 4, cz - atriumHalfZ - bandZ], bottom: roof, size: [6, 1.2, 3], model: 'solar-panel' }));
+  props.push(make(`${id}-solar-b-panel`, { at: [cx + innerWidth / 4, cz - atriumHalfZ - bandZ], bottom: roof, size: [6, 1.2, 3], model: 'solar-panel' }));
+  props.push(make(`${id}-tank`, { at: [cx + innerWidth / 2 - 2.5, cz + atriumHalfZ + bandZ], bottom: roof, size: [3, 3.2, 3], model: 'water-tank' }));
+
+  // ---- the ladderwell, on the east side of the atrium, street to roof
+  laddersUp(context, `${id}-ladder`, cx + atriumHalfX - 1, cz + atriumHalfZ - 1, roof, floor);
+
+  // ---- and the lift, on the west side, serving every floor and the roof
+  const liftFloors: number[] = [];
+  for (let level = 0; level <= levels; level += 1) {
+    liftFloors.push(level === levels ? roof : floor + storey * level);
+  }
+  const liftId = `${id}-lift`;
+  const parts = liftTower({
+    id: liftId,
+    at: [cx - atriumHalfX + 1.8, cz - atriumHalfZ + 2],
+    size: [3.2, 3.2],
+    floors: liftFloors,
+    names: ['Street', ...liftFloors.slice(1, -1).map((_y, index) => `Floor ${index + 2}`), 'Roof'],
+    facing: 'z+',
+    base: floor - 6,
+    tint: '#3c4658',
+    tintDark: '#313a49',
+  });
+  props.push(...parts.props);
+  context.elevators.push(parts.elevator);
+  count('interior-lift');
+}

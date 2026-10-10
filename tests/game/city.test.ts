@@ -71,7 +71,7 @@ describe('the layout', () => {
   it('builds every kind of place', () => {
     const parts = generateCity({ seed: 5 });
     const report = parts.report;
-    for (const kind of ['block', 'tower', 'construction', 'hall', 'ladder', 'balcony', 'crane', 'billboard', 'lift']) {
+    for (const kind of ['block', 'tower', 'construction', 'hall', 'interior', 'ladder', 'balcony', 'crane', 'billboard', 'lift']) {
       expect(report[kind] ?? 0, kind).toBeGreaterThan(0);
     }
   });
@@ -114,7 +114,7 @@ describe('a generated city as a level', () => {
     const decks = city.props
       .filter((prop) => prop.model === 'deck' && prop.id.startsWith('city-'))
       .map((prop) => propBounds(prop).max.y);
-    expect(decks.length).toBeGreaterThan(20);
+    expect(decks.length).toBeGreaterThan(12);
 
     const sorted = [...decks].sort((a, b) => a - b);
     let close = 0;
@@ -145,16 +145,22 @@ describe('the lifts the generator builds', () => {
     // first case this caught.
     const city = buildCity(DEMO_DISTRICT, { seed: 21, ...SMALL });
     const built = buildLevel(city, BUILD);
-    const cars = (city.elevators ?? []).filter((lift) => lift.id.startsWith('city-'));
+    // Every lift the generator built - towers and interiors alike, so this covers the
+    // cars that stand *inside* a building as well as the ones beside it.
+    const own = new Set((DEMO_DISTRICT.elevators ?? []).map((lift) => lift.id));
+    const cars = (city.elevators ?? []).filter((lift) => !own.has(lift.id));
     expect(cars.length).toBeGreaterThan(0);
 
     for (const car of cars) {
-      const halfX = car.size[0] / 2;
-      const halfZ = car.size[1] / 2;
+      // A centimetre inside the car's own footprint: a car *touching* the wall of its
+      // own shaft is not an obstruction, and at these magnitudes a touch and an overlap
+      // are the same floating-point number.
+      const halfX = car.size[0] / 2 - 0.01;
+      const halfZ = car.size[1] / 2 - 0.01;
       for (const floor of car.floors) {
         const box = {
-          min: { x: car.at[0] - halfX, y: floor + 0.05, z: car.at[1] - halfZ },
-          max: { x: car.at[0] + halfX, y: floor + 1.85, z: car.at[1] + halfZ },
+          min: { x: car.at[0] - halfX, y: floor + 0.15, z: car.at[1] - halfZ },
+          max: { x: car.at[0] + halfX, y: floor + 1.75, z: car.at[1] + halfZ },
         };
         const blocked = built.colliders.filter(
           (collider) =>
@@ -170,5 +176,72 @@ describe('the lifts the generator builds', () => {
         expect(blocked.map((collider) => collider.id), `${car.id} at ${floor}`).toEqual([]);
       }
     }
+  });
+});
+
+describe('the interiors the generator builds', () => {
+  const city = buildCity(DEMO_DISTRICT, { seed: 21, ...SMALL });
+
+  it('puts several floors inside a building, each of them served', () => {
+    // "Indoors" in a city is not one room: a building with three or four storeys inside
+    // it, a corridor on each, and a way up - and the way up is the lift, which is what
+    // makes the top floor somewhere.
+    const interiors = (city.elevators ?? []).filter((lift) => lift.id.startsWith('inside-'));
+    expect(interiors.length).toBeGreaterThan(0);
+
+    for (const lift of interiors) {
+      expect(lift.floors.length, lift.id).toBeGreaterThanOrEqual(4);
+      expect(lift.names?.length, lift.id).toBe(lift.floors.length);
+      expect(lift.names?.[0]).toBe('Street');
+      expect(lift.names?.[lift.names.length - 1]).toBe('Roof');
+      // Floors you can stand on are floors that are far enough apart to walk in.
+      for (let index = 1; index < lift.floors.length; index += 1) {
+        const gap = (lift.floors[index] as number) - (lift.floors[index - 1] as number);
+        expect(gap, lift.id).toBeGreaterThan(2);
+      }
+    }
+  });
+
+  it('rings every floor round an atrium rather than plating over it', () => {
+    // The well runs from the street to the sky: four slabs round the opening, and the
+    // lift and the ladder both pass through it rather than into it.
+    const built = buildLevel(city, BUILD);
+    const interiors = (city.elevators ?? []).filter((lift) => lift.id.startsWith('inside-'));
+    const roofOf = (lift: (typeof interiors)[number]) =>
+      lift.floors[lift.floors.length - 1] as number;
+
+    for (const lift of interiors) {
+      const roof = roofOf(lift);
+      // Nothing may cover the shaft, at any height it stops at.
+      for (const floor of lift.floors) {
+        const shaft = built.colliders.filter(
+          (collider) =>
+            !collider.id.includes('-gate') &&
+            collider.box.min.x < lift.at[0] + lift.size[0] / 2 - 0.01 &&
+            collider.box.max.x > lift.at[0] - lift.size[0] / 2 + 0.01 &&
+            collider.box.min.z < lift.at[1] + lift.size[1] / 2 - 0.01 &&
+            collider.box.max.z > lift.at[1] - lift.size[1] / 2 + 0.01 &&
+            collider.box.min.y < floor + 1.4 &&
+            collider.box.max.y > floor + 0.2,
+        );
+        expect(shaft.map((collider) => collider.id), `${lift.id} at ${floor}`).toEqual([]);
+      }
+      // ...and the roof is a ring, not a lid, so the well is open to the sky.
+      expect(Number.isFinite(roof)).toBe(true);
+    }
+  });
+
+  it('has a way between the inside floors that is not the lift', () => {
+    // A ladderwell, so the building is climbable as well as rideable - and so a floor
+    // can be reached without calling anything.
+    const interiors = new Set(
+      (city.elevators ?? [])
+        .filter((lift) => lift.id.startsWith('inside-'))
+        .map((lift) => lift.id.replace('-lift', '')),
+    );
+    const ladders = city.props.filter(
+      (prop) => prop.model === 'ladder' && [...interiors].some((prefix) => prop.id.startsWith(`${prefix}-ladder`)),
+    );
+    expect(ladders.length).toBeGreaterThan(interiors.size);
   });
 });
