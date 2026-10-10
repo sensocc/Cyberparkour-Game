@@ -273,12 +273,11 @@ export function shadowReachFor(extent: number): number {
 /**
  * How far a chunk stays drawn, in metres.
  *
- * The fog is opaque by 1150 m and the city is a kilometre across, so a chunk behind four
- * hundred metres of air is a hundred dark pixels and three hundred vertices nobody reads.
- * Culling it is not a change to the picture: below the fog line the difference between a
- * silhouette and a slightly darker silhouette is one nobody can see.
+ * The fog runs from 260 m to 1150, and by 420 m a chunk is a fifth of the way to opaque -
+ * a silhouette of a silhouette. The city is a kilometre across, so at this distance a street
+ * view draws a third of it, and what it drops is what nobody can see anyway.
  */
-const DRAW_DISTANCE = 620;
+const DRAW_DISTANCE = 420;
 
 /**
  * Draws the chunks near the player, and stops drawing the rest.

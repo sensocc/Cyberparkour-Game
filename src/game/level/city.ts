@@ -147,6 +147,18 @@ interface Band {
  */
 const CELL_STEP = 74;
 
+/**
+ * The street a building leaves, in metres.
+ *
+ * Low enough that two buildings are still two buildings and a player fits between them (the
+ * player is 0.7 m across), high enough not to be a seam; and the ceiling is a hair under
+ * what a running jump crosses, so every neighbour in the grid is reachable from every other
+ * by construction rather than by repair. `reach.test.ts` measures the real jump against the
+ * movement config; this is that number with a margin.
+ */
+const MIN_GAP = 1.6;
+const MAX_GAP = 5.2;
+
 function bandFor(distance: number): Band {
   // The innermost ring is level with the district's own roofs - its decks sit at 0 to 1.2,
   // and its buildings' roofs between -0.8 and 2.8 - so the city's first ring of roofs is
@@ -263,7 +275,6 @@ export function generateCity(options: CityOptions = {}): CityParts {
   };
 
   const [keepX0, keepX1, keepZ0, keepZ1] = config.keepClear;
-  const half = config.pitch / 2;
   /**
    * The building on each plot, by plot.
    *
@@ -272,6 +283,14 @@ export function generateCity(options: CityOptions = {}): CityParts {
    * that matters is which masses face which.
    */
   const plots = new Map<string, Building>();
+  /**
+   * Plots the level's own buildings pushed the city out of.
+   *
+   * Remembered rather than skipped: a plot left empty is a hole in the grid, and the rule is
+   * that there is no empty space bigger than fifteen metres anywhere in the city - so these
+   * are filled afterwards, around whatever it was that stood there.
+   */
+  const holes: { cx: number; cz: number }[] = [];
   /** Footprints already built, so nothing is built inside anything. */
   const placed: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
   /**
@@ -300,8 +319,10 @@ export function generateCity(options: CityOptions = {}): CityParts {
       const distance = Math.hypot(cx, cz);
       if (distance > config.radius) continue;
 
-      // The old town keeps its own ground, and a street around it.
-      const footprint = half - config.street / 2;
+      // What actually stands on a plot: the building, which is as wide as the pitch minus
+      // a street - not the plot, which is much smaller than that. Checking the plot instead
+      // is how a 58 m building came to be built through the old town's wall.
+      const footprint = (config.pitch - MIN_GAP) / 2;
       if (
         cx + footprint > keepX0 &&
         cx - footprint < keepX1 &&
@@ -322,6 +343,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
             cz - footprint < mass.maxZ,
         )
       ) {
+        holes.push({ cx, cz });
         continue;
       }
 
@@ -637,6 +659,43 @@ export function generateCity(options: CityOptions = {}): CityParts {
     for (let index = 0; index < repairs; index += 1) count('repair');
   }
 
+  // ------------------------------------------------------------------ no holes
+  //
+  // Every plot the level's own buildings pushed the city out of gets filled in around
+  // whatever pushed it out. A gap left where a tower stands is a gap nobody can cross and
+  // nothing can hide in: the rule is that the city has no empty space in it wider than
+  // fifteen metres, and a plot is sixty-two.
+  //
+  // The size is measured from what is already there rather than assumed: the building takes
+  // the largest room it can on each axis, minus the street it has to leave.
+  let filled = 0;
+  for (const hole of holes) {
+    let roomX = MAX_GAP * 3;
+    let roomZ = MAX_GAP * 3;
+    for (const box of placed) {
+      const centreX = (box.minX + box.maxX) / 2;
+      const centreZ = (box.minZ + box.maxZ) / 2;
+      const halfX = (box.maxX - box.minX) / 2;
+      const halfZ = (box.maxZ - box.minZ) / 2;
+      const dx = Math.abs(centreX - hole.cx);
+      const dz = Math.abs(centreZ - hole.cz);
+      if (dx < halfX || dz < halfZ) continue;
+      roomX = Math.min(roomX, dx - halfX);
+      roomZ = Math.min(roomZ, dz - halfZ);
+    }
+    const width = Math.min(roomX, MAX_GAP * 3) * 2 - MAX_GAP;
+    const depth = Math.min(roomZ, MAX_GAP * 3) * 2 - MAX_GAP;
+    if (width < 4 || depth < 4) continue;
+    // Level with the band the hole is in, so the filler is one move from the ring around it.
+    const band = bandFor(Math.hypot(hole.cx, hole.cz));
+    const roof = band.roofs[Math.floor(random() * band.roofs.length)] ?? band.roofs[0]!;
+    infill(filler, hole.cx, hole.cz, width, depth, roof);
+    filled += 1;
+  }
+  if (filled > 0) {
+    for (let index = 0; index < filled; index += 1) count('hole');
+  }
+
   // Ground under the whole thing. The district's own slab is 700 m across, which is
   // short of a kilometre of city - and a city with a void under its outer ring reads as
   // floating rather than as built. Half a metre lower, so the two never share a plane.
@@ -766,8 +825,11 @@ function bridge(
     const roof = fromRoof + (toRoof - fromRoof) * t;
     const centre = from + margin + each * (step + 0.5);
     const half = shared(t);
-    const width = axis === 'x' ? each : half * 2;
-    const depth = axis === 'x' ? half * 2 : each;
+    // A street's worth taken off each step, so a run of fillers is a row of buildings with
+    // gaps in the jumpable band rather than one long terrace.
+    const street = Math.max(1, Math.min(each * 0.25, 4));
+    const width = axis === 'x' ? each - street : half * 2;
+    const depth = axis === 'x' ? half * 2 : each - street;
     if (Math.min(width, depth) < 3) continue;
     const atX = axis === 'x' ? centre : shared(0.5);
     const atZ = axis === 'x' ? shared(0.5) : centre;
@@ -1067,6 +1129,36 @@ function roofKit(
       make(`${id}-mast`, { at: [at[0], at[1] - depth / 2 + 2], bottom: top, size: [1, 11, 1], model: 'antenna-mast' }),
     );
   }
+  // Windows, and this is the graphics pass as much as the glazing: a surface that reflects
+  // the sky needs sky to land on, and until now the only glass in the city was a solar
+  // panel's face. Two bands - one on each face a street can see - so a dense grid of
+  // buildings gleams the way a dense grid of buildings does, without a prop per window.
+  if (width > 22 && top - config.groundY > 10) {
+    const lit = random() < 0.4;
+    const tint = lit ? '#e9f6cf' : random() < 0.5 ? '#8fb4c8' : '#5f7c92';
+    const lowest = config.groundY + 6;
+    const room = top - 2 - lowest;
+    for (let band = 0; band < 2; band += 1) {
+      const bottom = lowest + room * (0.28 + 0.44 * band);
+      props.push(
+        make(`${id}-windows-z-${band}`, {
+          at: [at[0], at[1] + depth / 2 - 0.16],
+          bottom,
+          size: [width - 2, 2.2, 0.34],
+          model: 'window-band',
+          tints: { glass: tint },
+        }),
+        make(`${id}-windows-x-${band}`, {
+          at: [at[0] + width / 2 - 0.16, at[1]],
+          bottom,
+          size: [0.34, 2.2, depth - 2],
+          model: 'window-band',
+          tints: { glass: tint },
+        }),
+      );
+    }
+  }
+
   if (random() < 0.3) {
     props.push(
       make(`${id}-duct`, {
@@ -1094,16 +1186,17 @@ function block(
   // nothing between one building and the next - wide enough to read as a city from the
   // air and far too wide to cross on foot, and the reason V0.7's streets were a place you
   // looked at rather than a route.
-  // Nearly the whole pitch, which is the difference between a grid of buildings and a grid
-  // of *plots* with a building on each.
+  // **The gap is what a building is sized from, not the other way round.**
   //
-  // At a 62 m pitch a 40 m building leaves a 22 m street: four times a jump, so no two
-  // neighbours in the city can reach each other and every roof needs a filler built in the
-  // gap before it has anywhere to go. At 54 to 58 m the street is four to eight metres -
-  // which is a street, and which a running jump crosses - so the grid itself is the route
-  // and the fillers have only the exceptions left to fix.
-  const width = footprint * (2.45 + random() * 0.2);
-  const depth = footprint * (2.4 + random() * 0.24);
+  // At a 62 m pitch a 54 to 58 m building leaves a four to eight metre street - and a jump
+  // crosses 5.7, so *half* of those neighbours are unreachable and the roof next door might
+  // as well be a wall. Sizing from the gap instead puts every neighbour inside the jumpable
+  // band by construction: the building takes whatever is left of the pitch after a street
+  // of one and a half to five and a half metres, and the difference between one building's
+  // street and the next's is the variety.
+  const span = Math.max(footprint * 2, context.config.pitch - MIN_GAP);
+  const width = span - (MIN_GAP + random() * (MAX_GAP - MIN_GAP));
+  const depth = span - (MIN_GAP + random() * (MAX_GAP - MIN_GAP));
 
   // Which roof it gets is a function of *where it is*, not a free roll.
   //

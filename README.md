@@ -41,52 +41,53 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-3. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-4. [What V0.7.2 fixes](#what-v072-fixes)
-5. [What V0.7.1 optimises](#what-v071-optimises)
-6. [What V0.7 delivers](#what-v07-delivers)
-7. [What V0.6.1 fixes](#what-v061-fixes)
-8. [What V0.6 delivers](#what-v06-delivers)
-9. [What V0.5 delivered](#what-v05-delivered)
-10. [Quick start](#quick-start)
-11. [Controls](#controls)
-12. [What you should see](#what-you-should-see)
-13. [Settings](#settings)
-14. [Camera effects](#camera-effects)
-15. [Feel](#feel)
-16. [Your body](#your-body)
-17. [Optimisation](#optimisation)
-18. [Locomotion](#locomotion)
-19. [The movement state machine](#the-movement-state-machine)
-20. [The manoeuvre bands](#the-manoeuvre-bands)
-21. [Wall running](#wall-running)
-22. [Wall jumping](#wall-jumping)
-23. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-24. [The landing roll](#the-landing-roll)
-25. [Pipe climbing](#pipe-climbing)
-26. [Interiors and doors](#interiors-and-doors)
-27. [Lifts](#lifts)
-28. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-29. [Checkpoints and respawn](#checkpoints-and-respawn)
-30. [The district](#the-district)
-31. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-32. [Neon](#neon)
-33. [Fall damage and health](#fall-damage-and-health)
-34. [Models and surfaces](#models-and-surfaces)
-35. [Sound](#sound)
-36. [How the textures are made](#how-the-textures-are-made)
-37. [Architecture](#architecture)
-38. [How a frame works](#how-a-frame-works)
-39. [Collision](#collision)
-40. [Crash reporting](#crash-reporting)
-41. [The HUDs](#the-huds)
-42. [Testing](#testing)
-43. [Continuous integration](#continuous-integration)
-44. [Project layout](#project-layout)
-45. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-46. [Out of scope for V0.7](#out-of-scope-for-v07)
-47. [Roadmap](#roadmap)
+2. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+3. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+4. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+5. [What V0.7.2 fixes](#what-v072-fixes)
+6. [What V0.7.1 optimises](#what-v071-optimises)
+7. [What V0.7 delivers](#what-v07-delivers)
+8. [What V0.6.1 fixes](#what-v061-fixes)
+9. [What V0.6 delivers](#what-v06-delivers)
+10. [What V0.5 delivered](#what-v05-delivered)
+11. [Quick start](#quick-start)
+12. [Controls](#controls)
+13. [What you should see](#what-you-should-see)
+14. [Settings](#settings)
+15. [Camera effects](#camera-effects)
+16. [Feel](#feel)
+17. [Your body](#your-body)
+18. [Optimisation](#optimisation)
+19. [Locomotion](#locomotion)
+20. [The movement state machine](#the-movement-state-machine)
+21. [The manoeuvre bands](#the-manoeuvre-bands)
+22. [Wall running](#wall-running)
+23. [Wall jumping](#wall-jumping)
+24. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+25. [The landing roll](#the-landing-roll)
+26. [Pipe climbing](#pipe-climbing)
+27. [Interiors and doors](#interiors-and-doors)
+28. [Lifts](#lifts)
+29. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+30. [Checkpoints and respawn](#checkpoints-and-respawn)
+31. [The district](#the-district)
+32. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+33. [Neon](#neon)
+34. [Fall damage and health](#fall-damage-and-health)
+35. [Models and surfaces](#models-and-surfaces)
+36. [Sound](#sound)
+37. [How the textures are made](#how-the-textures-are-made)
+38. [Architecture](#architecture)
+39. [How a frame works](#how-a-frame-works)
+40. [Collision](#collision)
+41. [Crash reporting](#crash-reporting)
+42. [The HUDs](#the-huds)
+43. [Testing](#testing)
+44. [Continuous integration](#continuous-integration)
+45. [Project layout](#project-layout)
+46. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+47. [Out of scope for V0.7](#out-of-scope-for-v07)
+48. [Roadmap](#roadmap)
 
 ---
 
@@ -94,23 +95,76 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.4` |
+| Version | `0.7.5` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1110 across 42 files |
+| Tests | 1114 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.4 is finished and frozen: a dense grid of buildings, no flickering ground, no buildings
-inside each other, and glass that reflects the sky. The district is *not* yet labelled Level
-1 - that is V0.8's job.
+V0.7.5 is finished and frozen: buildings sized from the street they leave, so the grid is the
+route. The district is *not* yet labelled Level 1 - that is V0.8's job.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.5 fixes: the grid is the route
+
+### Sized from the street, not the other way round
+
+V0.7.4 filled the plots and left four to eight metre streets. A running jump crosses 5.7, so
+*half of every building's neighbours were out of reach* - and the number said it: 31% of roofs
+had two jumpable neighbours, 123 had none at all.
+
+The building is what is left of the pitch after the street now. Every building leaves a street
+of 1.6 to 5.2 metres, and the difference between one building's street and the next's is the
+variety the rule asks for. Nothing is repaired afterwards, because nothing needs to be: the
+grid is inside the jumpable band by construction.
+
+| | V0.7.4 | V0.7.5 |
+| --- | --- | --- |
+| Roofs with two jumpable neighbours | 31% | **85%** |
+| Roofs with none | 123 | **7** (0.9%) |
+| Overlapping building pairs | 2,723 | **55** |
+| Props | 16,690 | **8,516** |
+| Triangles in the city | 1,322k | **790k** |
+| Visible triangles, street view | 598k | **384k** |
+
+The props, the triangles and the draw calls all went *down* while the city got denser, because
+a building that fills its plot is one box where the old grid needed three small fillers in the
+street between two of them. The distance cull came down to 420 m at the same time - by then the
+fog is a fifth of the way to opaque and the difference is a silhouette of a silhouette.
+
+### The height half of the rule, which is not met by jumping
+
+**48% of roofs have two neighbours within a pull-up as well as a jump.** The city is terraced and
+a terrace twelve metres up is not a jump. What the rule allows instead is *a way across*, and the
+way across is the ladder every building has had since V0.7.2 - which is asserted, and is true.
+So the honest statement of the rule is: the distance half holds for 85% of roofs, and the height
+half is covered by ladders rather than by jumping.
+
+### No empty space
+
+Every plot the level's own buildings push the city out of is remembered and filled afterwards,
+sized from the room that is actually there. That is the implementation of "no free space bigger
+than 15 by 15"; it is **not** independently measured, and a lattice scan over the building bodies
+still finds pockets of thirty-odd metres - inside construction carcasses and hall interiors,
+which are open by design, but I have not separated the two cases and so cannot claim the rule is
+met.
+
+### Glass in the skyline
+
+V0.7.4 taught surfaces to reflect the sky and then had almost nothing for the sky to land on:
+the only glass in the city was a solar panel's face and a crane's cab, so a density of towers
+read as a density of concrete. Every building of any size now wears two bands of window - one per
+face a street can see - lit or dark by a roll of the dice, with mullions in the model so one prop
+is one band. Two thousand of them, for the price of two props per building.
 
 ---
 
@@ -1815,5 +1869,9 @@ in the project so far, and the one that mattered most.
 V0.7.4 was the version about the *floor* of a city rather than its skyline: the seam between
 two ground slabs, the width of a street, whether two buildings are one building, and whether
 a window looks like glass.
+
+V0.7.5 is the version where the city stopped being painted and started being measured: 85% of
+roofs within two jumps of two neighbours, and a paragraph above saying plainly which parts of the
+rule are not met.
 
 The next milestone is V0.8: polish, and labelling the district as Level 1.
