@@ -39,6 +39,17 @@ export interface SurfaceDefinition {
    * can recolour it without needing to restate that it glows.
    */
   readonly emissive?: boolean;
+  /**
+   * How much of the sky it throws back, 0 to 1.
+   *
+   * The one place the renderer stops being flat: a window, a canopy, a solar panel. Metal
+   * and glass do not have a colour so much as a reflection, and a city at night is mostly
+   * the second-hand light of its own gleaming - a `glass` surface painted a pale blue and
+   * lit by a lambert term looks like paper. A reflective surface gets a specular highlight
+   * from the sun and, more to the point, the skybox as an environment map, so it changes as
+   * the camera moves the way a window does.
+   */
+  readonly reflectivity?: number;
 }
 
 /** World metres covered by one tile, per texture. */
@@ -95,7 +106,29 @@ export const SURFACES: readonly SurfaceDefinition[] = [
   // Accents and specials
   { id: 'hazard', texture: 'hazard', tint: '#efe4d2', metresPerTile: METRES_PER_TILE.hazard },
   { id: 'grille', texture: 'grille', tint: '#78828f', metresPerTile: METRES_PER_TILE.grille },
-  { id: 'glass', texture: 'glass', tint: '#d8f0f6', metresPerTile: METRES_PER_TILE.glass },
+  {
+    id: 'glass',
+    texture: 'glass',
+    tint: '#cfe6ee',
+    metresPerTile: METRES_PER_TILE.glass,
+    reflectivity: 0.45,
+  },
+  // Two more of the same family, because a city has more than one kind of window: a lit
+  // one and a dark one, and the canopy over a shopfront.
+  {
+    id: 'glass-lit',
+    texture: 'glass',
+    tint: '#eaf7d9',
+    metresPerTile: METRES_PER_TILE.glass,
+    reflectivity: 0.6,
+  },
+  {
+    id: 'glass-dark',
+    texture: 'glass',
+    tint: '#7d93a4',
+    metresPerTile: METRES_PER_TILE.glass,
+    reflectivity: 0.3,
+  },
 
   // Neon signage. The tint is the gas colour; a prop recolours it per sign.
   { id: 'neon', texture: 'sign', tint: '#57e0ff', metresPerTile: METRES_PER_TILE.sign, emissive: true },

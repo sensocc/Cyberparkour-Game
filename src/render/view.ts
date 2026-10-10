@@ -20,6 +20,7 @@ import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.
 import {
   buildScene,
   shadowReachFor,
+  updateChunkVisibility,
   updateShadowCasters,
   type BuiltScene,
 } from './sceneBuilder.js';
@@ -126,6 +127,8 @@ export class GameView implements GameViewLike {
   private readonly shadowReach: number;
   /** How many chunks are casting into the shadow map this frame. */
   private casters = 0;
+  /** How many chunks are being drawn this frame, after the distance cull. */
+  private chunksDrawn = 0;
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -219,6 +222,7 @@ export class GameView implements GameViewLike {
       parts: [...this.built.parts.values()].reduce((total, info) => total + info.count, 0),
       chunks: this.built.chunks.length,
       casters: this.casters,
+      drawn: this.chunksDrawn,
     });
   }
 
@@ -371,6 +375,7 @@ export class GameView implements GameViewLike {
     // Cheap enough to do every frame, and it has to be: the reach changes with the
     // graphics preset, so the cell cache would have to be invalidated by it.
     this.casters = updateShadowCasters(this.built.chunks, eye, this.shadowReach);
+    this.chunksDrawn = updateChunkVisibility(this.built.chunks, eye);
 
     const extent = Math.max(1, shadow.camera.right);
     const texel = (extent * 2) / Math.max(1, shadow.mapSize.width);
@@ -455,6 +460,7 @@ export class GameView implements GameViewLike {
       parts: [...this.built.parts.values()].reduce((total, info) => total + info.count, 0),
       chunks: this.built.chunks.length,
       casters: this.casters,
+      drawn: this.chunksDrawn,
     });
   }
 

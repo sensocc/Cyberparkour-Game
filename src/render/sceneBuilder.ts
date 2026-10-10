@@ -270,6 +270,43 @@ export function shadowReachFor(extent: number): number {
  * A chunk that was never a caster is never made one: the prop's own flag is the
  * authority, and this only ever takes casting away.
  */
+/**
+ * How far a chunk stays drawn, in metres.
+ *
+ * The fog is opaque by 1150 m and the city is a kilometre across, so a chunk behind four
+ * hundred metres of air is a hundred dark pixels and three hundred vertices nobody reads.
+ * Culling it is not a change to the picture: below the fog line the difference between a
+ * silhouette and a slightly darker silhouette is one nobody can see.
+ */
+const DRAW_DISTANCE = 620;
+
+/**
+ * Draws the chunks near the player, and stops drawing the rest.
+ *
+ * The rule V0.7.1 needed for shadows, for the same reason and from the other end: a merged
+ * chunk cannot be culled by the renderer unless its whole bounding box is off screen, and a
+ * kilometre of city is never off screen. Frustum culling alone draws everything in front of
+ * you however far away it is; this is the distance half of the same idea.
+ *
+ * Returns how many chunks are still being drawn.
+ */
+export function updateChunkVisibility(
+  chunks: readonly THREE.Mesh[],
+  eye: ReadonlyVec3,
+  far = DRAW_DISTANCE,
+): number {
+  const reach = far * far;
+  let drawn = 0;
+  for (const mesh of chunks) {
+    const dx = mesh.position.x - eye.x;
+    const dz = mesh.position.z - eye.z;
+    const visible = dx * dx + dz * dz < reach;
+    if (mesh.visible !== visible) mesh.visible = visible;
+    if (visible) drawn += 1;
+  }
+  return drawn;
+}
+
 export function updateShadowCasters(
   chunks: readonly THREE.Mesh[],
   eye: ReadonlyVec3,
@@ -315,6 +352,9 @@ export function buildScene(
   // A cube skybox needs no geometry and is never fogged, which is exactly what
   // a sky should be. Without one, a flat colour stands in.
   scene.background = assets.skybox ?? new THREE.Color(environment.skyColor);
+  // The sky the reflections come from, when there is one. Borrowed like every other
+  // texture here, and never disposed by this file.
+  const skybox = assets.skybox ?? null;
   scene.fog = new THREE.Fog(
     new THREE.Color(environment.fogColor),
     environment.fogNear,
@@ -368,12 +408,13 @@ export function buildScene(
     v: [height, height, depth, depth, height, height],
   });
 
-  const materialFor = (surfaceId: string, tint: string): THREE.MeshLambertMaterial => {
+  const materialFor = (surfaceId: string, tint: string): THREE.Material => {
     const key = `${surfaceId}|${tint}`;
-    // The cache is keyed by material type as well as surface, so a sprite can
-    // share it; only the surface materials are looked up as lambert.
+    // Keyed by surface and tint, so a texture and a colour that repeat share one material
+    // however many props use them. The cache holds whatever the surface asked for - lambert
+    // for the flat-shaded city, phong for the glass.
     const cached = materials.get(key);
-    if (cached) return cached as THREE.MeshLambertMaterial;
+    if (cached) return cached;
 
     const surface = surfaceById(surfaceId);
     const texture = surface ? (assets.surfaces.get(surface.texture) ?? null) : null;
@@ -382,15 +423,34 @@ export function buildScene(
     // The albedo goes dark, so the sun does not wash the glow out.
     const emissive = surface?.emissive === true;
 
-    const material = new THREE.MeshLambertMaterial({
-      color: new THREE.Color(emissive ? '#1a1e26' : tint),
-      map: texture,
-      // Flat shading keeps the low-poly silhouette crisp, Quake-style.
-      flatShading: true,
-      ...(emissive
-        ? { emissive: new THREE.Color(tint), emissiveMap: texture, emissiveIntensity: 1 }
-        : {}),
-    });
+    // A reflective surface is the one place the renderer leaves flat shading behind. Metal
+    // and glass do not have a colour so much as a reflection: a window painted a pale blue
+    // and lit by a lambert term looks like paper, so these get a specular highlight and the
+    // skybox as an environment map - which is what makes a canopy change as you walk past
+    // it, and what makes a hundred solar panels on a roof read as one gleaming surface
+    // rather than a hundred grey rectangles.
+    const reflective = surface?.reflectivity ?? 0;
+    const material =
+      reflective > 0
+        ? new THREE.MeshPhongMaterial({
+            color: new THREE.Color(tint),
+            map: texture,
+            specular: new THREE.Color('#8fa6bd'),
+            shininess: 40 + reflective * 120,
+            envMap: skybox,
+            reflectivity: reflective,
+            combine: THREE.MixOperation,
+            flatShading: true,
+          })
+        : new THREE.MeshLambertMaterial({
+            color: new THREE.Color(emissive ? '#1a1e26' : tint),
+            map: texture,
+            // Flat shading keeps the low-poly silhouette crisp, Quake-style.
+            flatShading: true,
+            ...(emissive
+              ? { emissive: new THREE.Color(tint), emissiveMap: texture, emissiveIntensity: 1 }
+              : {}),
+          });
     materials.set(key, material);
     return material;
   };

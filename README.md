@@ -41,51 +41,52 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-3. [What V0.7.2 fixes](#what-v072-fixes)
-4. [What V0.7.1 optimises](#what-v071-optimises)
-5. [What V0.7 delivers](#what-v07-delivers)
-6. [What V0.6.1 fixes](#what-v061-fixes)
-7. [What V0.6 delivers](#what-v06-delivers)
-8. [What V0.5 delivered](#what-v05-delivered)
-9. [Quick start](#quick-start)
-10. [Controls](#controls)
-11. [What you should see](#what-you-should-see)
-12. [Settings](#settings)
-13. [Camera effects](#camera-effects)
-14. [Feel](#feel)
-15. [Your body](#your-body)
-16. [Optimisation](#optimisation)
-17. [Locomotion](#locomotion)
-18. [The movement state machine](#the-movement-state-machine)
-19. [The manoeuvre bands](#the-manoeuvre-bands)
-20. [Wall running](#wall-running)
-21. [Wall jumping](#wall-jumping)
-22. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-23. [The landing roll](#the-landing-roll)
-24. [Pipe climbing](#pipe-climbing)
-25. [Interiors and doors](#interiors-and-doors)
-26. [Lifts](#lifts)
-27. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-28. [Checkpoints and respawn](#checkpoints-and-respawn)
-29. [The district](#the-district)
-30. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-31. [Neon](#neon)
-32. [Fall damage and health](#fall-damage-and-health)
-33. [Models and surfaces](#models-and-surfaces)
-34. [Sound](#sound)
-35. [How the textures are made](#how-the-textures-are-made)
-36. [Architecture](#architecture)
-37. [How a frame works](#how-a-frame-works)
-38. [Collision](#collision)
-39. [Crash reporting](#crash-reporting)
-40. [The HUDs](#the-huds)
-41. [Testing](#testing)
-42. [Continuous integration](#continuous-integration)
-43. [Project layout](#project-layout)
-44. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-45. [Out of scope for V0.7](#out-of-scope-for-v07)
-46. [Roadmap](#roadmap)
+2. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+3. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+4. [What V0.7.2 fixes](#what-v072-fixes)
+5. [What V0.7.1 optimises](#what-v071-optimises)
+6. [What V0.7 delivers](#what-v07-delivers)
+7. [What V0.6.1 fixes](#what-v061-fixes)
+8. [What V0.6 delivers](#what-v06-delivers)
+9. [What V0.5 delivered](#what-v05-delivered)
+10. [Quick start](#quick-start)
+11. [Controls](#controls)
+12. [What you should see](#what-you-should-see)
+13. [Settings](#settings)
+14. [Camera effects](#camera-effects)
+15. [Feel](#feel)
+16. [Your body](#your-body)
+17. [Optimisation](#optimisation)
+18. [Locomotion](#locomotion)
+19. [The movement state machine](#the-movement-state-machine)
+20. [The manoeuvre bands](#the-manoeuvre-bands)
+21. [Wall running](#wall-running)
+22. [Wall jumping](#wall-jumping)
+23. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+24. [The landing roll](#the-landing-roll)
+25. [Pipe climbing](#pipe-climbing)
+26. [Interiors and doors](#interiors-and-doors)
+27. [Lifts](#lifts)
+28. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+29. [Checkpoints and respawn](#checkpoints-and-respawn)
+30. [The district](#the-district)
+31. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+32. [Neon](#neon)
+33. [Fall damage and health](#fall-damage-and-health)
+34. [Models and surfaces](#models-and-surfaces)
+35. [Sound](#sound)
+36. [How the textures are made](#how-the-textures-are-made)
+37. [Architecture](#architecture)
+38. [How a frame works](#how-a-frame-works)
+39. [Collision](#collision)
+40. [Crash reporting](#crash-reporting)
+41. [The HUDs](#the-huds)
+42. [Testing](#testing)
+43. [Continuous integration](#continuous-integration)
+44. [Project layout](#project-layout)
+45. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+46. [Out of scope for V0.7](#out-of-scope-for-v07)
+47. [Roadmap](#roadmap)
 
 ---
 
@@ -93,7 +94,7 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.3` |
+| Version | `0.7.4` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
@@ -101,14 +102,76 @@ single pixel or millimetre of how the game plays.
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.3 is finished and frozen: the city surrounds the district instead of standing off from
-it. The district is *not* yet labelled Level 1 - that is V0.8's job.
+V0.7.4 is finished and frozen: a dense grid of buildings, no flickering ground, no buildings
+inside each other, and glass that reflects the sky. The district is *not* yet labelled Level
+1 - that is V0.8's job.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.4 fixes: the grid, the ground, and glass
+
+### The ground flickered
+
+Two slabs, both with their top at exactly -34.8: the district's own `city-ground`, 700 m
+across, and the city's `city-street-level`, 1200 m across, covering the same square metre.
+Two surfaces at one depth is not a seam or a shadow - the depth test picks a winner per
+pixel and the winner changes as the camera moves. The city's slab is two centimetres low
+now, and that is under a pixel by the time you can see it.
+
+### The city was a cross, not a grid
+
+At a 62 m pitch a 40 m building leaves a 22 m street: four times a running jump. No two
+neighbours could reach each other, so the *only* connected roofs were the ones a filler
+building happened to bridge - and a filler is one line of connection. The map read as a
+cross of terraces running away from wherever the player was standing, with everything else
+a wall.
+
+The blocks fill their plots now - 54 to 58 m in a 62 m pitch, so the streets are four to
+eight metres and the grid itself is the route - and the jitter is 4% instead of 26%, so a
+street is a street rather than a hole where a neighbour should be.
+
+### Buildings were fused into each other
+
+The gap-filling passes are geometric, and geometric passes overlap: 2,723 pairs of building
+bodies ran through each other. There is a footprint ledger now - every building already
+standing, and every filler as it is built - and a new building that would overlap one is
+refused. Two thousand seven hundred overlapping pairs became **159**, and almost all of the
+159 are a building and its own roof storey, which are meant to be nested.
+
+### Glass reflects the sky
+
+A `glass` surface painted a pale blue and lit by a lambert term looks like paper, and a city
+at night is mostly the second-hand light of its own gleaming. Surfaces can declare a
+`reflectivity` now; they get a specular highlight and the skybox as an environment map, so a
+canopy changes as you walk past it and a hundred solar panels read as one gleaming surface.
+Two more window surfaces came with it - a lit one and a dark one.
+
+### And the frame got cheaper
+
+| | V0.7.3 | V0.7.4 |
+| --- | --- | --- |
+| Triangles in the city | 1,322k | **742k** |
+| Roofs | 689 | 745 |
+| Overlapping building pairs | 2,723 | **159** |
+| Ground surfaces sharing a plane | 2 | **0** |
+
+A block that fills its plot is one big box where the old grid needed three small filler
+buildings in the street between two of them, so the city is denser *and* 43% cheaper to
+draw. On top of that, a chunk is now only drawn within 620 m: the fog is opaque long before
+that, so nothing was visible to lose, and the rest of the kilometre stops being submitted.
+
+### What is still missing
+
+**The two-jumpable-neighbours rule is not met.** It is 31% of roofs, not 100%. The density
+work moved it in the right direction and the fillers fix the exceptions they can reach, but
+the count says what it says, and a version that claims the grid is finished would be wrong.
+The measurement is in `tests/game/city.test.ts` and the honest number is 31%.
 
 ---
 
@@ -1748,5 +1811,9 @@ V0.7.3 moved the city to where the player is, which is a thing a generator canno
 to have done because it looks right from the air. It was found by walking the player west
 from the spawn and watching them fall thirty-five metres and die - the shortest measurement
 in the project so far, and the one that mattered most.
+
+V0.7.4 was the version about the *floor* of a city rather than its skyline: the seam between
+two ground slabs, the width of a street, whether two buildings are one building, and whether
+a window looks like glass.
 
 The next milestone is V0.8: polish, and labelling the district as Level 1.
