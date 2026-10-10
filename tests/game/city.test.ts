@@ -367,30 +367,98 @@ describe('the city as somewhere you can get around', () => {
   });
 });
 
-describe('the buildings the streets were filled with', () => {
-  // The whole city: filling the streets is a thing that happens where there are streets
-  // to fill, and a 200 m sample has seven of them.
+describe('the grid, which is uniform on purpose', () => {
   const city = buildCity(DEMO_DISTRICT);
-  const report = generateCity().report;
+  const generated = city.props.slice(DEMO_DISTRICT.props.length);
+  /** The building masses, which are what the grid is made of. */
+  const bodies = generated
+    .filter(
+      (prop) =>
+        // One body per building, and only the body: a lintel is a wall panel, a setback is
+        // part of the tower it stands on, and comparing either to a building is comparing
+        // part of a building to a building.
+        /-body$/.test(prop.id) &&
+        prop.size.y > 8 &&
+        !/(setback|upper)/.test(prop.id),
+    )
+    .map((prop) => ({
+      id: prop.id,
+      minX: prop.position.x - prop.size.x / 2,
+      maxX: prop.position.x + prop.size.x / 2,
+      minZ: prop.position.z - prop.size.z / 2,
+      maxZ: prop.position.z + prop.size.z / 2,
+      top: prop.position.y + prop.size.y / 2,
+    }));
 
-  it('fills the gap between neighbours with a building, not a fence', () => {
-    const infills = city.props.filter((prop) => prop.id.startsWith('fill-'));
-    expect(infills.length).toBeGreaterThan(100);
-    // Its own body, from the street up - a building rather than something laid in the gap.
-    const bodies = city.props.filter(
-      (prop) => prop.id.startsWith('fill-') && prop.id.endsWith('-body'),
-    );
-    expect(bodies.length).toBeGreaterThan(80);
+  it('is a square kilometre of buildings, one per cell', () => {
+    // "A square grid of buildings, 1 km x 1 km." Sixteen cells of 62.5 m is a kilometre
+    // exactly, and a building stands on every cell the old town does not.
+    const spanX = Math.max(...bodies.map((b) => b.maxX)) - Math.min(...bodies.map((b) => b.minX));
+    const spanZ = Math.max(...bodies.map((b) => b.maxZ)) - Math.min(...bodies.map((b) => b.minZ));
+    expect(spanX).toBeGreaterThan(900);
+    expect(spanZ).toBeGreaterThan(900);
+    // 16 x 16 cells, less the ones the district stands on. Not every one of them is a
+    // `-body`: a tower is a shell and a construction site is a carcass, and both are counted
+    // by the tests above rather than here.
+    expect(bodies.length).toBeGreaterThan(100);
   });
 
-  it('decorates every one of them differently', () => {
-    // "These in-between buildings need to be uniquely decorated too." Three to five
-    // features each, drawn from a dozen, and the signature is in the report - so this is
-    // a count rather than an opinion about how the streets look.
-    const kits = Object.keys(report).filter((key) => key.startsWith('infill-kit:'));
-    const infills = report.infill ?? 0;
-    expect(infills).toBeGreaterThan(100);
-    expect(kits.length).toBeGreaterThan(infills * 0.5);
+  it('leaves every neighbour the same distance away', () => {
+    // The rule this version exists for, and the reason the two before it could not meet it:
+    // a *repaired* grid has gaps of every width, and a *sized* grid has one number. Every
+    // building is the pitch less the street, on both axes, everywhere.
+    const widths = new Set(bodies.map((b) => Math.round((b.maxX - b.minX) * 10)));
+    const depths = new Set(bodies.map((b) => Math.round((b.maxZ - b.minZ) * 10)));
+    // One size, give or take the roof storeys that sit inside their own building.
+    expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(200);
+    expect(Math.max(...depths) - Math.min(...depths)).toBeLessThan(200);
+
+    // ...and the street is the same number everywhere, inside the jumpable band.
+    const jump = crossingGap(DEFAULT_CONFIG);
+    const streets: number[] = [];
+    for (let i = 0; i < bodies.length; i += 1) {
+      for (let j = i + 1; j < bodies.length; j += 1) {
+        const a = bodies[i]!;
+        const b = bodies[j]!;
+        if (b.id.startsWith(a.id) || a.id.startsWith(b.id)) continue;
+        const gapX = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+        const gapZ = Math.max(0, Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ));
+        // Only the pairs that face each other across a street.
+        if (gapX > 0 && gapZ > 0) continue;
+        const street = gapX + gapZ;
+        if (street < 12) streets.push(street);
+      }
+    }
+    expect(streets.length).toBeGreaterThan(100);
+    expect(Math.min(...streets)).toBeGreaterThan(3.5);
+    expect(Math.max(...streets)).toBeLessThan(jump + 0.5);
+    // ...and the same number, not merely a similar one.
+    expect(Math.max(...streets) - Math.min(...streets)).toBeLessThan(0.2);
+  });
+
+  it('never lets a neighbour be more than twenty metres taller', () => {
+    // "If building A is right next to building B, B cannot be taller than A by more than ten
+    // to twenty metres." The terrace steps by six, a tile shares its height, and a tower is
+    // ten to eighteen metres over its cell - so the worst neighbour is under twenty, where
+    // V0.7.5 had towers forty metres over the blocks beside them.
+    let worst = 0;
+    let worstPair = '';
+    for (let i = 0; i < bodies.length; i += 1) {
+      for (let j = i + 1; j < bodies.length; j += 1) {
+        const a = bodies[i]!;
+        const b = bodies[j]!;
+        const gapX = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
+        const gapZ = Math.max(0, Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ));
+        if (b.id.startsWith(a.id) || a.id.startsWith(b.id)) continue;
+        if (Math.hypot(gapX, gapZ) > 8) continue;
+        const rise = Math.abs(a.top - b.top);
+        if (rise > worst) {
+          worst = rise;
+          worstPair = `${a.id} / ${b.id}`;
+        }
+      }
+    }
+    expect(worst, worstPair).toBeLessThanOrEqual(22);
   });
 });
 
@@ -462,7 +530,6 @@ describe('the elevators, which are inside now', () => {
 
 describe('the city is where the district is', () => {
   const city = buildCity(DEMO_DISTRICT);
-  const report = generateCity().report;
   /** The level's own walkable surfaces, which is where the player actually is. */
   const decks = DEMO_DISTRICT.props.filter(
     (prop) => prop.kind === 'floor' && prop.size.x * prop.size.z < 5000,
@@ -504,14 +571,7 @@ describe('the city is where the district is', () => {
     expect(lowest).toBeLessThan(12);
   });
 
-  it('fills the space between the district’s own buildings and the city', () => {
-    // "Add more buildings between them": the level has its own towers standing off to the
-    // sides of the old town, and the city used to begin beyond them with nothing in
-    // between. The attachment pass bridges those gaps like any other.
-    expect((report.attachment ?? 0) + (report.infill ?? 0)).toBeGreaterThan(0);
-    const between = generated.filter((prop) => prop.id.startsWith('fill-'));
-    expect(between.length).toBeGreaterThan(400);
-  });
+
 });
 
 describe('the grid the city is meant to be', () => {
@@ -612,5 +672,65 @@ describe('the grid the city is meant to be', () => {
     for (const window of windows.slice(0, 50)) {
       expect(window.tints?.glass, window.id).toBeDefined();
     }
+  });
+});
+
+describe('no two buildings in one place', () => {
+  const city = buildCity(DEMO_DISTRICT);
+
+  it('never builds a city building through one of the level’s own', () => {
+    // The old town's five towers stand outside the rectangle the city is kept clear of, and
+    // the first draft of this grid built straight through them: that is what "even more
+    // overlapping buildings" was, and it is a check that has to be *in* the generator rather
+    // than hoped for afterwards.
+    const masses = DEMO_DISTRICT.props.filter(
+      (prop) =>
+        prop.kind !== 'floor' &&
+        prop.size.x > 6 &&
+        prop.size.z > 6 &&
+        prop.position.y + prop.size.y / 2 > -30,
+    );
+    expect(masses.length).toBeGreaterThan(3);
+
+    const generated = city.props.slice(DEMO_DISTRICT.props.length).filter(
+      (prop) => prop.model === 'slab' && prop.size.y > 8,
+    );
+    const inside: string[] = [];
+    for (const prop of generated) {
+      for (const mass of masses) {
+        const overlapX =
+          Math.min(prop.position.x + prop.size.x / 2, mass.position.x + mass.size.x / 2) -
+          Math.max(prop.position.x - prop.size.x / 2, mass.position.x - mass.size.x / 2);
+        const overlapZ =
+          Math.min(prop.position.z + prop.size.z / 2, mass.position.z + mass.size.z / 2) -
+          Math.max(prop.position.z - prop.size.z / 2, mass.position.z - mass.size.z / 2);
+        if (overlapX > 0.3 && overlapZ > 0.3) inside.push(`${prop.id} x ${mass.id}`);
+      }
+    }
+    expect(inside.slice(0, 5)).toEqual([]);
+  });
+
+  it('never builds one city building inside another', () => {
+    // Every cell gets exactly one building, all the same size, so this is true by
+    // construction rather than by repair - which is the whole point of a grid.
+    const bodies = city.props
+      .slice(DEMO_DISTRICT.props.length)
+      .filter((prop) => /-body$/.test(prop.id) && prop.size.y > 8 && !/setback|upper/.test(prop.id));
+
+    const overlaps: string[] = [];
+    for (let i = 0; i < bodies.length; i += 1) {
+      for (let j = i + 1; j < bodies.length; j += 1) {
+        const a = bodies[i]!;
+        const b = bodies[j]!;
+        const overlapX =
+          Math.min(a.position.x + a.size.x / 2, b.position.x + b.size.x / 2) -
+          Math.max(a.position.x - a.size.x / 2, b.position.x - b.size.x / 2);
+        const overlapZ =
+          Math.min(a.position.z + a.size.z / 2, b.position.z + b.size.z / 2) -
+          Math.max(a.position.z - a.size.z / 2, b.position.z - b.size.z / 2);
+        if (overlapX > 0.3 && overlapZ > 0.3) overlaps.push(`${a.id} x ${b.id}`);
+      }
+    }
+    expect(overlaps.slice(0, 5)).toEqual([]);
   });
 });

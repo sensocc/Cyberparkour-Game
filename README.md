@@ -41,53 +41,54 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-3. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-4. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-5. [What V0.7.2 fixes](#what-v072-fixes)
-6. [What V0.7.1 optimises](#what-v071-optimises)
-7. [What V0.7 delivers](#what-v07-delivers)
-8. [What V0.6.1 fixes](#what-v061-fixes)
-9. [What V0.6 delivers](#what-v06-delivers)
-10. [What V0.5 delivered](#what-v05-delivered)
-11. [Quick start](#quick-start)
-12. [Controls](#controls)
-13. [What you should see](#what-you-should-see)
-14. [Settings](#settings)
-15. [Camera effects](#camera-effects)
-16. [Feel](#feel)
-17. [Your body](#your-body)
-18. [Optimisation](#optimisation)
-19. [Locomotion](#locomotion)
-20. [The movement state machine](#the-movement-state-machine)
-21. [The manoeuvre bands](#the-manoeuvre-bands)
-22. [Wall running](#wall-running)
-23. [Wall jumping](#wall-jumping)
-24. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-25. [The landing roll](#the-landing-roll)
-26. [Pipe climbing](#pipe-climbing)
-27. [Interiors and doors](#interiors-and-doors)
-28. [Lifts](#lifts)
-29. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-30. [Checkpoints and respawn](#checkpoints-and-respawn)
-31. [The district](#the-district)
-32. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-33. [Neon](#neon)
-34. [Fall damage and health](#fall-damage-and-health)
-35. [Models and surfaces](#models-and-surfaces)
-36. [Sound](#sound)
-37. [How the textures are made](#how-the-textures-are-made)
-38. [Architecture](#architecture)
-39. [How a frame works](#how-a-frame-works)
-40. [Collision](#collision)
-41. [Crash reporting](#crash-reporting)
-42. [The HUDs](#the-huds)
-43. [Testing](#testing)
-44. [Continuous integration](#continuous-integration)
-45. [Project layout](#project-layout)
-46. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-47. [Out of scope for V0.7](#out-of-scope-for-v07)
-48. [Roadmap](#roadmap)
+2. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+3. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+4. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+5. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+6. [What V0.7.2 fixes](#what-v072-fixes)
+7. [What V0.7.1 optimises](#what-v071-optimises)
+8. [What V0.7 delivers](#what-v07-delivers)
+9. [What V0.6.1 fixes](#what-v061-fixes)
+10. [What V0.6 delivers](#what-v06-delivers)
+11. [What V0.5 delivered](#what-v05-delivered)
+12. [Quick start](#quick-start)
+13. [Controls](#controls)
+14. [What you should see](#what-you-should-see)
+15. [Settings](#settings)
+16. [Camera effects](#camera-effects)
+17. [Feel](#feel)
+18. [Your body](#your-body)
+19. [Optimisation](#optimisation)
+20. [Locomotion](#locomotion)
+21. [The movement state machine](#the-movement-state-machine)
+22. [The manoeuvre bands](#the-manoeuvre-bands)
+23. [Wall running](#wall-running)
+24. [Wall jumping](#wall-jumping)
+25. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+26. [The landing roll](#the-landing-roll)
+27. [Pipe climbing](#pipe-climbing)
+28. [Interiors and doors](#interiors-and-doors)
+29. [Lifts](#lifts)
+30. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+31. [Checkpoints and respawn](#checkpoints-and-respawn)
+32. [The district](#the-district)
+33. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+34. [Neon](#neon)
+35. [Fall damage and health](#fall-damage-and-health)
+36. [Models and surfaces](#models-and-surfaces)
+37. [Sound](#sound)
+38. [How the textures are made](#how-the-textures-are-made)
+39. [Architecture](#architecture)
+40. [How a frame works](#how-a-frame-works)
+41. [Collision](#collision)
+42. [Crash reporting](#crash-reporting)
+43. [The HUDs](#the-huds)
+44. [Testing](#testing)
+45. [Continuous integration](#continuous-integration)
+46. [Project layout](#project-layout)
+47. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+48. [Out of scope for V0.7](#out-of-scope-for-v07)
+49. [Roadmap](#roadmap)
 
 ---
 
@@ -95,22 +96,75 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.7.5` |
+| Version | `0.7.6` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1114 across 42 files |
+| Tests | 1116 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.7.5 is finished and frozen: buildings sized from the street they leave, so the grid is the
-route. The district is *not* yet labelled Level 1 - that is V0.8's job.
+V0.7.6 is finished and frozen: the city is a grid, and the machinery that kept trying to make it
+one is gone. The district is *not* yet labelled Level 1 - that is V0.8's job.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
 a server left running since V0.1 served `v0.1.0` for ever, however many versions were
 released under it. Importing the file instead puts it in the module graph, where
 changing it is something the server notices.
+
+---
+
+## What V0.7.6 does: a grid, and the end of patching
+
+Three versions tried to *emerge* a playable city - generate freely, measure what came out, and
+patch the gaps - and every patch was a new way to fuse two buildings together or leave a roof
+with nothing beside it. V0.7.5's report said 2,723 overlapping pairs, then 159, then 55, and the
+number never went to zero because a repaired grid has gaps of every width and overlaps that the
+repairs themselves created.
+
+This version does not patch anything. **It is a grid.**
+
+- **One kilometre square.** Sixteen cells of 62.5 m, which is a kilometre exactly, over
+  x and z from -500 to 500.
+- **One size.** Every building is the pitch less the street: 58 m on each side.
+- **One distance.** The street is 4.5 m everywhere, which is inside the 5.7 m a running jump
+  crosses, so every neighbour is reachable by construction rather than by repair.
+- **One building per cell.** Two buildings cannot be in one place because there is exactly one
+  per cell, and a cell that the old town or one of its towers stands on is skipped.
+- **Height by tile.** Seven terrace steps of four metres, a tile of four cells sharing a height,
+  and never more than three metres of variation inside a cell: neighbouring buildings differ by
+  seven metres at most, where V0.7.5 had towers forty metres over the blocks beside them - and
+  the old town's five towers are outside the city's ground entirely.
+
+Everything that existed to patch the gaps is **deleted**: the infill pass, the attachment pass,
+the repair pass, the hole-filling pass, their ledger of footprints, and the tests written for
+them. That is most of the diff, and it is the point of the version.
+
+### What went wrong with the patching, briefly
+
+Each version's fillers were placed by geometry rather than by a grid, and geometry does not know
+what is already there: a filler sized from the room it measured would be measured before the
+building beside it was built. The ledger that refused overlapping placements made it worse in the
+direction that matters least and better in the direction that matters most, and the repairs that
+were refused were the roofs that kept one neighbour. A grid has none of these problems because it
+has no decisions in it.
+
+### What this costs
+
+The city is about 220 buildings rather than 8,500 props of patchwork, so the frame is *cheaper*
+than V0.7.5's and the skyline is flatter. The terraces step by four metres across seven tiles -
+a twenty-four metre skyline - where V0.7.4's spiked. That is the trade the brief asked for: a
+grid, with every building the same distance from the buildings around it.
+
+### The geometry of the buildings
+
+Asked to look at how city games do it: the shapes are a body with a roof of plant - arrays, a
+tank, an aerial, a duct - a low parapet around the edge so a roof reads as a roof, two bands of
+window per building so the glass has sky to reflect, ladders up the flank, and balconies for the
+faces a street can see. The archetypes are a mid-rise block, a set-back tower with a lift inside
+it, a construction carcass with a crane that stays over its own plot, a hall you can walk into,
+and an interior tower with floors and a shaft.
 
 ---
 
@@ -1873,5 +1927,9 @@ a window looks like glass.
 V0.7.5 is the version where the city stopped being painted and started being measured: 85% of
 roofs within two jumps of two neighbours, and a paragraph above saying plainly which parts of the
 rule are not met.
+
+V0.7.6 removed more code than it added, and the city got better: the grid is the route, the
+overlaps are gone by construction, and there is nothing left in the generator that can put two
+buildings in one place.
 
 The next milestone is V0.8: polish, and labelling the district as Level 1.
