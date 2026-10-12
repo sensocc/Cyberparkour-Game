@@ -19,6 +19,13 @@
 
 export interface RunOptions {
   readonly checkpointCount: number;
+  /**
+   * Whether the level has an NPC to hand out the quest.
+   *
+   * Absent means it does not, because a level without a cat has no way to give one and a shard
+   * nobody can be asked for is a shard nobody can take.
+   */
+  readonly hasNpc?: boolean;
   readonly collectibleCount: number;
   /** The record already on the books, in seconds, or `null`. */
   readonly bestSeconds?: number | null;
@@ -63,6 +70,8 @@ export interface RunSnapshot {
   readonly bestSeconds: number | null;
   /** Whether crossing the finish would count. */
   readonly goalArmed: boolean;
+  /** Where the cat's quest is: nothing asked, asking, or reported back. */
+  readonly quest: 'none' | 'taken' | 'done';
 }
 
 export class RunState {
@@ -76,6 +85,8 @@ export class RunState {
   private splits: RunSplit[] = [];
   private reached = 0;
   private readonly taken = new Set<string>();
+  /** Whether the level has anybody in it to give the quest out. */
+  private readonly hasNpc: boolean;
   /**
    * Where the run is in the cat's quest.
    *
@@ -83,13 +94,17 @@ export class RunState {
    * once they all are and the cat has been told. **Nothing may be picked up in `none`**: the
    * shards are the quest, and a quest you can finish before you are given it is not one.
    */
-  private quest: 'none' | 'taken' | 'done' = 'none';
+  private quest: 'none' | 'taken' | 'done';
   /** Single pickups that are not part of the count: the phone. */
   private readonly secrets = new Set<string>();
   private improved = false;
 
   constructor(options: RunOptions) {
     this.checkpointCount = Math.max(0, options.checkpointCount);
+    // A level with nobody in it hands out no quest: the district's own test levels have no cat, and
+    // a shard nobody can be asked for is a shard nobody can take.
+    this.hasNpc = options.hasNpc !== false;
+    this.quest = this.hasNpc ? 'none' : 'taken';
     this.collectibleCount = Math.max(0, options.collectibleCount);
     this.best = options.bestSeconds ?? null;
   }
@@ -103,7 +118,7 @@ export class RunState {
     this.reached = 0;
     this.taken.clear();
     this.secrets.clear();
-    this.quest = 'none';
+    this.quest = this.hasNpc ? 'none' : 'taken';
     this.improved = false;
   }
 
@@ -148,6 +163,9 @@ export class RunState {
       this.secrets.add(id);
       return true;
     }
+    // **Gated by the cat.** Until the quest has been taken a shard is scenery: eight unmarked
+    // boxes on a kilometre of rooftops are not a quest, they are a scavenger hunt with no giver.
+    if (this.quest === 'none') return false;
     if (this.taken.has(id)) return false;
     this.taken.add(id);
     return true;
@@ -209,11 +227,17 @@ export class RunState {
    */
   get armed(): boolean {
     const checkpointsDone = this.checkpointCount === 0 || this.reached >= this.checkpointCount;
+    // And every shard in, and the cat told. A player who runs the checkpoints and arrives at the
+    // cat empty-handed is early rather than done - and since a shard cannot be picked up before the
+    // cat has asked, having them all *is* having taken the quest.
+    // The *report*, not merely the collecting: the run ends when the cat has been told, which is the
+    // return trip the quest is for.
+    const questDone = this.collectibleCount === 0 || this.quest === 'done';
     // **And the shards are in.** The finish is the return trip to the cat, so a player who runs
     // the checkpoints and arrives empty-handed is early rather than done - and a level with no
     // shards in it is armed by its checkpoints alone, which is what keeps the tests about
     // checkpoints about checkpoints.
-    return checkpointsDone;
+    return checkpointsDone && questDone;
   }
 
   get isFinished(): boolean {
@@ -260,6 +284,7 @@ export class RunState {
       splits: [...this.splits],
       bestSeconds: this.best,
       goalArmed: this.armed,
+      quest: this.quest,
     };
   }
 }

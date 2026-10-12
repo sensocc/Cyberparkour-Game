@@ -46,6 +46,10 @@ export interface GameHudSnapshot {
    * route within a street or two.
    */
   readonly hint?: { readonly bearing: number; readonly distance: number } | null;
+  /** The time trial in progress, if any: how long it has been running and the stars it is on. */
+  readonly trial?: { readonly id: string; readonly elapsed: number; readonly stars: number } | null;
+  /** Whether the secret phone call is happening, which is the one scripted pose in the game. */
+  readonly calling?: boolean;
 }
 
 /**
@@ -122,6 +126,8 @@ export class GameHud {
   /** Last checkpoint index the pips were filled to. */
   private lastCheckpoint = -1;
   /** The lift prompt: two lines, hidden when there is nothing to do here. */
+  private readonly trial: HTMLElement;
+  private readonly call: HTMLElement;
   private readonly hint: HTMLElement;
   private readonly hintArrow: HTMLElement;
   private readonly hintText: HTMLElement;
@@ -130,6 +136,12 @@ export class GameHud {
   private readonly promptDetail: HTMLElement;
 
   constructor() {
+    this.trial = document.createElement('div');
+    this.trial.className = 'trial';
+    this.call = document.createElement('div');
+    this.call.className = 'call';
+    this.call.textContent = 'CALLING…';
+
     this.hintArrow = document.createElement('span');
     this.hintArrow.className = 'hint__arrow';
     this.hintText = document.createElement('span');
@@ -158,6 +170,8 @@ export class GameHud {
     vitals.append(this.healthLabel, healthBar);
     this.element.append(vitals);
     this.element.append(this.hint);
+    this.element.append(this.trial);
+    this.element.append(this.call);
 
     this.checkpointLabel = document.createElement('span');
     this.checkpointLabel.className = 'vitals__checkpoints';
@@ -218,8 +232,20 @@ export class GameHud {
       ? `${Math.round(hint.distance)} m`
       : '';
     if (this.hintText.textContent !== hintText) this.hintText.textContent = hintText;
-    this.hint.style.transform = hint ? `rotate(${hint.bearing}rad)` : '';
+    // The *arrow* turns, not the readout: rotating the container turned the distance with it, which
+    // is how "96 m" came out upside down on the first play through.
+    this.hintArrow.style.transform = hint ? `rotate(${-hint.bearing}rad)` : '';
     this.hint.classList.toggle('hint--off', hint === null);
+
+    // **The trial**, while one is running: the clock, and the stars it is still on. The thresholds
+    // are the route's rather than the HUD's, so this says what is still achievable rather than what
+    // has been lost.
+    const trial = snapshot.trial ?? null;
+    const trialText = trial ? `*${trial.stars}  ${trial.elapsed.toFixed(1)}s` : '';
+    if (this.trial.textContent !== trialText) this.trial.textContent = trialText;
+    this.trial.classList.toggle('trial--off', trial === null);
+    // ...and the phone call, which is a moment rather than a readout.
+    this.call.classList.toggle('call--off', snapshot.calling !== true);
 
     const armed = String(snapshot.goalArmed);
     if (this.element.dataset.armed !== armed) this.element.dataset.armed = armed;

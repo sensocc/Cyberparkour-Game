@@ -45,7 +45,15 @@ import { buildLevel, climbableIds as collectClimbableIds, pipeIds as collectPipe
 import { DoorSystem } from './level/doors.js';
 import { ElevatorSystem, carryRider } from './level/elevators.js';
 import { MotionTracker } from './movement.js';
-import { readBestTime, writeBestTime, withinTrigger, RunState, type RunSnapshot, type TimeStore } from './run.js';
+import {
+  formatRunTime,
+  readBestTime,
+  writeBestTime,
+  withinTrigger,
+  RunState,
+  type RunSnapshot,
+  type TimeStore,
+} from './run.js';
 import { DEMO_DISTRICT, type CollectibleDefinition, type LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
@@ -66,6 +74,9 @@ import type { DebugHud, HudSnapshot } from '../ui/hud.js';
 import type { GameUi } from '../ui/screens.js';
 
 export type GameStatus = 'idle' | 'playing' | 'paused' | 'completed' | 'ended' | 'crashed';
+
+/** How long the phone call runs, in seconds: raise, answer, and the announcement. */
+const SECRET_CALL_SECONDS = 4.5;
 
 export interface GameOptions {
   /** Element the canvas is created in. Replaced on every restart. */
@@ -162,6 +173,8 @@ export class Game {
   private run: RunState;
   /** The level's pickups, in the order they were declared. */
   private readonly collectibles: readonly CollectibleDefinition[];
+  /** The ones the cat asks for: everything except the secret. */
+  private readonly questCollectibles: readonly CollectibleDefinition[];
   /**
    * Seconds of *playing* time, for purely visual animation.
    *
@@ -190,6 +203,14 @@ export class Game {
   private pipes: ReadonlySet<string> = new Set();
   /** Whether the player has muted the demo. */
   private muted = false;
+  /** Seconds left in the secret phone call, and whether anybody has picked up. */
+  private secretCall = 0;
+  private secretAnswered = false;
+  /** The trial in progress, and how far into it the player is. */
+  private activeTrial: { id: string; startedAt: number; starTimes: readonly [number, number, number] } | null = null;
+  private trialElapsed = 0;
+  /** Best stars per trial, for this session. */
+  private readonly trialBests = new Map<string, number>();
   /** What the player has chosen, and what everything reads. */
   private settings: GameSettings;
   /**
@@ -237,9 +258,13 @@ export class Game {
       doorSeconds: this.config.elevator.doorSeconds,
     });
     this.collectibles = this.definition.collectibles ?? [];
+    // The counter is the cat's eight, not the level's list: a secret counted on the HUD is not a
+    // secret, and "0 / 11" tells the player there is one they have not been told about.
+    this.questCollectibles = this.collectibles.filter((pickup) => !pickup.id.startsWith('secret-'));
     this.run = new RunState({
       checkpointCount: this.definition.checkpoints.length,
-      collectibleCount: this.collectibles.length,
+      collectibleCount: this.questCollectibles.length,
+      hasNpc: Boolean(this.definition.npc),
       bestSeconds: readBestTime(options.store),
     });
     this.player = createPlayerState(this.definition.spawn, this.config);
@@ -538,7 +563,9 @@ export class Game {
       if (this.run.hasCollected(pickup.id)) continue;
       if (!withinTrigger(this.player.position, pickup.position, radius, heightTolerance)) continue;
 
-      this.run.collect(pickup.id);
+      const secret = pickup.id.startsWith('secret-');
+      if (!this.run.collect(pickup.id, { secret })) continue;
+      if (secret) this.beginSecretCall();
       this.view?.setCollectibleVisible(pickup.id, false);
       this.audioDirector.push({ kind: 'pickup', index: this.run.snapshot().collected });
       if (this.run.allCollected) this.options.ui.toast('ALL PICKUPS COLLECTED');
@@ -633,6 +660,8 @@ export class Game {
       // are findable by accident and unfindable on purpose, and the map is four times the size
       // they were placed for.
       hint: this.nearestShard(),
+      trial: this.currentTrial,
+      calling: this.calling,
     });
   }
 
@@ -946,6 +975,21 @@ export class Game {
    * a worse guide than an arrow.
    */
   private nearestShard(): { bearing: number; distance: number } | null {
+    // **What the pointer should point at, which changes with the quest.** Before the cat has asked,
+    // the only useful thing on the HUD is the way to the cat; while the shards are out, it is the
+    // nearest one; and once they are all in, it is the way back - which is what stops the last
+    // shard being the end of the directions.
+    const npc = this.definition.npc;
+    if (npc) {
+      const quest = this.run.questState;
+      const shardsIn = this.run.snapshot().collected >= this.run.snapshot().collectibleCount;
+      if (quest === 'none' || shardsIn) {
+        const dx = npc.position.x - this.player.position.x;
+        const dz = npc.position.z - this.player.position.z;
+        return { bearing: Math.atan2(dx, dz) - this.player.yaw, distance: Math.hypot(dx, dz) };
+      }
+    }
+
     let best: { bearing: number; distance: number } | null = null;
     for (const shard of this.collectibles) {
       if (this.run.hasCollected(shard.id)) continue;
@@ -959,8 +1003,41 @@ export class Game {
     return best;
   }
 
+  /**
+   * The cat, if the player is standing in front of it.
+   *
+   * The quest-giver, and the finish: the goal stands in its courtyard, so the last thing the run
+   * asks is that the player come back down and say so. A prompt rather than an automatic trigger,
+   * because a quest that completes while you are running past the giver is not a conversation.
+   */
+  private nearNpc(): boolean {
+    const npc = this.definition.npc;
+    if (!npc) return false;
+    const dx = npc.position.x - this.player.position.x;
+    const dz = npc.position.z - this.player.position.z;
+    const dy = npc.position.y - this.player.position.y;
+    return Math.hypot(dx, dz) <= npc.reach && Math.abs(dy) <= 3;
+  }
+
+  /** What the cat has to say, which depends on how far along the quest is. */
+  private npcPrompt(): ElevatorPrompt {
+    const name = this.definition.npc?.name ?? 'the cat';
+    if (this.run.questState === 'none') {
+      return { kind: 'enter', title: name.toUpperCase(), detail: 'Press E - it has something to say' };
+    }
+    if (this.run.allCollected) {
+      return { kind: 'enter', title: name.toUpperCase(), detail: 'Press E - you have them all' };
+    }
+    const left = Math.max(0, this.run.snapshot().collectibleCount - this.run.snapshot().collected);
+    return { kind: 'call', title: name.toUpperCase(), detail: `${left} left to find` };
+  }
+
   private refreshElevatorPrompt(): void {
     if (this.status !== 'playing') return;
+    if (this.nearNpc()) {
+      this.elevatorPrompt = this.npcPrompt();
+      return;
+    }
     const near = this.elevators.approach(this.player.position);
     if (!near) {
       this.elevatorPrompt = null;
@@ -988,6 +1065,108 @@ export class Game {
       title: near.docked ? 'LIFT HERE' : 'LIFT AWAY',
       detail: near.docked ? `Walk in - ${name}` : 'Press E to call it',
     };
+  }
+
+  /**
+   * Time trials: the gate you walk through, and the gate you have to reach.
+   *
+   * One at a time, started by walking into a start gate and finished by reaching its end gate. The
+   * clock is the run's own, so a trial is a stretch of the run rather than a separate mode - and the
+   * stars are thresholds rather than a score, because a route with a pace to it is a route you learn.
+   */
+  private updateTrials(): void {
+    const trials = this.definition.trials;
+    if (!trials || this.status !== 'playing' || !this.player.alive) return;
+
+    if (this.activeTrial) {
+      const trial = trials.find((entry) => entry.id === this.activeTrial?.id);
+      if (!trial) {
+        this.activeTrial = null;
+        return;
+      }
+      const elapsed = this.run.snapshot().elapsedSeconds - this.activeTrial.startedAt;
+      const reached = withinTrigger(this.player.position, trial.to, trial.reach, 6);
+      if (!reached) {
+        this.trialElapsed = elapsed;
+        return;
+      }
+
+      const stars = elapsed <= trial.starTimes[0] ? 3 : elapsed <= trial.starTimes[1] ? 2 : elapsed <= trial.starTimes[2] ? 1 : 0;
+      const previous = this.trialBests.get(trial.id) ?? 0;
+      this.trialBests.set(trial.id, Math.max(previous, stars));
+      this.activeTrial = null;
+      this.trialElapsed = 0;
+      this.audioDirector.push({ kind: 'checkpoint' });
+      this.options.ui.toast(
+        stars === 0
+          ? `${formatRunTime(elapsed)} - not fast enough for a star`
+          : `${'*'.repeat(stars)} in ${formatRunTime(elapsed)}`,
+      );
+      return;
+    }
+
+    for (const trial of trials) {
+      if (!withinTrigger(this.player.position, trial.from, trial.reach, 6)) continue;
+      this.activeTrial = {
+        id: trial.id,
+        startedAt: this.run.snapshot().elapsedSeconds,
+        starTimes: trial.starTimes,
+      };
+      this.trialElapsed = 0;
+      this.options.ui.toast('Go.');
+      this.audioDirector.push({ kind: 'ui-click' });
+      break;
+    }
+  }
+
+  /** The trial in progress, if any: its id, and how long it has been running. */
+  get currentTrial(): { readonly id: string; readonly elapsed: number; readonly stars: number } | null {
+    const trial = this.activeTrial;
+    if (!trial) return null;
+    const stars = this.trialElapsed <= trial.starTimes[0] ? 3 : this.trialElapsed <= trial.starTimes[1] ? 2 : 1;
+    return { id: trial.id, elapsed: this.trialElapsed, stars };
+  }
+
+  /**
+   * The secret: the phone, and what happens when somebody finds it.
+   *
+   * A three-part performance. The player raises it - `secretCall` counts down, and while it does the
+   * pose has the arm up and the camera has a handset in front of it - then the call is answered, and
+   * then the announcement. It is the only scripted moment in the game, and it is meant to read as
+   * one: everything else here is a mechanic and this is a *thing that happens*.
+   */
+  private beginSecretCall(): void {
+    this.secretCall = SECRET_CALL_SECONDS;
+    this.secretAnswered = false;
+    this.options.ui.toast('A phone. Still warm.');
+    this.audioDirector.push({ kind: 'pickup', index: 4 });
+  }
+
+  /** How far into the secret call the player is, for the pose and the overlay. */
+  get calling(): boolean {
+    return this.secretCall > 0;
+  }
+
+  /**
+   * Says what there is to say to the cat.
+   *
+   * Three states, three answers: it asks you to bring the eight shards back, it tells you how many
+   * are left, and it takes them. The last one is the level - the goal stands where the cat does -
+   * so the return trip is the finish rather than a separate errand.
+   */
+  private talkToCat(): boolean {
+    const answer = this.run.talkToNpc();
+    if (answer === 'accepted') {
+      this.options.ui.toast('The cat wants the eight shards, and is not asking politely.');
+      this.audioDirector.push({ kind: 'checkpoint' });
+    } else if (answer === 'reported') {
+      this.options.ui.toast('The cat has them all. This is where the night started.');
+      this.audioDirector.push({ kind: 'checkpoint' });
+    } else {
+      const left = Math.max(0, this.run.snapshot().collectibleCount - this.run.snapshot().collected);
+      this.options.ui.toast(left === 0 ? 'Not yet.' : `${left} still out there.`);
+    }
+    return true;
   }
 
   /**
@@ -1033,6 +1212,10 @@ export class Game {
   private updateEffects(dt: number): void {
     // The pose is derived first: the camera's lean is one of the things it says.
     describePose(this.player, this.config, this.scratchPose, gaitPhaseAt(this.player, this.accumulator.alpha));
+    // The phone: an arm comes up and stays up. It is the one scripted pose in the game, and it is
+    // applied *over* whatever the movement asked for rather than instead of it, so the player can
+    // still walk while they are on the call.
+    if (this.calling) this.scratchPose.armAction = 'phone';
     const sample = this.scratchSample;
     const speed = Math.hypot(this.player.velocity.x, this.player.velocity.z);
     sample.speedFraction = speed / Math.max(1e-6, this.config.player.sprintSpeed);
@@ -1050,6 +1233,23 @@ export class Game {
     // more than can be kept consistent.
     sample.wallRunSide = this.scratchPose.wallSide;
     this.effects.update(dt, sample, this.config.cameraEffects, MOTION_SCALES[this.settings.motion]);
+
+    this.updateTrials();
+
+    // ---- the secret call, if one is happening
+    if (this.secretCall > 0) {
+      this.secretCall = Math.max(0, this.secretCall - dt);
+      const elapsed = SECRET_CALL_SECONDS - this.secretCall;
+      if (!this.secretAnswered && elapsed >= 1.6) {
+        this.secretAnswered = true;
+        this.audioDirector.push({ kind: 'checkpoint' });
+        this.options.ui.toast('Somebody picks up. They know your name.');
+      }
+      if (this.secretCall === 0) {
+        // The announcement, and it is the last thing the game has to say.
+        this.options.ui.showSecret();
+      }
+    }
   }
 
   /**
@@ -1205,6 +1405,7 @@ export class Game {
           // Only while playing: on the title screen, or frozen behind a results
           // screen, a stray E must not swing a door somewhere off-camera.
           if (this.status !== 'playing') break;
+          if (this.nearNpc() && this.talkToCat()) break;
           if (this.callElevator()) break;
           const worked = this.doors.toggleNear(this.player.position);
           if (worked !== null) this.log?.debug('game', 'door worked', { door: worked });

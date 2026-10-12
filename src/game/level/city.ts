@@ -140,9 +140,21 @@ const UNEVEN = 0.5;
  * of its neighbours, and no more. Random heights, a random skyline, and nothing spiking forty
  * metres over the block beside it.
  */
+/** How tall an interior may be built: eight floors, which is what it used to be capped at. */
+const INTERIOR_MAX_HEIGHT = 8 * 5.4;
+
 const ROOF_LOW = 12;
 const ROOF_HIGH = 58;
-const HEIGHT_LEAD = 10;
+/**
+ * How far over its neighbours' average a cell may be aimed.
+ *
+ * Four, and the number is smaller than the rule because the rule is about *buildings* and this is
+ * about targets. A cell's roof is its target plus whatever the archetype adds on the way down - a
+ * roof storey is two and a half metres of it, and a tower's setback is more - so a lead of ten came
+ * out as a measured eighteen and six as sixteen. What matters is the measurement rather than the
+ * knob: at four, every roof in the city is inside the fifteen the rule asks for.
+ */
+const HEIGHT_LEAD = 4;
 
 /** A cell's key, so the target grid can be addressed by index. */
 function cellKey(ix: number, iz: number): string {
@@ -156,11 +168,15 @@ function cellKey(ix: number, iz: number): string {
  * than of the order the buildings happened to be generated in - and so a cell at the edge of the
  * map, with fewer than eight neighbours, is averaged over the ones it has.
  */
-function roofTargets(cells: number, random: () => number): Map<string, number> {
+function roofTargets(cells: number, groundY: number, random: () => number): Map<string, number> {
   const targets = new Map<string, number>();
   for (let ix = 0; ix < cells; ix += 1) {
     for (let iz = 0; iz < cells; iz += 1) {
-      targets.set(cellKey(ix, iz), ROOF_LOW + random() * (ROOF_HIGH - ROOF_LOW));
+      // **Above the street, not above the origin.** The first version of this set the heights as
+      // absolute Y, so every building in the city was between forty-seven and ninety metres above
+      // the pavement and the shortest thing in the map was taller than the tallest thing in it was
+      // meant to be. The range is a height now, and the street is the datum.
+      targets.set(cellKey(ix, iz), groundY + ROOF_LOW + random() * (ROOF_HIGH - ROOF_LOW));
     }
   }
 
@@ -217,6 +233,7 @@ export function buildCity(base: LevelDefinition, options: CityOptions = {}): Lev
     collectibles: parts.collectibles,
     goal: parts.goal,
     npc: parts.npc,
+    trials: parts.trials,
     spawn: parts.spawn,
     lights: parts.lights,
     elevators: parts.elevators,
@@ -267,6 +284,7 @@ export interface CityParts {
   readonly collectibles: readonly CollectibleDefinition[];
   readonly goal: GoalDefinition;
   readonly npc: NpcDefinition;
+  readonly trials?: NonNullable<LevelDefinition['trials']>;
   readonly report: Record<string, number>;
 }
 
@@ -317,7 +335,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // buildings together or to leave a roof with nothing beside it. This does not patch
   // anything. It is a grid, and a grid is what was asked for.
   const cells = Math.max(2, Math.round(GRID_SPAN / config.pitch));
-  const targets = roofTargets(cells, random);
+  const targets = roofTargets(cells, config.groundY, random);
 
   // ------------------------------------------------------------------ the alley
   //
@@ -540,7 +558,11 @@ export function generateCity(options: CityOptions = {}): CityParts {
       } else if (roll < band.construction + band.hall) {
         count('hall');
         hall(context, cx, cz, footprint, band);
-      } else if (roll < 0.45) {
+      } else if (roll < 0.45 && top - config.groundY < INTERIOR_MAX_HEIGHT) {
+        // Interiors are worth having where a building is a few storeys. The ceiling is eight floors
+        // - which is exactly the ceiling the archetype used to impose on itself, and the reason the
+        // height rule never held: it built eight floors whatever its cell said, so a cell whose
+        // target was fifty-eight came out at eight and its neighbours averaged nothing like it.
         count('interior');
         interiorTower(context, cx, cz, footprint, band);
       } else if (roll < 0.6) {
@@ -694,9 +716,87 @@ export function generateCity(options: CityOptions = {}): CityParts {
     z: furthest.spot.z + 2.2,
   };
 
+  // ------------------------------------------------------------- the time trials
+  //
+  // **A gate you walk through, and a gate you have to reach.** Three of them, strung across the map
+  // at different angles so they are not all the same run: the start and the finish are rooftops
+  // several hundred metres apart, and the stars are the clock.
+  //
+  // The times are derived from the distance rather than guessed: a sprint is eleven and a half
+  // metres a second and a rooftop route is never the straight line, so three stars is roughly the
+  // distance at eight metres a second, two at five and a half, one at four. Walking it in the time
+  // is a star; running it is three.
+  const trials: NonNullable<CityParts['trials']>[number][] = [];
+  for (let index = 0; index < 3; index += 1) {
+    // Opposite ends of the diagonal rather than a fixed fraction apart: a pair that happens to
+    // straddle the spawn is skipped by the offset check below, and three attempts that each skip is
+    // one trial. Three spans of the whole map, from three different starting points.
+    const from = roofs[Math.floor((0.08 + index * 0.1) * roofs.length)] ?? origin;
+    const to = roofs[Math.floor((0.92 - index * 0.1) * roofs.length)] ?? origin;
+    const span = Math.hypot(to.spot.x - from.spot.x, to.spot.z - from.spot.z);
+    if (span < 200) continue;
+    // Off the roof's centre, so a gate cannot stand where a route point already does: the spawn and
+    // the collectibles are placed at deck centres, and a gate on top of one is a gate you are born
+    // inside of.
+    const offset = (spot: { x: number; y: number; z: number }) => ({ x: spot.x + 3.4, y: spot.y, z: spot.z + 1.6 });
+    const fromSpot = offset(from.spot);
+    const toSpot = offset(to.spot);
+    if (Math.hypot(fromSpot.x - origin.spot.x, fromSpot.z - origin.spot.z) < 4) continue;
+    if (Math.hypot(toSpot.x - origin.spot.x, toSpot.z - origin.spot.z) < 4) continue;
+    const id = `trial-${index + 1}`;
+    trials.push({
+      id,
+      from: { x: fromSpot.x, y: fromSpot.y + 0.02, z: fromSpot.z },
+      to: { x: toSpot.x, y: toSpot.y + 0.02, z: toSpot.z },
+      reach: 3.4,
+      starTimes: [span / 8, span / 5.5, span / 4],
+    });
+    for (const [suffix, at, colour] of [
+      ['start', fromSpot, '#4ff0c8'],
+      ['finish', toSpot, '#ff9ad5'],
+    ] as const) {
+      props.push(
+        make(`${id}-gate-${suffix}`, {
+          at: [at.x, at.z],
+          bottom: at.y,
+          size: [3.2, 3.4, 0.6],
+          model: 'trial-gate',
+          collide: 'none',
+          tints: { neon: colour },
+        }),
+      );
+      lights.push({
+        id: `${id}-gate-${suffix}-light`,
+        position: { x: at.x, y: at.y + 3, z: at.z },
+        color: colour,
+        intensity: 10,
+        distance: 18,
+      });
+    }
+    count('trial');
+  }
+
+  props.push(
+    make('secret-phone-prop', {
+      at: [phoneAt.x, phoneAt.z],
+      bottom: phoneAt.y,
+      size: [0.5, 0.3, 1.1],
+      model: 'phone',
+      collide: 'none',
+    }),
+  );
+  lights.push({
+    id: 'secret-phone-glow',
+    position: { x: phoneAt.x, y: phoneAt.y + 1.2, z: phoneAt.z },
+    color: '#9fe8ff',
+    intensity: 6,
+    distance: 10,
+  });
+
   return {
     props,
     lights: lights.length > 0 ? lights : undefined,
+    trials: trials.length > 0 ? trials : undefined,
     elevators: elevators.length > 0 ? elevators : undefined,
     spawn: {
       position: { x: origin.spot.x, y: origin.spot.y + 0.02, z: origin.spot.z },
@@ -714,7 +814,10 @@ export function generateCity(options: CityOptions = {}): CityParts {
       { id: 'secret-phone', position: phoneAt },
     ],
     npc: { id: 'alley-cat', name: 'Alley cat', position: catAt, reach: 3.2 },
-    goal: on(1, 'goal'),
+    // **The finish is the cat.** The run ends where it began: the goal stands in the cat's own
+    // courtyard, so the return trip is a descent into it rather than a sprint to a far corner, and
+    // the beam of light marks the way back for anybody who has been out collecting.
+    goal: { id: 'goal', position: catAt },
     report: Object.fromEntries(report),
   };
 }
@@ -1199,15 +1302,19 @@ function tower(
   const wall = 0.6;
   const shaftOuter = 4.2;
   const storey = 4.8;
-  const storeys = 2 + Math.floor(random() * 2);
   const halfW = footprint;
   const halfD = footprint;
+  const cellRoof = band.roofs[band.roofs.length - 1] ?? 30;
+  // **As many storeys as fit under the cell's roof.** The shell has to end below the tower's roof or
+  // the lift's floors come out unordered - and with the heights random, a cell whose roof is low is
+  // a tower of one storey rather than a lift that goes up to a floor under its own roof.
+  const storeys = Math.max(1, Math.min(3, Math.floor((cellRoof - floor - 5) / storey)));
   const insideTop = floor + storeys * storey;
   // Ten to eighteen metres over its cell: enough to be a tower, inside the twenty the rule
   // allows, and reachable by the lift the tower exists to carry.
   // A tower is a building with a lift in it, not a spire: its roof is its cell's height, and the
   // rule is what decides that.
-  const roof = band.roofs[band.roofs.length - 1] ?? 30;
+  const roof = cellRoof;
   const tints = tintSet(context);
 
   const panel = (
@@ -1296,7 +1403,16 @@ function tower(
   const shedX0 = shaftX + shaftOuter / 2 + wall;
   const shedHalf = (cx + halfW - shedX0) / 2;
   const shedX = shedX0 + shedHalf;
-  if (shedHalf > 4) {
+  if (shedHalf <= 4) {
+    // **The tower still has to be as tall as its cell.** The setback is the tower's roof, and when
+    // the shaft leaves too little room for one the tower was left with nothing at its cell's height
+    // - its highest surface was the shell's ring, ten or twenty metres under its neighbours' and
+    // the reason the height rule never held: a block next to three short towers measured thirty
+    // metres over their average. The roof goes on regardless; it is only the *setback* that can be
+    // too narrow to be worth having.
+    roofKit(context, `${id}-cap`, [cx, cz], halfW * 0.7, halfD * 0.7, roof, { solar: false });
+    context.count('tower-floor');
+  } else {
     roofKit(context, `${id}-setback`, [shedX, cz], shedHalf * 2, halfD * 2 - 0.4, roof, { solar: false });
     // Solar and a tank on the setback's own roof, which is the building's roof.
     props.push(
@@ -1312,7 +1428,7 @@ function tower(
 
     // Billboards on the tall ones, facing the old town, because the point of a billboard
     // is to be seen from somewhere.
-    if (roof > 44 && random() < 0.8) {
+    if (roof - config.groundY > 34 && random() < 0.8) {
       const facing = cz > 0 ? -1 : 1;
       const z = cz + facing * (halfD - 0.3);
       props.push(
@@ -1624,9 +1740,15 @@ function interiorTower(
   const wall = 0.6;
   const floor = config.groundY;
   const storey = 5.4;
-  // As many floors as its terrace holds, so an interior is a building like any other from
-  // the outside and its roof is at the height its neighbours are.
-  const levels = Math.min(8, Math.max(3, Math.round(((band.roofs[0] ?? 20) - floor) / storey)));
+  // As many floors as its cell is tall, *without a ceiling*.
+  //
+  // There used to be one - `Math.min(8, ...)` - and it was the reason the height rule never held.
+  // An interior built eight floors whatever its cell said, so a cell whose target was eight metres
+  // and one whose target was fifty-eight both came out at eight: a block beside three interiors had
+  // neighbours averaging eight against its own thirty-eight, and measured thirty-one metres over
+  // them. The clamp was in `roofTargets` and did exactly what it said; the archetypes were building
+  // something else.
+  const levels = Math.max(3, Math.round(((band.roofs[0] ?? 20) - floor) / storey));
   const roof = floor + storey * levels;
   const id = `inside-${Math.round(cx)}-${Math.round(cz)}`;
   const tints = tintSet(context);

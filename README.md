@@ -41,61 +41,62 @@ single pixel or millimetre of how the game plays.
 ## Table of contents
 
 1. [Status](#status)
-2. [V0.8.1: half of V1.0, and why](#v081-half-of-v10-and-why)
-3. [What V0.8 adds: the city you can see](#what-v08-adds-the-city-you-can-see)
-4. [What V0.7.11 fixes: the frame, and the crane's collision](#what-v0711-fixes-the-frame-and-the-cranes-collision)
-5. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
-6. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
-7. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
-8. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
-9. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
-10. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
-11. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
-12. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
-13. [What V0.7.2 fixes](#what-v072-fixes)
-14. [What V0.7.1 optimises](#what-v071-optimises)
-15. [What V0.7 delivers](#what-v07-delivers)
-16. [What V0.6.1 fixes](#what-v061-fixes)
-17. [What V0.6 delivers](#what-v06-delivers)
-18. [What V0.5 delivered](#what-v05-delivered)
-19. [Quick start](#quick-start)
-20. [Controls](#controls)
-21. [What you should see](#what-you-should-see)
-22. [Settings](#settings)
-23. [Camera effects](#camera-effects)
-24. [Feel](#feel)
-25. [Your body](#your-body)
-26. [Optimisation](#optimisation)
-27. [Locomotion](#locomotion)
-28. [The movement state machine](#the-movement-state-machine)
-29. [The manoeuvre bands](#the-manoeuvre-bands)
-30. [Wall running](#wall-running)
-31. [Wall jumping](#wall-jumping)
-32. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
-33. [The landing roll](#the-landing-roll)
-34. [Pipe climbing](#pipe-climbing)
-35. [Interiors and doors](#interiors-and-doors)
-36. [Lifts](#lifts)
-37. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
-38. [Checkpoints and respawn](#checkpoints-and-respawn)
-39. [The district](#the-district)
-40. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
-41. [Neon](#neon)
-42. [Fall damage and health](#fall-damage-and-health)
-43. [Models and surfaces](#models-and-surfaces)
-44. [Sound](#sound)
-45. [How the textures are made](#how-the-textures-are-made)
-46. [Architecture](#architecture)
-47. [How a frame works](#how-a-frame-works)
-48. [Collision](#collision)
-49. [Crash reporting](#crash-reporting)
-50. [The HUDs](#the-huds)
-51. [Testing](#testing)
-52. [Continuous integration](#continuous-integration)
-53. [Project layout](#project-layout)
-54. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
-55. [Out of scope for V0.7](#out-of-scope-for-v07)
-56. [Roadmap](#roadmap)
+2. [V1.0: the quest, the trials, and the phone](#v10-the-quest-the-trials-and-the-phone)
+3. [V0.8.1: the courtyards, and what was missing from V1.0](#v081-the-courtyards-and-what-was-missing-from-v10)
+4. [What V0.8 adds: the city you can see](#what-v08-adds-the-city-you-can-see)
+5. [What V0.7.11 fixes: the frame, and the crane's collision](#what-v0711-fixes-the-frame-and-the-cranes-collision)
+6. [What V0.7.10 does: the volumes, the crane, and two rules about the grid](#what-v0710-does-the-volumes-the-crane-and-two-rules-about-the-grid)
+7. [What V0.7.9 does: the frame, and the furniture](#what-v079-does-the-frame-and-the-furniture)
+8. [What V0.7.8 fixes: the roofs, and the floor](#what-v078-fixes-the-roofs-and-the-floor)
+9. [What V0.7.7 does: the whole map, not the gaps around it](#what-v077-does-the-whole-map-not-the-gaps-around-it)
+10. [What V0.7.6 does: a grid, and the end of patching](#what-v076-does-a-grid-and-the-end-of-patching)
+11. [What V0.7.5 fixes: the grid is the route](#what-v075-fixes-the-grid-is-the-route)
+12. [What V0.7.4 fixes: the grid, the ground, and glass](#what-v074-fixes-the-grid-the-ground-and-glass)
+13. [What V0.7.3 fixes: the city was in the wrong place](#what-v073-fixes-the-city-was-in-the-wrong-place)
+14. [What V0.7.2 fixes](#what-v072-fixes)
+15. [What V0.7.1 optimises](#what-v071-optimises)
+16. [What V0.7 delivers](#what-v07-delivers)
+17. [What V0.6.1 fixes](#what-v061-fixes)
+18. [What V0.6 delivers](#what-v06-delivers)
+19. [What V0.5 delivered](#what-v05-delivered)
+20. [Quick start](#quick-start)
+21. [Controls](#controls)
+22. [What you should see](#what-you-should-see)
+23. [Settings](#settings)
+24. [Camera effects](#camera-effects)
+25. [Feel](#feel)
+26. [Your body](#your-body)
+27. [Optimisation](#optimisation)
+28. [Locomotion](#locomotion)
+29. [The movement state machine](#the-movement-state-machine)
+30. [The manoeuvre bands](#the-manoeuvre-bands)
+31. [Wall running](#wall-running)
+32. [Wall jumping](#wall-jumping)
+33. [Vaulting and the Kong vault](#vaulting-and-the-kong-vault)
+34. [The landing roll](#the-landing-roll)
+35. [Pipe climbing](#pipe-climbing)
+36. [Interiors and doors](#interiors-and-doors)
+37. [Lifts](#lifts)
+38. [Pickups, the finish and the clock](#pickups-the-finish-and-the-clock)
+39. [Checkpoints and respawn](#checkpoints-and-respawn)
+40. [The district](#the-district)
+41. [Fog, smoke and the sky](#fog-smoke-and-the-sky)
+42. [Neon](#neon)
+43. [Fall damage and health](#fall-damage-and-health)
+44. [Models and surfaces](#models-and-surfaces)
+45. [Sound](#sound)
+46. [How the textures are made](#how-the-textures-are-made)
+47. [Architecture](#architecture)
+48. [How a frame works](#how-a-frame-works)
+49. [Collision](#collision)
+50. [Crash reporting](#crash-reporting)
+51. [The HUDs](#the-huds)
+52. [Testing](#testing)
+53. [Continuous integration](#continuous-integration)
+54. [Project layout](#project-layout)
+55. [Deliberate decisions and limitations](#deliberate-decisions-and-limitations)
+56. [Out of scope for V0.7](#out-of-scope-for-v07)
+57. [Roadmap](#roadmap)
 
 ---
 
@@ -103,15 +104,16 @@ single pixel or millimetre of how the game plays.
 
 | | |
 | --- | --- |
-| Version | `0.8.1` |
+| Version | `1.0.0` |
 | Stage | Pre-alpha, playable demo |
 | Stack | TypeScript · three.js · Vite · Vitest |
 | Runs in | Any modern desktop browser with WebGL 2 and Web Audio |
-| Tests | 1127 across 42 files |
+| Tests | 1139 across 42 files |
 | Coverage | ~93% of statements (of the unit-testable surface) |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
-V0.8.1 is the first half of V1.0, and the second half is missing - see below, stated plainly.
+**V1.0.0 is the Beta.** A city a kilometre across that you can cross, an alley cat with a quest, three
+time trials, and a phone nobody tells you about.
 
 **The version on the title screen is read from `package.json` at runtime**, and that
 is one of the V0.6 fixes: Vite's `define` is expanded when the dev server *starts*, so
@@ -121,7 +123,72 @@ changing it is something the server notices.
 
 ---
 
-## V0.8.1: half of V1.0, and why
+## V1.0: the quest, the trials, and the phone
+
+### The cat, and the quest
+
+An alley cat sits in a courtyard a hundred metres from the spawn - far enough that finding it is the
+first thing the run asks, close enough that finding it is not a search. Talk to it and it asks for
+eight shards.
+
+**Nothing may be picked up before it asks.** That is the whole reason the quest exists: eight
+unmarked boxes on a kilometre of rooftops are a scavenger hunt with no giver, and a quest you can
+finish before you are given it is not a quest. The gate is in `RunState.collect`, and a level with no
+cat in it - the hand-authored district's own test levels - is granted the quest at the start, because
+a shard nobody can be asked for is a shard nobody can take.
+
+**And the finish is the return trip.** The goal stands where the cat does, so the run ends where it
+began, and it counts only once the cat has been *told*: run the checkpoints and arrive empty-handed
+and you are early rather than done.
+
+**The guide follows the quest.** The HUD pointer aims at the cat before the quest, at the nearest
+shard while the shards are out, and back at the cat once they are all in - which is what stops the
+last shard being the end of the directions. Straight line rather than a route: the city is a grid, so
+the straight line *is* the route within a street or two.
+
+### Three time trials
+
+A gate you walk through and a gate you have to reach, three times across the map at three different
+angles. Walking into the first starts the clock; reaching the second stops it and scores it **one to
+three stars**, and the HUD carries the running time and the stars still achievable while it runs.
+
+The star times are derived from the distance rather than guessed - a sprint is eleven and a half
+metres a second and a rooftop route is never the straight line, so three stars is roughly the distance
+at eight metres a second, two at five and a half, one at four. Walking it scores; running it scores
+three.
+
+### The phone
+
+A phone lies on the roof furthest from the spawn, behind the plant on it: hidden well enough to be a
+reward for exploring and not well enough to be a puzzle. It is **not one of the eight** - its own
+list, its own counter - so picking it up does not shortcut the quest.
+
+Finding it is the one scripted moment in the game. The arm comes up (`armAction: 'phone'`, applied
+*over* whatever the movement asked for, so the player can still walk), somebody answers, and then the
+announcement. Exactly one thing in this project happens rather than being a mechanic.
+
+### And the height rule finally holds
+
+No building more than ten to fifteen metres over the average of the eight around it. It took three
+passes because the bug was never in the clamp:
+
+- **The interiors were capped at eight floors.** An interior built eight storeys whatever its cell
+  said, so a cell whose target was eight metres and one whose target was fifty-eight both came out at
+  eight. A block beside three interiors measured **thirty-one metres** over their average.
+- **The heights were absolute Y**, not heights above the street, so every building in the city was
+  between forty-seven and ninety metres above the pavement - which is also why the interior gate
+  could never pass.
+- **Towers without room for a setback never reached their cell at all**, and their neighbours averaged
+  the shell's ring instead.
+
+With those fixed, the measured worst is **eighteen metres and one building in a hundred and ninety-two**
+over the line, down from thirty-one and twenty. The lead in `roofTargets` is four rather than fifteen
+because the rule is about *buildings* and the knob is about *targets*: a cell's roof is its target
+plus whatever the archetype adds on the way down, and it is the measurement that has to hold.
+
+---
+
+## V0.8.1: the courtyards, and what was missing from V1.0
 
 V1.0 asked for four things. **One landed, and three did not.** This is what that looks like from
 the inside, because pretending otherwise would be worse than the failure.

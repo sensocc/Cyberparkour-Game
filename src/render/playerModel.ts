@@ -470,6 +470,23 @@ function applyArm(
       end = -0.25;
       break;
     }
+    case 'phone': {
+      // One arm bent up to the ear, the other hanging. It overrides whatever the movement asked
+      // for, because it is the one moment in the game where the body is doing something the
+      // movement system has no opinion about - a phone call is not a gait.
+      if (sign > 0) {
+        upper = -0.5;
+        roll = -0.55;
+        lower = -1.9;
+        end = -1.35;
+      } else {
+        upper = 0.1;
+        roll = sign * 0.08;
+        lower = -0.32;
+        end = -0.2;
+      }
+      break;
+    }
     case 'overhead': {
       // Both hands straight up, on a ladder.
       upper = -2.6;

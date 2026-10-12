@@ -1128,6 +1128,37 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     goal: undefined,
   });
 
+  /** A level with a cat at the spawn, a shard beside it, and the finish where the cat is. */
+  const QUEST_LEVEL = nearSpawn({
+    collectibles: [{ id: 'test-shard', position: { x: 0, y: 1.4, z: 3 } }],
+    checkpoints: [],
+    npc: { id: 'test-cat', name: 'Alley cat', position: { x: 0, y: 0.5, z: 3 }, reach: 4 },
+    goal: { id: 'test-goal', position: { x: 0, y: 0.5, z: 3 } },
+  });
+
+  /** A trial whose two gates are both within reach of the spawn. */
+  const TRIAL_LEVEL = nearSpawn({
+    collectibles: [],
+    checkpoints: [],
+    goal: undefined,
+    trials: [
+      {
+        id: 'test-trial',
+        from: { x: 0, y: 0.5, z: 3 },
+        to: { x: 0, y: 0.5, z: 3 },
+        reach: 3.4,
+        starTimes: [60, 90, 120] as const,
+      },
+    ],
+  });
+
+  /** The phone, lying where the player spawns. */
+  const PHONE_LEVEL = nearSpawn({
+    collectibles: [{ id: 'secret-phone', position: { x: 0, y: 0.9, z: 3 } }],
+    checkpoints: [],
+    goal: undefined,
+  });
+
   const UNARMED_GOAL_LEVEL = nearSpawn({
     collectibles: [],
     goal: { id: 'test-goal', position: { x: 0, y: 0.5, z: 3 } },
@@ -1161,6 +1192,81 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     expect(harness.game.runSnapshot.collected).toBe(1);
     // The view was told, so the shard is gone rather than ghosted.
     expect(harness.views[0]?.pickups).toContainEqual({ id: 'test-shard', visible: false });
+  });
+
+  it('refuses a shard until the cat has asked for it', () => {
+    // The quest gate: eight unmarked boxes on a kilometre are a scavenger hunt with no giver. The
+    // shard is right there and cannot be taken - and once the cat has been talked to, it can.
+    const harness = createHarness({ level: QUEST_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+    expect(harness.game.runSnapshot.collected).toBe(0);
+    expect(harness.game.runSnapshot.quest).toBe('none');
+
+    harness.input.keyDown('KeyE');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyE');
+    expect(harness.game.runSnapshot.quest).toBe('taken');
+    stepFrames(harness, 2);
+    expect(harness.game.runSnapshot.collected).toBe(1);
+  });
+
+  it('does not arm the finish until the cat has been told, and arms it when it has', () => {
+    // The finish is the return trip. A player who collects the eight and never comes back is early
+    // rather than done.
+    const harness = createHarness({ level: QUEST_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+    harness.input.keyDown('KeyE');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyE');
+    stepFrames(harness, 2);
+    expect(harness.game.runSnapshot.collected, 'the shard is in').toBe(1);
+    expect(harness.game.runSnapshot.goalArmed).toBe(false);
+
+    harness.input.keyDown('KeyE');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyE');
+    expect(harness.game.runSnapshot.quest).toBe('done');
+    expect(harness.game.runSnapshot.goalArmed).toBe(true);
+  });
+
+  it('counts the shards the cat asked for, and not the secret', () => {
+    // "0 / 11" tells the player there is one they have not been told about, which is the opposite of
+    // what a secret is.
+    const harness = createHarness({ level: PHONE_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+    expect(harness.game.runSnapshot.collectibleCount, 'the phone is not a shard').toBe(0);
+  });
+
+  it('runs a time trial from the gate to the gate, and scores it', () => {
+    // Both gates beside the spawn, so the run starts and finishes inside the same second: what is
+    // tested is the flow - through the gate, the clock runs, reaching the other gate scores - rather
+    // than a route, which `city.test.ts` covers by laying three of them across the map.
+    const harness = createHarness({ level: TRIAL_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 3);
+
+    const trial = harness.game.currentTrial;
+    expect(trial, 'the trial must have started').not.toBeNull();
+    expect(trial?.stars, 'nothing is faster than three').toBe(3);
+    expect(harness.ui.toasts.some((message) => message.includes('*')), 'a score').toBe(true);
+  });
+
+  it('plays the phone call and the secret ending when the phone is found', () => {
+    // The one scripted moment in the game: the arm comes up, somebody answers, and then the
+    // announcement. It is checked end to end because a secret that does not fire is not a secret.
+    const harness = createHarness({ level: PHONE_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+
+    expect(harness.game.runSnapshot.collected, 'not one of the eight').toBe(0);
+    expect(harness.game.calling).toBe(true);
+
+    for (let frame = 0; frame < 400; frame += 1) stepFrames(harness, 1);
+    expect(harness.game.calling).toBe(false);
+    expect(harness.ui.secretAnnounced, 'the announcement').toBe(true);
   });
 
   it('does not finish a level whose checkpoints are still ahead', () => {

@@ -425,6 +425,27 @@ export class GameUi {
     this.setCrosshair(false);
   }
 
+  /**
+   * The secret ending.
+   *
+   * Reuses the death overlay's shape - a title and a line - because it is the same kind of thing: a
+   * full-screen announcement that stops the world for a moment. It does not stop the *game*, since
+   * the run is over by then either way and the player is free to keep moving.
+   */
+  showSecret(): void {
+    this.deathTitle.textContent = 'SOMEBODY ANSWERED';
+    this.deathDetail.textContent = 'They knew your name, and they were not surprised.';
+    setHidden(this.deathOverlay, false);
+    this.secretShown = true;
+  }
+
+  /** Whether the secret ending has been announced this session. */
+  private secretShown = false;
+
+  get secretAnnounced(): boolean {
+    return this.secretShown;
+  }
+
   hideDeath(): void {
     setHidden(this.deathOverlay, true);
     if (this.playMode) this.setCrosshair(true);
@@ -500,8 +521,17 @@ export class GameUi {
     );
   }
 
+  /**
+   * Every message this session has shown.
+   *
+   * Kept because the UI is the only thing that knows what the player was *told*, and a test that
+   * cannot see the toasts cannot tell a scored trial from a silent one.
+   */
+  readonly toasts: string[] = [];
+
   /** Transient message, e.g. "report copied". */
   toast(message: string, durationMs = 3000): void {
+    this.toasts.push(message);
     this.noticeBox.textContent = message;
     setHidden(this.noticeBox, false);
 

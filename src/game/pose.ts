@@ -26,7 +26,7 @@ import {
 } from './player.js';
 
 /** What the arms are doing. */
-export type ArmAction = 'swing' | 'reach' | 'overhead' | 'hanging' | 'tucked' | 'relaxed';
+export type ArmAction = 'swing' | 'reach' | 'overhead' | 'hanging' | 'tucked' | 'relaxed' | 'phone';
 
 /** What the legs are doing. */
 export type LegAction = 'stride' | 'tuck' | 'hang' | 'brace';

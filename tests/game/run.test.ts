@@ -136,7 +136,7 @@ describe('checkpoints and the finish', () => {
     ]);
   });
 
-  it('arms the finish only once every checkpoint is behind you, and the cat has been told', () => {
+  it('arms the finish only once every checkpoint is behind you, every shard is in, and the cat knows', () => {
     const run = new RunState(options());
     expect(run.armed).toBe(false);
 
@@ -145,11 +145,26 @@ describe('checkpoints and the finish', () => {
     expect(run.armed).toBe(false);
 
     run.reachCheckpoint(2);
+    // ...and the shards are in, and the cat has been told: the finish is the *return* trip, and a
+    // player who runs the checkpoints and arrives empty-handed is early rather than done.
+    expect(run.armed).toBe(false);
+    run.talkToNpc();
+    collect(run, 'shard-1');
+    collect(run, 'shard-2');
+    expect(run.armed).toBe(false);
+    run.talkToNpc(); // the report, which is the finish
     expect(run.armed).toBe(true);
   });
 
-  it('arms a level with no checkpoints once the cat has been told', () => {
-    expect(new RunState(options({ checkpointCount: 0 })).armed).toBe(true);
+  it('arms a level with no checkpoints the moment its shards are in and the cat knows', () => {
+    const bare = new RunState(options({ checkpointCount: 0 }));
+    expect(bare.armed).toBe(false);
+    bare.talkToNpc();
+    collect(bare, 'shard-1');
+    collect(bare, 'shard-2');
+    expect(bare.armed).toBe(false);
+    bare.talkToNpc();
+    expect(bare.armed).toBe(true);
   });
 });
 
@@ -335,5 +350,46 @@ describe('the record on disk', () => {
     writeBestTime(store, Number.NaN);
     writeBestTime(store, -1);
     expect(readBestTime(store)).toBeNull();
+  });
+});
+
+describe('the quest', () => {
+  it('refuses every shard until the cat has asked, and then takes them once each', () => {
+    const run = new RunState(options());
+    expect(run.collect('shard-1'), 'before the cat asks').toBe(false);
+    expect(run.snapshot().collected).toBe(0);
+
+    expect(run.talkToNpc()).toBe('accepted');
+    expect(run.collect('shard-1')).toBe(true);
+    expect(run.collect('shard-1'), 'twice').toBe(false);
+  });
+
+  it('answers the second visit with what is left, and the third with the report', () => {
+    const run = new RunState(options());
+    run.talkToNpc();
+    expect(run.talkToNpc(), 'still out there').toBe('waiting');
+    run.collect('shard-1');
+    run.collect('shard-2');
+    expect(run.talkToNpc(), 'all in').toBe('reported');
+    expect(run.questState).toBe('done');
+  });
+
+  it('counts the phone as a secret rather than as one of the eight', () => {
+    // The phone is its own list: picking it up must not advance the quest the cat asked for, or the
+    // secret would be a shortcut through the level.
+    const run = new RunState(options());
+    run.talkToNpc();
+    expect(run.collect('secret-phone', { secret: true })).toBe(true);
+    expect(run.snapshot().collected, 'not one of the eight').toBe(0);
+    expect(run.hasSecret('secret-phone')).toBe(true);
+    expect(run.hasCollected('secret-phone')).toBe(true);
+  });
+
+  it('gives a level with no cat its quest already taken', () => {
+    // The district's own levels have nobody in them, and a shard nobody can be asked for is a shard
+    // nobody can take.
+    const run = new RunState(options({ hasNpc: false }));
+    expect(run.questState).toBe('taken');
+    expect(run.collect('shard-1')).toBe(true);
   });
 });
