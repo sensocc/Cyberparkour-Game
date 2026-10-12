@@ -1269,6 +1269,31 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     expect(harness.ui.secretAnnounced, 'the announcement').toBe(true);
   });
 
+  it('asks for as many shards as the level has, rather than a number in a sentence', () => {
+    // The cat used to say "the eight shards" over a level with ten in it, which is the kind of thing
+    // a player notices in the first minute and no test does unless it is written down.
+    const harness = createHarness({ level: QUEST_LEVEL });
+    harness.game.start();
+    harness.input.keyDown('KeyE');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyE');
+
+    const asked = harness.ui.toasts.at(-1) ?? '';
+    expect(asked).toContain(String(harness.game.runSnapshot.collectibleCount));
+    expect(asked).not.toContain('eight');
+  });
+
+  it('points at the shards and never at the secret', () => {
+    // A phone you are guided to is not hidden, and the guide is the one thing in the game that knows
+    // where everything is.
+    const harness = createHarness({ level: PHONE_LEVEL });
+    harness.game.start();
+    stepFrames(harness, 2);
+    // The only collectible on this level is the phone, so a guide that pointed at collectibles would
+    // point at it - and there is nothing else it could be pointing at, which is why the hint is null.
+    expect(harness.gameHud.last?.hint, 'nothing worth pointing at').toBeNull();
+  });
+
   it('does not finish a level whose checkpoints are still ahead', () => {
     const harness = createHarness({ level: UNARMED_GOAL_LEVEL });
     harness.game.start();

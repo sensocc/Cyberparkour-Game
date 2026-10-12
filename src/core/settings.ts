@@ -74,7 +74,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     label: 'High',
     pixelRatioCap: 2,
     shadows: true,
-    shadowMapSize: 4096,
+    shadowMapSize: 2048,
     anisotropy: 16,
     smokeScale: 1,
     lightScale: 1,

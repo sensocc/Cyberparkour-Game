@@ -978,7 +978,10 @@ function roofKit(
     const tint = lit ? '#e9f6cf' : random() < 0.5 ? '#8fb4c8' : '#5f7c92';
     const lowest = config.groundY + 6;
     const room = top - 2 - lowest;
-    for (let band = 0; band < 2; band += 1) {
+    // One band rather than two: at two hundred and fifty-six buildings the second band was fifteen
+    // thousand triangles for windows nobody counts, and the glass reads from the street on the
+    // strength of the curtain-wall towers anyway.
+    for (let band = 0; band < 1; band += 1) {
       const bottom = lowest + room * (0.28 + 0.44 * band);
       props.push(
         make(`${id}-windows-z-${band}`, {

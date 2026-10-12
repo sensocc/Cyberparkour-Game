@@ -568,7 +568,13 @@ export class Game {
       if (secret) this.beginSecretCall();
       this.view?.setCollectibleVisible(pickup.id, false);
       this.audioDirector.push({ kind: 'pickup', index: this.run.snapshot().collected });
-      if (this.run.allCollected) this.options.ui.toast('ALL PICKUPS COLLECTED');
+      // With a cat in the level, having them all is the *middle* of the quest rather than the end of
+      // it: the last shard is the point at which the player has to go back, and the HUD says so.
+      if (this.run.allCollected) {
+        this.options.ui.toast(
+          this.definition.npc ? 'All of them. The cat is waiting.' : 'ALL PICKUPS COLLECTED',
+        );
+      }
       this.log?.info('game', 'pickup collected', { id: pickup.id, collected: this.run.snapshot().collected });
     }
 
@@ -992,6 +998,9 @@ export class Game {
 
     let best: { bearing: number; distance: number } | null = null;
     for (const shard of this.collectibles) {
+      // **Not the secret.** A phone you are pointed at is not hidden, and the guide is the one thing
+      // in the game that knows where everything is.
+      if (shard.id.startsWith('secret-')) continue;
       if (this.run.hasCollected(shard.id)) continue;
       const dx = shard.position.x - this.player.position.x;
       const dz = shard.position.z - this.player.position.z;
@@ -1150,14 +1159,19 @@ export class Game {
   /**
    * Says what there is to say to the cat.
    *
-   * Three states, three answers: it asks you to bring the eight shards back, it tells you how many
-   * are left, and it takes them. The last one is the level - the goal stands where the cat does -
+   * Three states, three answers: it asks you to bring the shards back, it tells you how many are
+   * left, and it takes them. The count comes from the level rather than from the sentence - the city
+   * has ten shards in it and the first version of this said "eight", which is the kind of thing a
+   * player notices immediately and a test does not. The last one is the level - the goal stands where the cat does -
    * so the return trip is the finish rather than a separate errand.
    */
   private talkToCat(): boolean {
     const answer = this.run.talkToNpc();
     if (answer === 'accepted') {
-      this.options.ui.toast('The cat wants the eight shards, and is not asking politely.');
+      const count = this.questCollectibles.length;
+      this.options.ui.toast(
+        `The cat wants ${count} ${count === 1 ? 'shard' : 'shards'}, and is not asking politely.`,
+      );
       this.audioDirector.push({ kind: 'checkpoint' });
     } else if (answer === 'reported') {
       this.options.ui.toast('The cat has them all. This is where the night started.');

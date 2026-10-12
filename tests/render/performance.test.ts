@@ -74,7 +74,10 @@ describe('the cost of a frame', () => {
       // *whole* city every frame - a million triangles, which is what a machine at fifteen
       // frames a second was actually paying for. 250 m keeps the draw calls in the hundreds and
       // gives the distance and shadow culls something to bite on.
-      expect(built.chunks.length).toBeGreaterThan(200);
+      // 626 at 334 m. The range has been to 128, 500 and 250: the last of those bought culling
+      // resolution and paid for it in draw calls, which is the wrong way round - 653 chunk meshes
+      // came to 485 of them in a street view, against 165 at this size for the same geometry.
+      expect(built.chunks.length).toBeGreaterThan(150);
       expect(built.chunks.length).toBeLessThan(900);
 
       const parts = city.props.length;
@@ -186,9 +189,12 @@ describe('the cost of a frame', () => {
       // around the player and clips the rest, so a chunk it does not touch casts nothing worth
       // drawing. V0.7.9 asked the centre, four hundred chunks stayed in the pass, and the shadow
       // map 140 m across was fed a million triangles.
+      // Half a chunk either way: the question the shadow camera asks is whether the *volume*
+      // overlaps the chunk, and the chunk's half-side is what turns its centre into its edge.
+      const half = 334 / 2;
       for (const mesh of built.chunks) {
-        const nearX = Math.abs(mesh.position.x - eye.x) - 125;
-        const nearZ = Math.abs(mesh.position.z - eye.z) - 125;
+        const nearX = Math.abs(mesh.position.x - eye.x) - half;
+        const nearZ = Math.abs(mesh.position.z - eye.z) - half;
         if (nearX > reach || nearZ > reach) {
           expect(mesh.castShadow, mesh.name).toBe(false);
         }

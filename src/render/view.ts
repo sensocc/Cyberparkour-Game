@@ -387,7 +387,11 @@ export class GameView implements GameViewLike {
     const cell = `${Math.round(eye.x / 24)}|${Math.round(eye.z / 24)}`;
     if (cell === this.lampCell) return;
     this.lampCell = cell;
-    this.lampsOn = updateLamps(this.built.lamps, eye, Math.max(4, Math.round(12 * this.lightScale)));
+    // **Six, not twelve.** A point light is a per-fragment loop over the whole screen, and the
+    // nearest twelve of five hundred and seventy-six was still the most expensive thing in the frame.
+    // Six pools of light around the player and the neon carrying the rest: the city is a neon city,
+    // and it is emissive surfaces rather than lamps that make it one.
+    this.lampsOn = updateLamps(this.built.lamps, eye, Math.max(3, Math.round(6 * this.lightScale)));
   }
 
   private followWithShadow(eye: ReadonlyVec3): void {

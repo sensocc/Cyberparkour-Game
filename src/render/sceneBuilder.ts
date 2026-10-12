@@ -112,16 +112,15 @@ export interface BuiltScene {
  * material would lose frustum culling entirely - the renderer would draw every roof in the
  * city while the player looks at a wall.
  *
- * **The number is a draw-call budget rather than a culling unit, and it is 500.** At 128 m -
- * which is where it started, chosen as "about two blocks" - the city came out as 1,578 chunk
- * meshes and a street view asked the browser for 663 draw calls, because every chunk is split
- * once more by material. At 500 m the whole kilometre is four meshes per material, and the
- * same view asks for about 150. What that costs is culling resolution: a 500 m chunk is rarely
- * entirely off screen, so most of the city's triangles are submitted every frame - 822k
- * against 358k. Draw calls are what a browser runs out of first, and the GPU does not notice
- * three quarters of a million triangles.
+ * **The number is a draw-call budget rather than a culling unit, and it is 334.** At 128 m -
+ * where it started, chosen as "about two blocks" - the city came out as 1,578 chunk meshes and a
+ * street view asked the browser for 663 draw calls, because every chunk is split once more by
+ * material. At 334 m the kilometre is nine cells and a street view asks for about three hundred,
+ * since the range before this one went to 250 m for the culling and paid for it in draw calls: 653
+ * chunk meshes and 485 of them in view at once. What a chunk size costs is culling resolution, and
+ * what it buys is draw calls - and draw calls are what a browser runs out of first.
  */
-const CHUNK = 250;
+const CHUNK = 334;
 
 /**
  * A growable buffer of box geometry, in one chunk's local space.
