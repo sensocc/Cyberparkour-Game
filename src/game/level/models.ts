@@ -536,6 +536,56 @@ const bush: ModelDefinition = {
   ],
 };
 
+/**
+ * An alley cat, sitting.
+ *
+ * The quest-giver. Small, dark, with a head that reads as a head from ten metres - which at this
+ * scale means an upright body, a wedge of a head with two ears, and a tail curled round the feet.
+ * Nothing else would be legible, and a cat nobody can identify is a cat nobody talks to.
+ */
+const alleyCat: ModelDefinition = {
+  id: 'alley-cat',
+  note: 'A sitting cat: body, head, two ears and a tail. The quest-giver.',
+  parts: [
+    part([0.3, 0, 0.22], [0.7, 0.52, 0.78], 'concrete-dark'),
+    part([0.34, 0.5, 0.3], [0.66, 0.82, 0.72], 'concrete-dark'),
+    part([0.28, 0.8, 0.32], [0.72, 1, 0.7], 'concrete-dark'),
+    // The ears, which are what make it a cat rather than a box.
+    part([0.3, 0.98, 0.36], [0.44, 1.14, 0.5], 'concrete-dark'),
+    part([0.56, 0.98, 0.36], [0.7, 1.14, 0.5], 'concrete-dark'),
+    // The tail, round the front, and eyes that are their own light.
+    part([0.24, 0, 0.7], [0.76, 0.16, 0.86], 'concrete-dark'),
+    part([0.34, 0.88, 0.29], [0.44, 0.94, 0.33], 'neon'),
+    part([0.56, 0.88, 0.29], [0.66, 0.94, 0.33], 'neon'),
+  ],
+};
+
+/** A time-trial gate: two posts and an arch, with a lit underside. */
+const trialGate: ModelDefinition = {
+  id: 'trial-gate',
+  note: 'A trial gate: two posts and an arch, lit from underneath.',
+  parts: [
+    part([0.04, 0, 0.4], [0.16, 0.86, 0.6], 'metal-dark'),
+    part([0.84, 0, 0.4], [0.96, 0.86, 0.6], 'metal-dark'),
+    part([0.02, 0.82, 0.36], [0.98, 1, 0.64], 'metal-light'),
+    part([0.1, 0.8, 0.44], [0.9, 0.84, 0.56], 'neon'),
+    part([0.2, 0.1, 0.44], [0.36, 0.72, 0.56], 'hazard'),
+    part([0.64, 0.1, 0.44], [0.8, 0.72, 0.56], 'hazard'),
+  ],
+};
+
+/** A mobile phone, face up, screen lit. The secret. */
+const phone: ModelDefinition = {
+  id: 'phone',
+  note: 'A phone lying face up: a case, a lit screen, and a camera lens.',
+  parts: [
+    part([0, 0, 0], [1, 0.12, 1], 'metal-dark'),
+    part([0.08, 0.12, 0.06], [0.92, 0.15, 0.94], 'glass'),
+    part([0.08, 0.13, 0.06], [0.92, 0.16, 0.3], 'neon'),
+    part([0.62, 0.06, 0.28], [0.7, 0.13, 0.36], 'metal-light'),
+  ],
+};
+
 const windowBand: ModelDefinition = {
   id: 'window-band',
   note: 'A strip of lit or dark glass with mullions, sized to the wall it sits in.',
@@ -777,6 +827,9 @@ const MODELS: readonly ModelDefinition[] = [
   ladder,
   solarPanel,
   windowBand,
+  alleyCat,
+  trialGate,
+  phone,
   glassSlab,
   lampPost,
   planter,

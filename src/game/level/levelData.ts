@@ -55,6 +55,29 @@ export interface PropDefinition {
 
 
 
+export interface NpcDefinition {
+  readonly id: string;
+  readonly position: ReadonlyVec3;
+  /** How close the player has to be to be offered a word. */
+  readonly reach: number;
+  /** What to call it on screen. */
+  readonly name: string;
+}
+
+/**
+ * A time trial: through the first gate to reach the second.
+ *
+ * `starTimes` are seconds for one, two and three stars, in that order - so a trial is a route with
+ * a pace to it rather than a checkpoint, and the fastest way is rarely the safest.
+ */
+export interface TrialDefinition {
+  readonly id: string;
+  readonly from: ReadonlyVec3;
+  readonly to: ReadonlyVec3;
+  readonly reach: number;
+  readonly starTimes: readonly [number, number, number];
+}
+
 export interface SpawnPoint {
   /** Feet position. */
   readonly position: ReadonlyVec3;
@@ -256,6 +279,16 @@ export interface LevelDefinition {
   readonly collectibles?: readonly CollectibleDefinition[];
   /** The finishing line. Absent means the level cannot be completed. */
   readonly goal?: GoalDefinition;
+  /**
+   * Somebody to talk to, who gives the run its shape.
+   *
+   * The alley cat. Nothing may be picked up until the player has found it and been asked to: a
+   * quest you can finish before you are given it is not a quest, and eight shards scattered over a
+   * kilometre are not findable on purpose. The finish is the *return* to this position.
+   */
+  readonly npc?: NpcDefinition;
+  /** Time trials: a gate to walk through, and a gate to reach. */
+  readonly trials?: readonly TrialDefinition[];
   /** Smoke plumes. Visual only. */
   readonly smoke?: readonly SmokeDefinition[];
 }

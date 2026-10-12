@@ -33,6 +33,7 @@ import {
   type CollectibleDefinition,
   type GoalDefinition,
   type LevelDefinition,
+  type NpcDefinition,
   type PropDefinition,
   type SpawnPoint,
 } from './levelData.js';
@@ -215,6 +216,7 @@ export function buildCity(base: LevelDefinition, options: CityOptions = {}): Lev
     checkpoints: parts.checkpoints,
     collectibles: parts.collectibles,
     goal: parts.goal,
+    npc: parts.npc,
     spawn: parts.spawn,
     lights: parts.lights,
     elevators: parts.elevators,
@@ -264,6 +266,7 @@ export interface CityParts {
   readonly checkpoints: readonly CheckpointDefinition[];
   readonly collectibles: readonly CollectibleDefinition[];
   readonly goal: GoalDefinition;
+  readonly npc: NpcDefinition;
   readonly report: Record<string, number>;
 }
 
@@ -315,6 +318,23 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // anything. It is a grid, and a grid is what was asked for.
   const cells = Math.max(2, Math.round(GRID_SPAN / config.pitch));
   const targets = roofTargets(cells, random);
+
+  // ------------------------------------------------------------------ the alley
+  //
+  // **Somewhere for the cat to sit.** Two cells in twenty are left as a courtyard rather than a
+  // building: a low wall round a yard, with a lamp, some clutter and a way in. A grid of solid
+  // blocks has nowhere to hide anything - and a city with courtyards and alleys in it is a city
+  // rather than a spreadsheet, which is what "more like an actual city" asks for.
+  //
+  // Decided before anything is placed, so the alley pass and the building pass agree about which
+  // cells are open.
+  const openCells = new Set<string>();
+  for (let ix = 0; ix < cells; ix += 1) {
+    for (let iz = 0; iz < cells; iz += 1) {
+      if (random() < 0.12) openCells.add(cellKey(ix, iz));
+    }
+  }
+
   // The widest a building may be, for the checks that ask whether a cell is clear of something.
   const half = (config.pitch - STREET) / 2;
 
@@ -459,6 +479,61 @@ export function generateCity(options: CityOptions = {}): CityParts {
       }
 
       const roll = random();
+      if (openCells.has(cellKey(ix, iz))) {
+        // A yard rather than a building: a wall on two sides, a lamp, and clutter to climb on.
+        context.count('courtyard');
+        const wall = 1.2;
+        context.props.push(
+          make(`${cellId}-yard-wall-n`, {
+            at: [cx, cz - footprint],
+            bottom: config.groundY,
+            size: [footprint * 2, wall, 0.8],
+            model: 'slab',
+            tints: tintSet(context),
+          }),
+          make(`${cellId}-yard-wall-w`, {
+            at: [cx - footprint, cz],
+            bottom: config.groundY,
+            size: [0.8, wall, footprint * 2],
+            model: 'slab',
+            tints: tintSet(context),
+          }),
+          make(`${cellId}-yard-crate`, {
+            at: [cx + footprint * 0.3, cz + footprint * 0.2],
+            bottom: config.groundY,
+            size: [2.6, 2.6, 2.6],
+            model: 'crate',
+            tints: { rust: '#6b5a44' },
+          }),
+          make(`${cellId}-yard-crate-2`, {
+            at: [cx - footprint * 0.4, cz + footprint * 0.5],
+            bottom: config.groundY,
+            size: [2.2, 2.2, 2.2],
+            model: 'crate',
+          }),
+          make(`${cellId}-yard-spool`, {
+            at: [cx + footprint * 0.5, cz - footprint * 0.5],
+            bottom: config.groundY,
+            size: [2.4, 2.4, 1.8],
+            model: 'cable-spool',
+          }),
+          make(`${cellId}-yard-scaffold`, {
+            at: [cx - footprint * 0.5, cz - footprint * 0.4],
+            bottom: config.groundY,
+            size: [4.5, 7, 2.6],
+            model: 'scaffold',
+          }),
+        );
+        context.lights.push({
+          id: `${cellId}-yard-lamp`,
+          position: { x: cx, y: config.groundY + 4, z: cz },
+          color: '#bfd8ff',
+          intensity: 7,
+          distance: 16,
+        });
+        continue;
+      }
+
       if (roll < band.construction) {
         count('construction');
         constructionSite(context, cx, cz, footprint, band);
@@ -570,6 +645,55 @@ export function generateCity(options: CityOptions = {}): CityParts {
   };
   const origin = roofs[Math.min(roofs.length - 1, Math.round(roofs.length / 2))]!;
 
+  // ------------------------------------------------------------- the cat, and the finish
+  //
+  // **An alley cat with the quest, and a phone nobody told you about.**
+  //
+  // The cat sits in a courtyard a few roofs from the spawn: close enough to find, far enough that
+  // finding it is the first thing the run asks of you. Nothing may be picked up until it has been
+  // talked to - a quest you can finish before you are given it is not a quest - and the *finish*
+  // is the return trip: the goal is the cat's own rooftop, and it only counts once every shard is
+  // in and the cat has been told so.
+  const courtyardCells = [...openCells]
+    .map((key) => {
+      const [ix, iz] = key.split('|').map(Number) as [number, number];
+      return { ix, iz, x: -GRID_SPAN / 2 + config.pitch * (ix + 0.5), z: -GRID_SPAN / 2 + config.pitch * (iz + 0.5) };
+    })
+    .filter((cell) => Math.hypot(cell.x - origin.spot.x, cell.z - origin.spot.z) > 90)
+    .sort(
+      (a, b) =>
+        Math.hypot(a.x - origin.spot.x, a.z - origin.spot.z) -
+        Math.hypot(b.x - origin.spot.x, b.z - origin.spot.z),
+    );
+  const alley = courtyardCells[0] ?? { x: origin.spot.x + config.pitch, z: origin.spot.z };
+  const catAt = { x: alley.x, y: config.groundY + 0.02, z: alley.z };
+  props.push(
+    make('quest-cat', {
+      at: [catAt.x, catAt.z],
+      bottom: config.groundY,
+      size: [1.4, 1.1, 1.4],
+      model: 'alley-cat',
+      collide: 'none',
+    }),
+  );
+  lights.push({
+    id: 'quest-cat-glow',
+    position: { x: catAt.x, y: config.groundY + 1.6, z: catAt.z },
+    color: '#ffd08a',
+    intensity: 8,
+    distance: 12,
+  });
+
+  // The phone: on the roof furthest from the spawn, tucked behind the plant on it - which is to
+  // say hidden by a roof rather than by a maze. Finding it is meant to be a reward for exploring,
+  // not a puzzle.
+  const furthest = roofs[roofs.length - 1] ?? origin;
+  const phoneAt = {
+    x: furthest.spot.x - 3.4,
+    y: furthest.spot.y + 0.02,
+    z: furthest.spot.z + 2.2,
+  };
+
   return {
     props,
     lights: lights.length > 0 ? lights : undefined,
@@ -582,9 +706,14 @@ export function generateCity(options: CityOptions = {}): CityParts {
     checkpoints: [0.62, 0.7, 0.78, 0.86, 0.94].map((fraction, index) =>
       on(fraction, `checkpoint-${index + 1}`),
     ),
-    collectibles: [0.08, 0.18, 0.3, 0.4, 0.48, 0.56, 0.66, 0.76, 0.88, 0.97].map((fraction, index) =>
-      on(fraction, `shard-${index + 1}`),
-    ),
+    collectibles: [
+      ...[0.08, 0.18, 0.3, 0.4, 0.48, 0.56, 0.66, 0.76, 0.88, 0.97].map((fraction, index) =>
+        on(fraction, `shard-${index + 1}`),
+      ),
+      // The secret, in the same list because it *is* a pickup - it just is not one of the eight.
+      { id: 'secret-phone', position: phoneAt },
+    ],
+    npc: { id: 'alley-cat', name: 'Alley cat', position: catAt, reach: 3.2 },
     goal: on(1, 'goal'),
     report: Object.fromEntries(report),
   };

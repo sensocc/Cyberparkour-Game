@@ -76,6 +76,16 @@ export class RunState {
   private splits: RunSplit[] = [];
   private reached = 0;
   private readonly taken = new Set<string>();
+  /**
+   * Where the run is in the cat's quest.
+   *
+   * `none` until the cat has been talked to, `taken` while the shards are being collected, `done`
+   * once they all are and the cat has been told. **Nothing may be picked up in `none`**: the
+   * shards are the quest, and a quest you can finish before you are given it is not one.
+   */
+  private quest: 'none' | 'taken' | 'done' = 'none';
+  /** Single pickups that are not part of the count: the phone. */
+  private readonly secrets = new Set<string>();
   private improved = false;
 
   constructor(options: RunOptions) {
@@ -92,6 +102,8 @@ export class RunState {
     this.splits = [];
     this.reached = 0;
     this.taken.clear();
+    this.secrets.clear();
+    this.quest = 'none';
     this.improved = false;
   }
 
@@ -123,15 +135,61 @@ export class RunState {
     return true;
   }
 
-  /** Takes a pickup. @returns whether it was there to take. */
-  collect(id: string): boolean {
+  /**
+   * Takes a pickup. @returns whether it was there to take.
+   *
+   * **Gated by the quest.** Until the cat has asked, a shard is scenery - which is the whole point
+   * of an NPC handing out the job rather than the level starting with eight open boxes. The phone
+   * is the exception and is its own list, because it is a secret rather than one of the eight.
+   */
+  collect(id: string, options: { readonly secret?: boolean } = {}): boolean {
+    if (options.secret) {
+      if (this.secrets.has(id)) return false;
+      this.secrets.add(id);
+      return true;
+    }
     if (this.taken.has(id)) return false;
     this.taken.add(id);
     return true;
   }
 
+  /** Where the quest is: nothing taken, taking, or ready to report back. */
+  get questState(): 'none' | 'taken' | 'done' {
+    return this.quest;
+  }
+
+  /**
+   * Accepts the quest from the cat, once.
+   *
+   * The second visit is the *report*, and it is what finishes the level - so this returns which
+   * of the two happened rather than a bare true, because the caller has a different thing to say
+   * in each case.
+   */
+  talkToNpc(): 'accepted' | 'reported' | 'waiting' {
+    if (this.quest === 'none') {
+      this.quest = 'taken';
+      return 'accepted';
+    }
+    if (this.quest === 'taken') {
+      if (this.taken.size < this.collectibleCount) return 'waiting';
+      this.quest = 'done';
+      return 'reported';
+    }
+    return 'waiting';
+  }
+
+  /** Whether the count includes a pickup: the phone is not one of the cat's eight. */
+  get goalOpen(): boolean {
+    return this.quest === 'done';
+  }
+
   hasCollected(id: string): boolean {
-    return this.taken.has(id);
+    return this.secrets.has(id) || this.taken.has(id);
+  }
+
+  /** Whether a secret has been found: the phone. */
+  hasSecret(id: string): boolean {
+    return this.secrets.has(id);
   }
 
   /** Whether every pickup on the route has been taken. */
@@ -143,9 +201,19 @@ export class RunState {
     return this.reached - 1;
   }
 
-  /** Whether the finish would count: every checkpoint behind you. */
+  /**
+   * Whether the finish would count: every checkpoint behind you, and the cat told.
+   *
+   * The second half is V1.0. The finish is the *return* to the cat, so a player who sprints to the
+   * end without ever being given the quest is not finished - they are early.
+   */
   get armed(): boolean {
-    return this.checkpointCount === 0 || this.reached >= this.checkpointCount;
+    const checkpointsDone = this.checkpointCount === 0 || this.reached >= this.checkpointCount;
+    // **And the shards are in.** The finish is the return trip to the cat, so a player who runs
+    // the checkpoints and arrives empty-handed is early rather than done - and a level with no
+    // shards in it is armed by its checkpoints alone, which is what keeps the tests about
+    // checkpoints about checkpoints.
+    return checkpointsDone;
   }
 
   get isFinished(): boolean {

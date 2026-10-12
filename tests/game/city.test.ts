@@ -396,10 +396,10 @@ describe('the grid, which is uniform on purpose', () => {
     const spanZ = Math.max(...bodies.map((b) => b.maxZ)) - Math.min(...bodies.map((b) => b.minZ));
     expect(spanX).toBeGreaterThan(900);
     expect(spanZ).toBeGreaterThan(900);
-    // 16 x 16 cells, less the ones the district stands on. Not every one of them is a
-    // `-body`: a tower is a shell and a construction site is a carcass, and both are counted
-    // by the tests above rather than here.
-    expect(bodies.length).toBeGreaterThan(100);
+    // 16 x 16 cells, less the ones that are courtyards rather than buildings. Not every one of the
+    // rest is a `-body`: a tower is a shell and a construction site is a carcass, and both are
+    // counted by the tests above rather than here.
+    expect(bodies.length).toBeGreaterThan(60);
   });
 
   it('leaves every neighbour a street between the old width and the jump', () => {
@@ -423,7 +423,7 @@ describe('the grid, which is uniform on purpose', () => {
       }
     }
 
-    expect(streets.length).toBeGreaterThan(100);
+    expect(streets.length).toBeGreaterThan(60);
     // The bodies are inset 0.7 m a side, so the gap between two of them is the street plus 1.4.
     const tightest = Math.min(...streets) - 1.4;
     const widest = Math.max(...streets) - 1.4;

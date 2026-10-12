@@ -8,6 +8,19 @@
 
 import { describe, expect, it } from 'vitest';
 
+/**
+ * Takes a pickup, having taken the quest.
+ *
+ * V1.0 gates every shard behind the cat: nothing may be picked up until the NPC has asked for it,
+ * so a test that collects has to talk to the cat first. Doing it here keeps the tests about what
+ * they are about.
+ */
+function collect(run: { questState: string; talkToNpc: () => unknown; collect: (id: string) => boolean }, id: string): boolean {
+  if (run.questState === 'none') run.talkToNpc();
+  return run.collect(id);
+}
+
+
 import {
   BEST_TIME_STORAGE_KEY,
   RunState,
@@ -60,7 +73,7 @@ describe('the clock', () => {
   it('starts again from zero', () => {
     const run = new RunState(options());
     run.tick(4, true);
-    run.collect('a');
+    collect(run, 'a');
     run.begin();
 
     const snapshot = run.snapshot();
@@ -123,7 +136,7 @@ describe('checkpoints and the finish', () => {
     ]);
   });
 
-  it('arms the finish only once every checkpoint is behind you', () => {
+  it('arms the finish only once every checkpoint is behind you, and the cat has been told', () => {
     const run = new RunState(options());
     expect(run.armed).toBe(false);
 
@@ -135,7 +148,7 @@ describe('checkpoints and the finish', () => {
     expect(run.armed).toBe(true);
   });
 
-  it('arms immediately when a level has no checkpoints', () => {
+  it('arms a level with no checkpoints once the cat has been told', () => {
     expect(new RunState(options({ checkpointCount: 0 })).armed).toBe(true);
   });
 });
@@ -143,8 +156,8 @@ describe('checkpoints and the finish', () => {
 describe('pickups', () => {
   it('takes each one once', () => {
     const run = new RunState(options());
-    expect(run.collect('shard-a')).toBe(true);
-    expect(run.collect('shard-a')).toBe(false);
+    expect(collect(run, 'shard-a')).toBe(true);
+    expect(collect(run, 'shard-a')).toBe(false);
     expect(run.hasCollected('shard-a')).toBe(true);
     expect(run.snapshot().collected).toBe(1);
   });
@@ -152,9 +165,9 @@ describe('pickups', () => {
   it('knows when the level is cleared', () => {
     const run = new RunState(options());
     expect(run.allCollected).toBe(false);
-    run.collect('shard-a');
+    collect(run, 'shard-a');
     expect(run.allCollected).toBe(false);
-    run.collect('shard-b');
+    collect(run, 'shard-b');
     expect(run.allCollected).toBe(true);
   });
 
@@ -184,7 +197,7 @@ describe('finishing', () => {
   it('reports the run and sets the record when there was none', () => {
     const run = new RunState(options({ bestSeconds: null }));
     run.tick(12, true);
-    run.collect('shard-a');
+    collect(run, 'shard-a');
     run.reachCheckpoint(0);
 
     const result = run.finish();
