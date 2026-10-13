@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.1` |
+| Version | `1.0.2` |
 | Stage | Beta — the systems are in and the content is generated |
-| Tests | 1141 in 42 files |
+| Tests | 1145 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -70,6 +70,20 @@ game: the arm comes up, somebody answers, and then the announcement.
 Wall running is a sprint into a wall at a shallow angle; vaults, mantles, pull-ups and the landing
 roll happen on their own when the situation calls for them.
 
+### Getting back up
+
+The street is thirty-five metres below the roofs, so there are several ways to be on one again:
+
+- **Two ladders per building**, on opposite faces, so the way up is never a walk round the block.
+- **Fire escapes**: two landings eight metres apart up the front of any building over twenty-four
+  metres, on the same face as the ladder — places to stop rather than rungs to count.
+- **Every courtyard has a ladder and a scaffold** up to its own terrace, which is within a few metres
+  of the roofs around it. A yard with no way out is a trap, and the cat lives in one.
+- **Ninety lifts**, whose lowest floor is the street.
+
+A ladder is built as a stack of sections — one collider each, so the rungs keep their spacing — and
+that stacking is what the V1.0.2 bug was about; see `player.ts`.
+
 ## The city
 
 Generated from one seed, so it is the same city every time a bug is found in it.
@@ -128,7 +142,7 @@ numbers:
 | | |
 | --- | --- |
 | Draw calls in a street view | ~165 |
-| Triangles drawn | ~323k |
+| Triangles drawn | ~350k |
 | Triangles in the shadow pass | ~195k |
 | Point lights lit at once | 6, of 576 |
 | Collision: 200 falling moves | ~1 ms |
@@ -199,3 +213,4 @@ tests/        unit, integration, and the invariants
 | V0.8–V0.8.1 | A night, a ground, and the first half of the quest |
 | V1.0.0 | The quest, the trials, the phone, and the height rule |
 | V1.0.1 | Three quest bugs, and the frame's last pass |
+| V1.0.2 | More ways up from the street, and the ladder that let go of you |

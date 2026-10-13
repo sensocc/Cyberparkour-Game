@@ -396,6 +396,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
       // spiking. Blocks of four cells step by six metres, which is the "no more than ten to
       // twenty metres taller than the building next door" rule with room to spare.
       const top = targets.get(cellKey(ix, iz)) ?? ROOF_LOW;
+      const cellTop = top;
       // Its own street, somewhere between the old uniform width and the jump. The building is
       // what is left of the pitch after it - so two neighbours share the average of their two,
       // and both ends of the range stay crossable.
@@ -535,12 +536,26 @@ export function generateCity(options: CityOptions = {}): CityParts {
             size: [2.4, 2.4, 1.8],
             model: 'cable-spool',
           }),
+          // **The way out.** A yard with no exit is a trap - and the cat lives in one, so the way
+          // out of it is on the critical path of the run. The scaffold is built up to the cell's own
+          // terrace rather than to a made-up height, so the yard reaches the neighbouring roofs'
+          // level, which is within a few metres of it by the height rule; the ladder beside it is
+          // what actually gets climbed.
           make(`${cellId}-yard-scaffold`, {
             at: [cx - footprint * 0.5, cz - footprint * 0.4],
             bottom: config.groundY,
-            size: [4.5, 7, 2.6],
+            size: [4.5, Math.max(7, cellTop - config.groundY), 2.6],
             model: 'scaffold',
           }),
+        );
+        laddersUp(
+          context,
+          `${cellId}-yard-ladder`,
+          cx + footprint * 0.6,
+          cz - footprint * 0.5,
+          cellTop,
+          config.groundY,
+          14,
         );
         context.lights.push({
           id: `${cellId}-yard-lamp`,
@@ -1207,7 +1222,7 @@ function block(
   footprint: number,
   band: Band,
 ): void {
-  const { random } = context;
+  const { random, config } = context;
   // A block fills its plot. It used to take two thirds of it, which left forty metres of
   // nothing between one building and the next - wide enough to read as a city from the
   // air and far too wide to cross on foot, and the reason V0.7's streets were a place you
@@ -1264,6 +1279,37 @@ function block(
 
   ladderUp(context, `${id}-ladder`, cx - width / 2 - 0.3, cz, top);
   balcony(context, `${id}-balcony`, cx, cz - depth / 2 - 0.9, width * 0.6, top);
+
+  // **And a second one, on the opposite face.** One ladder per building means the way back to the
+  // roofs is on whichever side you are not: a player in the street behind it walks the whole block
+  // round to get up. Two, and a building is climbable from either side - which is what "more ways
+  // from the ground back to the roofs" means when the alternative is walking.
+  laddersUp(context, `${id}-ladder-back`, cx + width / 2 + 0.3, cz, top, config.groundY, 14);
+
+  // A fire escape, on the same face as the front ladder so the landings it adds are *on* the way up
+  // rather than a second climb beside it - which is a landing and a rail for two props instead of a
+  // whole second ladder for eight. Two of them, on the buildings tall enough to be worth stopping
+  // on: the city is thirteen thousand props and the difference between a detail and a cost is the
+  // number of them.
+  if (top - config.groundY > 24) {
+    for (let index = 0; index < 2; index += 1) {
+      const y = config.groundY + 9 + index * 8;
+      context.props.push(
+        make(`${id}-escape-${index}`, {
+          at: [cx - width / 2 - 0.7, cz + (index === 0 ? 1.6 : -1.6)],
+          bottom: y,
+          size: [3, 0.4, 3],
+          model: 'deck',
+        }),
+        make(`${id}-escape-rail-${index}`, {
+          at: [cx - width / 2 - 0.7, cz + (index === 0 ? 0.2 : -0.2)],
+          bottom: y + 0.4,
+          size: [3, 1, 0.3],
+          model: 'barrier',
+        }),
+      );
+    }
+  }
 }
 
 /**

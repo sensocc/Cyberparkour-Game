@@ -33,6 +33,7 @@ import {
   COLLISION_SKIN,
   createMoveResult,
   playerBox,
+  type Collider,
   type CollisionWorld,
   type MoveResult,
 } from './physics/collision.js';
@@ -638,6 +639,30 @@ function stepHanging(
   return outcome(createMoveResult());
 }
 
+/**
+ * Whether another climbable stands directly on top of this one.
+ *
+ * A ladder is a stack of sections, so the top of a section is a *step in a ladder* rather than the
+ * top of one - and the difference between the two is the difference between climbing it and falling
+ * off it. Asked of the colliders directly rather than through `findClimbable`, because this is a
+ * question about geometry rather than about what is in front of the player.
+ */
+function climbContinuesAbove(
+  world: CollisionWorld,
+  surface: Collider,
+  climbableIds: ReadonlySet<string>,
+): boolean {
+  const { box } = surface;
+  for (const other of world.colliders) {
+    if (other.id === surface.id || !climbableIds.has(other.id)) continue;
+    // Overlapping in the plane, and reaching above this one's top: that is the next section up.
+    if (other.box.min.x >= box.max.x || other.box.max.x <= box.min.x) continue;
+    if (other.box.min.z >= box.max.z || other.box.max.z <= box.min.z) continue;
+    if (other.box.max.y > box.max.y + 0.05 && other.box.min.y < box.max.y + 0.6) return true;
+  }
+  return false;
+}
+
 /** Ascending a climbable face. */
 function stepClimbing(
   state: PlayerState,
@@ -664,17 +689,26 @@ function stepClimbing(
   });
 
   // Lost the face - or let go - and gravity takes over.
-  if (!surface || surface.id !== state.climbId || input.forward <= 0) {
+  //
+  // **The id is allowed to change, and that is the fix for a bug that made long ladders unusable.**
+  // A ladder is built as a stack of five-metre sections, one collider each, so that the rungs keep
+  // their spacing. Climbing used to end the moment the player's head came over the top of *one
+  // section* - the hand-over to a mantle below fired on a section that had another one directly
+  // above it - and the climb then let go of a face that was still there. On a twenty-eight metre
+  // ladder that happened four times, and the symptom was exactly what it sounds like: you climb,
+  // you detach, you fall, and it does the same thing next time you try.
+  if (!surface || input.forward <= 0) {
     state.climbId = null;
     state.velocity.y = 0;
     return outcome(createMoveResult(), { ended: 'climb' });
   }
+  state.climbId = surface.id;
 
   const climb = options.game.maneuver.climb;
   const feetY = state.position.y;
   // Reaching the top hands over to a mantle, so climbing a riser gets you onto
   // whatever it was carrying rather than leaving you pinned to its edge.
-  if (feetY + config.standHeight >= surface.box.max.y) {
+  if (feetY + config.standHeight >= surface.box.max.y && !climbContinuesAbove(world, surface, climbableIds)) {
     const to = landingFeet(
       {
         world,

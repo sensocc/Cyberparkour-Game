@@ -491,6 +491,38 @@ describe('climbing', () => {
     expect(highest).toBeGreaterThan(pipe.box.max.y - 0.3);
   });
 
+  it('climbs a ladder built as a stack of sections, without letting go of it', () => {
+    // **The bug this is for.** A ladder is a stack of sections, one collider each, so that the rungs
+    // keep their spacing. Climbing used to hand over to a mantle when the player's head came over the
+    // top of *one section* - on a ladder that had another one directly above it - and then let go of
+    // a face that was still there. On a twenty-eight metre ladder that happened four times, and the
+    // symptom was: you climb, you detach, you fall, and it does it again next time.
+    const sections = [0, 1, 2, 3].map((index) =>
+      collider(`rung-${index}`, vec3(0.8, index * 7 + 3.5, 0), vec3(0.6, 7, 1.2), 'climbable'),
+    );
+    const climbableIds = new Set(sections.map((section) => section.id));
+    const roof = collider('roof', vec3(2.4, 28, 0), vec3(3.2, 0.8, 8));
+
+    let highest = 0;
+    let fellBack = 0;
+    run(world(FLOOR, ...sections, roof), {
+      steps: 900,
+      input: input({ forward: 1 }),
+      spawn: spawnAt(0, 0.001, 0, FACING_EAST),
+      climbableIds,
+      onStep: (current) => {
+        // Any *drop* of more than a metre while the input is still held is the bug: the ladder is
+        // continuous, so there is nothing to fall off until the top.
+        if (current.position.y < highest - 1) fellBack += 1;
+        highest = Math.max(highest, current.position.y);
+      },
+    });
+
+    expect(fellBack, 'the climb must not drop the player').toBe(0);
+    // ...and it reaches the top of the stack rather than stopping at a section boundary.
+    expect(highest).toBeGreaterThan(27);
+  });
+
   it('ignores a face that is not tagged climbable', () => {
     const wall = collider('wall', vec3(0.8, 3, 0), vec3(0.6, 6, 1.2), 'wall');
     const state = run(world(FLOOR, wall), {

@@ -999,3 +999,43 @@ describe('the quest, the trials and the phone', () => {
     }
   });
 });
+
+describe('ways back up from the street', () => {
+  const city = buildCity(DEMO_DISTRICT);
+  const generated = city.props.slice(DEMO_DISTRICT.props.length);
+
+  it('gives every building a ladder on two faces, not one', () => {
+    // One ladder per building means the way up is on whichever side you are not, and the walk round
+    // the block is longer than the climb. A building is climbable from either side now.
+    // A ladder is a stack of sections, one prop each, so the name carries the section's index.
+    const fronts = generated.filter((prop) => /-ladder-\d+$/.test(prop.id) && prop.climbable);
+    const backs = generated.filter((prop) => /-ladder-back-\d+$/.test(prop.id) && prop.climbable);
+    expect(fronts.length).toBeGreaterThan(100);
+    expect(backs.length).toBeGreaterThan(100);
+  });
+
+  it('leaves every courtyard a way out of it', () => {
+    // A yard with no exit is a trap, and the cat lives in one - so the way out of a courtyard is on
+    // the critical path of the run rather than a nicety.
+    const ladders = generated.filter((prop) => /-yard-ladder-\d+$/.test(prop.id));
+    expect(ladders.length).toBeGreaterThan(20);
+    for (const ladder of ladders) {
+      expect(ladder.climbable, ladder.id).toBe(true);
+      // Tall enough to be a route rather than a step: a courtyard's ladder reaches its own cell's
+      // terrace, and the roofs around it are within a few metres of that by the height rule - so
+      // getting into the yard's own terrace gets you back to the grid.
+      expect(ladder.position.y + ladder.size.y / 2, ladder.id).toBeGreaterThan(
+        DEMO_DISTRICT.environment.backdrop.baseY + 4,
+      );
+    }
+  });
+
+  it('builds fire escapes up the buildings big enough to have them', () => {
+    const escapes = generated.filter((prop) => /-escape-\d+$/.test(prop.id) && prop.model === 'deck');
+    expect(escapes.length).toBeGreaterThan(50);
+    // Landings, not a staircase: each is a place to stand, two of them eight metres apart up the face
+    // of a building tall enough to be worth stopping on.
+    const heights = escapes.map((prop) => prop.position.y).sort((a, b) => a - b);
+    expect((heights[heights.length - 1] as number) - (heights[0] as number)).toBeGreaterThan(6);
+  });
+});
