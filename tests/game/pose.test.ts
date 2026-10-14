@@ -40,6 +40,7 @@ function maneuver(kind: ScriptedMove, elapsed = 0.2, durationSeconds = 0.4): Man
     from: { x: 0, y: 0, z: 0 },
     to: { x: 1, y: 0, z: 0 },
     arcHeight: 0.2,
+    entry: { x: 0, y: 0, z: 0 },
     exitSpeed: 4,
     exitDirection: { x: 1, y: 0, z: 0 },
     lowProfile: kind === 'roll',

@@ -1159,6 +1159,23 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     goal: undefined,
   });
 
+  /** A floor, and a box in the way of a sprint: something to land off. */
+  const ROUGH_LEVEL = nearSpawn({
+    collectibles: [],
+    checkpoints: [],
+    goal: undefined,
+    // The district's own lifts come with the district: a level with a floor and a box in it has no
+    // shafts to put gates in.
+    elevators: [],
+    doors: [],
+    props: [
+      // Big enough that a sprint does not run off the end of it: falling off is a respawn, and a
+      // respawn is a teleport, which is the one thing this measurement must not be confused by.
+      { id: 'test-floor', model: 'slab', position: { x: 0, y: -0.5, z: 0 }, size: { x: 900, y: 1, z: 900 }, kind: 'floor' },
+      { id: 'test-box', model: 'crate', position: { x: 0, y: 0.6, z: 6 }, size: { x: 2.4, y: 1.2, z: 3 } },
+    ],
+  });
+
   const UNARMED_GOAL_LEVEL = nearSpawn({
     collectibles: [],
     goal: { id: 'test-goal', position: { x: 0, y: 0.5, z: 3 } },
@@ -1292,6 +1309,41 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     // The only collectible on this level is the phone, so a guide that pointed at collectibles would
     // point at it - and there is nothing else it could be pointing at, which is why the hint is null.
     expect(harness.gameHud.last?.hint, 'nothing worth pointing at').toBeNull();
+  });
+
+  it('does not snap the eye when the player lands, or when a scripted move begins', () => {
+    // **The feel of it, as a number.** Every discontinuity the player *sees* is a change in the eye's
+    // speed between two frames, and at a 240 Hz display the two that mattered were a landing - which
+    // kills the fall speed inside one simulation step - and the start of a scripted move, which used
+    // to set the velocity to zero on the frame it began.
+    //
+    // The eye coming out of the game is the one that is drawn, camera spring and all, which is why
+    // this is measured here rather than in the player's own tests.
+    const harness = createHarness({ level: ROUGH_LEVEL });
+    harness.game.start();
+    harness.input.keyDown('KeyW');
+    harness.input.keyDown('ShiftLeft');
+
+    let last: { x: number; y: number; z: number } | null = null;
+    let lastSpeed: number | null = null;
+    let worst = 0;
+    for (let frame = 0; frame < 400; frame += 1) {
+      stepFrames(harness, 1);
+      // The first frames are the view appearing and the camera settling from nowhere: not motion.
+      if (frame < 30) continue;
+      const eye = harness.views[0]?.frames.at(-1)?.eye;
+      if (!eye) continue;
+      if (last) {
+        const speed = Math.hypot(eye.x - last.x, eye.y - last.y, eye.z - last.z) * 240;
+        if (lastSpeed !== null) worst = Math.max(worst, Math.abs(speed - lastSpeed));
+        lastSpeed = speed;
+      }
+      last = { x: eye.x, y: eye.y, z: eye.z };
+    }
+    // Measured at 5.9 before the spring and the momentum-carrying moves, and 10.6 before both. Six is
+    // the bound this holds to, with the landings in there deliberately: the level is a run-up onto a
+    // box and off it again.
+    expect(worst).toBeLessThan(6);
   });
 
   it('does not finish a level whose checkpoints are still ahead', () => {
@@ -1592,9 +1644,15 @@ describe('settings, from the game', () => {
     };
 
     const full = bobReach('full');
+    const off = bobReach('off');
     // There has to be a bob for the setting to be about anything.
     expect(full).toBeGreaterThan(0.005);
-    expect(bobReach('off')).toBeLessThan(full * 0.5);
+    // **Sixty per cent, not fifty.** The setting scales two vertical things now: the head bob, and
+    // the camera spring that smooths a landing - and the spring is camera motion, so "off" turns it
+    // off as well. What that leaves at "off" is the part of the eye's height that follows the
+    // *ground*, which the setting was never about; the ratio was 0.5 against a margin of half a
+    // millimetre per cent, which is a test that fails when anything at all moves.
+    expect(off).toBeLessThan(full * 0.6);
   });
 });
 

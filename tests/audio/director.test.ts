@@ -216,6 +216,7 @@ describe('the footstep cadence', () => {
           arcHeight: 0,
           kind: 'mantle',
           exitSpeed: 0,
+    entry: vec3(0, 0, 0),
           exitDirection: vec3(),
           lowProfile: false,
         };

@@ -124,6 +124,16 @@ export interface ManeuverMove {
   readonly kind: ScriptedMove;
   /** Speed to leave with when the move finishes (m/s, 0 to stop dead). */
   readonly exitSpeed: number;
+  /**
+   * The horizontal velocity the move was *entered* with, in m/s.
+   *
+   * A scripted move used to start by setting the velocity to zero and end by setting it to the exit
+   * speed, which is two velocity discontinuities in one move: a sprint into a ledge stopped dead for
+   * a third of a second and then resumed, and the eye - which is what the player actually watches -
+   * registered a change of nearly ten metres a second inside a single frame. It is a cubic Hermite
+   * curve now, with the tangent at each end taken from the velocity either side of it.
+   */
+  readonly entry: Vec3;
   /** Direction to leave in. Only read when `exitSpeed` is above zero. */
   readonly exitDirection: Vec3;
   /** True when the body must stay low for the whole move, as in a roll. */
@@ -569,14 +579,52 @@ function stepManeuver(state: PlayerState, dt: number, options: PlayerStepOptions
   maneuver.elapsed += dt;
 
   const raw = clamp(maneuver.elapsed / maneuver.durationSeconds, 0, 1);
-  const eased = raw * raw * (3 - 2 * raw);
-  lerpVec3(state.position, maneuver.from, maneuver.to, eased);
-  // A single sine arch: zero at both ends, `arcHeight` at the apex.
-  state.position.y += Math.sin(eased * Math.PI) * maneuver.arcHeight;
 
-  state.velocity.x = 0;
+  // **A cubic Hermite curve, with the tangents taken from the velocities either side of the move.**
+  //
+  // The old path was `smoothstep`, which is smooth in position and has a *zero derivative* at both
+  // ends - so it stopped the player dead on the frame it began and launched them on the frame it
+  // ended, whatever they were doing before and after. That is the whole of "it feels like you are
+  // teleporting or being strongly launched from somewhere": measured, a sprint into a mantle lost
+  // 9.6 metres a second inside one frame at a 240 Hz display.
+  //
+  // The tangents are clamped to six tenths of the chord, because a Hermite curve whose tangent is
+  // longer than the distance it has to cover loops back on itself - and a twelve-metre-a-second
+  // entry over a two-metre mantle is exactly that.
+  const chordX = maneuver.to.x - maneuver.from.x;
+  const chordZ = maneuver.to.z - maneuver.from.z;
+  const chordY = maneuver.to.y - maneuver.from.y;
+  const chord = Math.max(0.001, Math.hypot(chordX, chordY, chordZ));
+  const span = maneuver.durationSeconds;
+  const exitX = maneuver.exitDirection.x * maneuver.exitSpeed;
+  const exitZ = maneuver.exitDirection.z * maneuver.exitSpeed;
+
+  const limit = (vx: number, vz: number): readonly [number, number] => {
+    const magnitude = Math.hypot(vx, vz);
+    if (magnitude <= 0.0001) return [0, 0];
+    const capped = Math.min(magnitude, (chord * 1.2) / span) / magnitude;
+    return [vx * capped, vz * capped];
+  };
+  const [m0x, m0z] = limit(maneuver.entry.x, maneuver.entry.z);
+  const [m1x, m1z] = limit(exitX, exitZ);
+
+  const t = raw;
+  const h00 = 2 * t * t * t - 3 * t * t + 1;
+  const h10 = t * t * t - 2 * t * t + t;
+  const h01 = -2 * t * t * t + 3 * t * t;
+  const h11 = t * t * t - t * t;
+  copyVec3(state.previousPosition, state.position);
+  state.position.x = h00 * maneuver.from.x + h10 * m0x * span + h01 * maneuver.to.x + h11 * m1x * span;
+  state.position.z = h00 * maneuver.from.z + h10 * m0z * span + h01 * maneuver.to.z + h11 * m1z * span;
+  // The vertical is the same curve plus the arch, which is what makes a mantle read as a haul-up.
+  const rise = h00 * maneuver.from.y + h01 * maneuver.to.y;
+  state.position.y = rise + Math.sin(raw * Math.PI) * maneuver.arcHeight;
+
+  // The velocity is the *real* motion rather than zero: the pose, the effects and anything else that
+  // reads how fast the player is going should see what a vault actually does.
+  state.velocity.x = (state.position.x - state.previousPosition.x) / Math.max(1e-6, dt);
+  state.velocity.z = (state.position.z - state.previousPosition.z) / Math.max(1e-6, dt);
   state.velocity.y = 0;
-  state.velocity.z = 0;
   state.grounded = false;
   state.groundId = null;
   state.groundSurface = null;
@@ -1667,6 +1715,8 @@ function startManeuver(state: PlayerState, spec: ManeuverSpec): void {
     kind: spec.kind,
     exitSpeed: spec.exitSpeed ?? 0,
     exitDirection: vec3(spec.exitDirection?.x ?? 0, 0, spec.exitDirection?.z ?? 0),
+    // Captured before the velocity is cleared below, which is the point of it.
+    entry: vec3(state.velocity.x, 0, state.velocity.z),
     lowProfile: spec.lowProfile ?? false,
   };
   state.hangId = null;

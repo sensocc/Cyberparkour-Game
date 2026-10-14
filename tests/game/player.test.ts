@@ -325,8 +325,13 @@ describe('mantling', () => {
       stepPlayer(state, input({ right: 1 }), STEP, optionsFor(collisionWorld));
       if (locomotion(state) === 'mantling') {
         sawMantling = true;
-        // Input is ignored mid-move.
-        expect(state.velocity).toEqual({ x: 0, y: 0, z: 0 });
+        // **Input is ignored mid-move**, which is the invariant here - the path is the move's own
+        // rather than the input's. The horizontal velocity is the *path's* velocity rather than a
+        // constant zero, which is a deliberate change: a scripted move that sets it to nothing stops
+        // the player dead on the frame it begins, and that is what made a mantle read as a teleport.
+        // It is zero at both ends of a mantle started from standing, which this one is.
+        expect(state.velocity.y).toBe(0);
+        expect(Number.isFinite(state.velocity.x)).toBe(true);
       }
     }
 
@@ -889,6 +894,7 @@ describe('locomotion reporting', () => {
       arcHeight: 0,
       kind: 'pull-up',
       exitSpeed: 0,
+    entry: vec3(0, 0, 0),
       exitDirection: vec3(),
       lowProfile: false,
     };

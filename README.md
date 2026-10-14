@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.2` |
+| Version | `1.0.3` |
 | Stage | Beta — the systems are in and the content is generated |
-| Tests | 1145 in 42 files |
+| Tests | 1146 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -128,11 +128,30 @@ Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the land
 and pipe climbs — ordinary states in one machine rather than special cases, and built to be felt
 rather than to be counted.
 
-The animation is a pose derived from the player's own state, sampled at the moment being drawn rather
-than at the last simulation step, with every joint on a **critically damped spring**. That last part
-is the difference between a movement and a twitch: a joint that accelerates to a speed cap and drops
-back to easing has a discontinuous *velocity*, and it is the discontinuity rather than the size of the
-movement that an eye reads as a jerk.
+### Smooth, and measured as smooth
+
+Everything the player watches is a *velocity*, and a discontinuity in one is what an eye reads as a
+jerk — more than the size of the movement, and much more than its duration. Three of them were worth
+fixing, and all three were found by measuring the **eye trace**: the eye's position sampled at 240 Hz
+across a simulation that steps at 60, which is what the renderer actually draws.
+
+- **The joints are critically damped springs.** A joint that accelerates to a speed cap and drops back
+  to easing has a corner in its velocity; a spring has none. V0.7 measured the difference at 4.5x.
+- **The scripted moves carry momentum.** A mantle, a pull-up, a vault and a roll used to start by
+  setting the velocity to zero and end by setting it to a fixed exit speed — two discontinuities in
+  one move, and a sprint into a ledge stopped dead for a third of a second. The path is a cubic
+  Hermite curve now, with the tangent at each end taken from the velocity either side of it, clamped
+  to six tenths of the chord so a fast entry over a short mantle cannot loop back on itself. Measured
+  on a vault at a sprint: **10.6 metres a second of change inside one frame before, 5.9 after.**
+- **The eye's height is sprung, and nothing else is.** Every remaining snap is vertical — a landing
+  kills the fall speed inside a single simulation step, a mantle's arc is vertical, a kerb is
+  vertical. Springing the horizontal axes is what makes a camera feel like it is on a rubber band,
+  and the horizontal discontinuities are all real events: running into a wall stops you, and it should.
+  It lags a fall and never a rise, so a camera can never trail inside the floor it is standing on, and
+  it is scaled by the camera-motion setting — it *is* camera motion, so "off" turns it off.
+
+The animation itself is a pose derived from the player's own state, sampled at the moment being drawn
+rather than at the last simulation step.
 
 ## Performance
 
@@ -214,3 +233,4 @@ tests/        unit, integration, and the invariants
 | V1.0.0 | The quest, the trials, the phone, and the height rule |
 | V1.0.1 | Three quest bugs, and the frame's last pass |
 | V1.0.2 | More ways up from the street, and the ladder that let go of you |
+| V1.0.3 | Momentum through the moves, a sprung eye, and the jank measured away |
