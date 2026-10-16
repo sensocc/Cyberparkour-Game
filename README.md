@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.3` |
-| Stage | Beta — the systems are in and the content is generated |
-| Tests | 1146 in 42 files |
+| Version | `1.0.4` |
+| Stage | Playable — one city, one quest, three trials, and a secret |
+| Tests | 1147 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -128,6 +128,26 @@ Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the land
 and pipe climbs — ordinary states in one machine rather than special cases, and built to be felt
 rather than to be counted.
 
+### The light
+
+A night city lives or dies on its exposure. Three.js's ACES tone curve rolls off the highlights and
+pulls the mid-tones down with them, so an exposure that looks right on a grey test cube leaves a
+cyberpunk skyline in the mud - which is exactly what it did. The exposure is 1.45 and the ambient
+light is a third brighter, and the difference is not subtle: the concrete, the deck plating and the
+street all read, where before they were a smudge.
+
+**And the bright parts bleed.** A city of three hundred and fifty neon signs, six colours of window
+glass and a finish line made of light does not read as neon until the highlights bloom, so there is an
+`UnrealBloomPass` in the chain, scaled by the graphics preset - the most expensive thing in the
+renderer, and the first thing a low preset turns off.
+
+**With one caveat worth stating plainly: I have not seen it.** The machine this was built on has no
+GPU worth the name, and the post chain renders black on a software rasteriser. What is verified is
+that it *cannot* leave a black screen: on the first composed frame the chain is compared against a
+direct render of the same scene, and if it produced nothing while the plain path produced something
+then it is switched off for the session and the log says why. On a real GPU the effect is there; the
+worst case here is the picture without it.
+
 ### Smooth, and measured as smooth
 
 Everything the player watches is a *velocity*, and a discontinuity in one is what an eye reads as a
@@ -152,6 +172,11 @@ across a simulation that steps at 60, which is what the renderer actually draws.
 
 The animation itself is a pose derived from the player's own state, sampled at the moment being drawn
 rather than at the last simulation step.
+
+**And the transitions between states are measured too**, which V1.0.3 left as an argument. A sprint
+into a ledge, over it and away: walk, airborne, mantle, walk, with the leg's angle sampled at 240 Hz
+through the whole thing. The worst single frame moves the joint 0.026 radians and the worst change in
+its *speed* is 0.0043 — which is a leg moving, and not a corner. The test holds it to 0.09 and 0.02.
 
 ## Performance
 
@@ -234,3 +259,4 @@ tests/        unit, integration, and the invariants
 | V1.0.1 | Three quest bugs, and the frame's last pass |
 | V1.0.2 | More ways up from the street, and the ladder that let go of you |
 | V1.0.3 | Momentum through the moves, a sprung eye, and the jank measured away |
+| V1.0.4 | The light, bloom, a flash on a shard, and a playable game |

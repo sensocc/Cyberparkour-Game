@@ -49,6 +49,15 @@ export interface QualityPreset {
   readonly smokeScale: number;
   /** Fraction of the scene's point lights to keep lit. */
   readonly lightScale: number;
+  /**
+   * How much bloom to add, 0 to 1.
+   *
+   * The one effect this game is *about*: a city of three hundred and fifty neon signs, six colours of
+   * window glass and a finish line made of light does not read as neon at all until the bright parts
+   * of it bleed. Zero is a real setting rather than a fallback - a low preset has to be playable, and
+   * bloom is a full-screen pass at every resolution the player's machine can manage.
+   */
+  readonly bloom: number;
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
@@ -60,6 +69,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 2,
     smokeScale: 0.35,
     lightScale: 0.4,
+    bloom: 0,
   },
   medium: {
     label: 'Medium',
@@ -69,6 +79,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 8,
     smokeScale: 0.7,
     lightScale: 0.75,
+    bloom: 0.5,
   },
   high: {
     label: 'High',
@@ -78,6 +89,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 16,
     smokeScale: 1,
     lightScale: 1,
+    bloom: 0.9,
   },
 };
 

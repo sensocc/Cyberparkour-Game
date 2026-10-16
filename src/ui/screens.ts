@@ -110,6 +110,7 @@ export class GameUi {
   private readonly crashStack: HTMLElement;
   private readonly recoveredBanner: HTMLElement;
   private readonly noticeBox: HTMLElement;
+  private readonly flashElement: HTMLElement;
   /** The one screen with inputs; it owns its own DOM and reports patches upward. */
   private readonly settingsPanel: SettingsPanel;
   private currentReport: CrashReport | null = null;
@@ -289,10 +290,12 @@ export class GameUi {
     // lives in the play HUD (`ui/gameHud.ts`).
     this.damageFlash = el('div', { className: 'damage-flash', attrs: { 'aria-hidden': 'true' } });
     setHidden(this.damageFlash, true);
+    this.flashElement = el('div', { className: 'pickup-flash', attrs: { 'aria-hidden': 'true' } });
 
     this.root.append(
       this.crosshair,
       this.damageFlash,
+      this.flashElement,
       this.deathOverlay,
       this.startScreen,
       this.menuScreen,
@@ -528,6 +531,24 @@ export class GameUi {
    * cannot see the toasts cannot tell a scored trial from a silent one.
    */
   readonly toasts: string[] = [];
+
+  /**
+   * A brief flash across the screen.
+   *
+   * For the one thing in the game that is worth interrupting for: a shard. It is a DOM element
+   * rather than a post effect because it has to be *felt* rather than drawn - two hundred
+   * milliseconds of #57e0ff at a fifth of an opacity, which reads as the world noticing.
+   */
+  flash(color = '#57e0ff'): void {
+    this.flashElement.style.background = color;
+    this.flashElement.classList.add('flash--on');
+    const previous = this.flashHandle;
+    if (previous !== null) window.clearTimeout(previous);
+    this.flashHandle = window.setTimeout(() => {
+      this.flashElement.classList.remove('flash--on');
+      this.flashHandle = null;
+    }, 180);
+  }
 
   /** Transient message, e.g. "report copied". */
   toast(message: string, durationMs = 3000): void {

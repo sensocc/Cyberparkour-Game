@@ -583,6 +583,7 @@ export class Game {
       const secret = pickup.id.startsWith('secret-');
       if (!this.run.collect(pickup.id, { secret })) continue;
       if (secret) this.beginSecretCall();
+      else this.options.ui.flash('#57e0ff');
       this.view?.setCollectibleVisible(pickup.id, false);
       this.audioDirector.push({ kind: 'pickup', index: this.run.snapshot().collected });
       // With a cat in the level, having them all is the *middle* of the quest rather than the end of

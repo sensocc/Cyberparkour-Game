@@ -944,3 +944,24 @@ body {
   0%, 100% { opacity: 0.55; }
   50% { opacity: 1; }
 }
+
+/*
+ * A shard is taken: two hundred milliseconds of cyan across the screen.
+ *
+ * The HUD is otherwise still - a health bar, a clock, a pointer - and the one thing in the game
+ * that deserves to interrupt it is a pickup.
+ */
+.pickup-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: #57e0ff;
+  mix-blend-mode: screen;
+  transition: opacity 180ms ease-out;
+}
+
+.pickup-flash.flash--on {
+  opacity: 0.18;
+  transition: opacity 40ms ease-in;
+}

@@ -10,7 +10,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
-import { emptyPose, type PlayerPose } from '../../src/game/pose.js';
+import { describePose, emptyPose, type PlayerPose } from '../../src/game/pose.js';
+import { createPlayerState, gaitPhaseAt, stepPlayer } from '../../src/game/player.js';
+import { collider, input, optionsFor, spawnAt, world } from '../helpers/player.js';
+import { vec3 } from '../../src/core/vec3.js';
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from '../../src/render/playerModel.js';
 
 const CONFIG = DEFAULT_CONFIG;
@@ -406,5 +409,53 @@ describe('the smoothness of the movement itself', () => {
     } finally {
       body.dispose();
     }
+  });
+});
+
+describe('the pose across a change of state', () => {
+  it('flows from a sprint into a mantle and out again, without a corner in it', () => {
+    // V1.0.3 fixed how the *eye* moves and left this as an argument rather than a number. It is a
+    // number: a sprint into a ledge, over it and away on the other side, with the leg's angle sampled
+    // at 240 Hz through the whole thing - walk, airborne, mantle, walk.
+    //
+    // Two things have to be true for it to look like one movement rather than three. No single frame
+    // may move the joint far, which is what a *snap* is; and no frame may change its *speed* much,
+    // which is what the eye reads as a corner. The joints have been on critically damped springs
+    // since V0.7, and this is the number that says so across a state change rather than within one.
+    const ledge = collider('ledge', vec3(6, 0.6, 0), vec3(8, 1.2, 6), 'prop');
+    const collisionWorld = world(collider('floor', vec3(0, -0.5, 0), vec3(60, 1, 60), 'floor'), ledge);
+    const state = createPlayerState(spawnAt(-6, 0.001, 0, -Math.PI / 2), DEFAULT_CONFIG);
+    const options = optionsFor(collisionWorld);
+    const body = buildPlayerBody();
+    const angles: number[] = [];
+
+    try {
+      const pose = emptyPose();
+      for (let tick = 0; tick < 120; tick += 1) {
+        stepPlayer(state, input({ forward: 1, sprint: true }), STEP, options);
+        for (let frame = 0; frame < 4; frame += 1) {
+          const alpha = frame / 4;
+          posePlayerBody(
+            body,
+            describePose(state, DEFAULT_CONFIG, pose, gaitPhaseAt(state, alpha)),
+            DEFAULT_CONFIG,
+            1 / 240,
+          );
+          angles.push(body.legLeft.root.rotation.x);
+        }
+      }
+    } finally {
+      body.dispose();
+    }
+
+    const perFrame = angles.slice(1).map((angle, index) => Math.abs(angle - (angles[index] as number)));
+    const perFrameChange = perFrame
+      .slice(1)
+      .map((delta, index) => Math.abs(delta - (perFrame[index] as number)));
+
+    // Measured at 0.026 and 0.0043; the bounds are the seam a leg actually moves in a frame at 240 Hz,
+    // which is about a tenth of a radian.
+    expect(Math.max(...perFrame)).toBeLessThan(0.09);
+    expect(Math.max(...perFrameChange)).toBeLessThan(0.02);
   });
 });

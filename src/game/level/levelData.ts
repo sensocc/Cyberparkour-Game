@@ -899,17 +899,17 @@ export const DEMO_DISTRICT: LevelDefinition = {
   // before the street, so a fall reads as fatal rather than as a long, silent one.
   killPlaneY: -12,
   environment: {
-    skyColor: '#0b1020',
+    skyColor: '#0d1326',
     // The fog colour is picked to match the sky's horizon glow rather than to be a
     // neutral grey: the skyline is painted on a cylinder 240 m out, and it has to
     // dissolve into the haze rather than into a line. V0.5 pulls the far plane in
     // and warms the colour, so the district has depth instead of just distance.
-    fogColor: '#3d3355',
+    fogColor: '#463a63',
     fogNear: 90,
     fogFar: 480,
-    ambientSkyColor: '#8399c9',
-    ambientGroundColor: '#131a26',
-    ambientIntensity: 0.95,
+    ambientSkyColor: '#9db4e2',
+    ambientGroundColor: '#1d2735',
+    ambientIntensity: 1.35,
     sunColor: '#dfe9ff',
     sunIntensity: 3.2,
     sunDirection: { x: 0.55, y: 0.9, z: 0.35 },
