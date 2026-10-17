@@ -19,13 +19,15 @@ import type { LevelDefinition } from '../game/level/levelData.js';
 import { isElevatorGateOf, resolvePropParts } from '../game/level/level.js';
 import { modelById, resolveModelParts, type ModelDefinition } from '../game/level/models.js';
 import { surfaceById } from '../game/level/surfaces.js';
-import type { SmokeEmitter } from './effects.js';
+import { emptySpritePose, type SmokeEmitter, type SpritePose } from './effects.js';
 import { NO_ASSETS, type SceneAssets } from './types.js';
 
 /** One smoke sprite, with the emitter that drives it. */
 export interface SmokeEmitterMesh {
   readonly sprite: THREE.Sprite;
   readonly emitter: SmokeEmitter;
+  /** The puff's pose, kept and rewritten every frame instead of allocated. */
+  readonly pose: SpritePose;
 }
 
 export interface BuiltScene {
@@ -879,6 +881,7 @@ export function buildScene(
             // a row of puffs all rising together.
             phase: puff / plume.count,
           },
+          pose: emptySpritePose(),
         });
       }
     }

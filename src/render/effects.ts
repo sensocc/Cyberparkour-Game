@@ -30,12 +30,17 @@ export interface SmokeEmitter {
 }
 
 export interface SpritePose {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
+  x: number;
+  y: number;
+  z: number;
   /** Diameter of the sprite, in metres. */
-  readonly scale: number;
-  readonly opacity: number;
+  scale: number;
+  opacity: number;
+}
+
+/** A pose to write into, so a frame does not make one per puff. */
+export function emptySpritePose(): SpritePose {
+  return { x: 0, y: 0, z: 0, scale: 0, opacity: 0 };
 }
 
 /**
@@ -46,7 +51,16 @@ export interface SpritePose {
  * transparent at both ends of its life, which is what stops a plume from
  * popping: nothing ever appears or disappears abruptly.
  */
-export function smokePose(emitter: SmokeEmitter, elapsed: number): SpritePose {
+/**
+ * Writes a puff's pose into `out` rather than returning a new one.
+ *
+ * **Forty-four of these run every frame, and a frame is not a place to make garbage.** The old
+ * signature returned a fresh object per puff per frame - two and a half thousand a second, standing
+ * still, doing nothing - which is a minor garbage collection every few seconds and a visible dip in
+ * the frame rate every time one lands. The puff count and the frame rate have not changed since; the
+ * allocations have.
+ */
+export function smokePose(emitter: SmokeEmitter, elapsed: number, out: SpritePose): SpritePose {
   const period = Math.max(0.001, emitter.period);
   const t = ((((elapsed / period + emitter.phase) % 1) + 1) % 1);
 
@@ -54,14 +68,13 @@ export function smokePose(emitter: SmokeEmitter, elapsed: number): SpritePose {
   const sway = Math.sin(angle) * emitter.drift;
   const roll = Math.cos((t * 1.5 + emitter.phase) * Math.PI * 2) * emitter.drift * 0.6;
 
-  return {
-    x: emitter.position.x + sway,
-    y: emitter.position.y + t * emitter.rise,
-    z: emitter.position.z + roll,
-    // Grows as it climbs and thins out, like a real plume.
-    scale: emitter.radius * (0.55 + t * 0.95),
-    opacity: emitter.opacity * Math.sin(Math.PI * t),
-  };
+  out.x = emitter.position.x + sway;
+  out.y = emitter.position.y + t * emitter.rise;
+  out.z = emitter.position.z + roll;
+  // Grows as it climbs and thins out, like a real plume.
+  out.scale = emitter.radius * (0.55 + t * 0.95);
+  out.opacity = emitter.opacity * Math.sin(Math.PI * t);
+  return out;
 }
 
 export interface PickupPose {

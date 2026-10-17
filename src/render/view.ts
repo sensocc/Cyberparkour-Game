@@ -396,8 +396,8 @@ export class GameView implements GameViewLike {
   animate(elapsedSeconds: number): void {
     if (this.disposed) return;
 
-    for (const { sprite, emitter } of this.built.smoke) {
-      const pose = smokePose(emitter, elapsedSeconds);
+    for (const { sprite, emitter, pose } of this.built.smoke) {
+      smokePose(emitter, elapsedSeconds, pose);
       sprite.position.set(pose.x, pose.y, pose.z);
       sprite.scale.set(pose.scale, pose.scale, 1);
       (sprite.material as THREE.SpriteMaterial).opacity = pose.opacity;

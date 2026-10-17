@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.13` |
+| Version | `1.0.14` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
@@ -170,6 +170,13 @@ out every frame against 349,000 before, for no gain. A chunk is a culling unit a
 stay one. The draw calls were never the chunks anyway - they are four hundred and twenty-two
 gate groups and ninety lift parts, still unbatched, and that is the next thing to fix.
 
+**And the frame no longer makes garbage.** A frame that allocates is a frame that ends in a garbage
+collection, and a collection is a dip you see while standing still doing nothing - which is exactly
+where the dips were reported. Two sources: forty-four smoke puffs each returning a fresh pose object
+every frame, and the play HUD rebuilding five objects and writing the DOM sixty times a second when its
+fastest element is a clock that shows tenths. The puffs write into a pose they keep, and the HUD runs at
+its natural ten hertz. Nothing looks different; the allocations are gone.
+
 One regression is also gone: a start-up warm-up that compiled every shader and uploaded every buffer
 before the first frame, added in V1.0.5 and removed here. It was the only start-up behaviour that
 differed from V1.0.3, and start-up is where the report was.
@@ -305,3 +312,4 @@ tests/        unit, integration, and the invariants
 | V1.0.11 | Fewer, fatter chunks: the draw calls named at last |
 | V1.0.12 | Merged flat by material: 88 draw calls for a district |
 | V1.0.13 | The merge reverted: 349k triangles beats 88 draw calls |
+| V1.0.14 | No garbage per frame: pooled puffs, a ten-hertz HUD |

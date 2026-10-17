@@ -223,6 +223,9 @@ export class Game {
    * and someone who wants it can type it. It reports to the console as well as to the corner of the
    * screen, so the numbers survive a screenshot of nothing but the log.
    */
+  /** The run time the play HUD was last written at, for its 10 Hz budget. */
+  private lastGameHud = -Infinity;
+
   private readonly perfEnabled = typeof location !== 'undefined' && /[?&]perf\b/.test(location.search);
   private perfElement: HTMLElement | null = null;
   private perfRenderMs = 0;
@@ -1488,12 +1491,16 @@ export class Game {
 
   /** The play HUD lives next to the health and the checkpoints, not the debug rows. */
   private updateHud(): void {
-    // The play HUD moves every frame. Its clock is the whole point of the time
-    // trial, and a timer that ticks ten times a second reads as broken; the rest
-    // of it is a handful of text nodes and a transform, written only when they
-    // change. The debug overlay is the expensive one - a dozen rows of measured
-    // text - so it keeps its 10 Hz budget.
-    this.updateGameHud();
+    // **Twice a frame was once an understatement: this ran every frame, and a frame is not a place
+    // to build five objects and write the DOM.** The play HUD's fastest element is a clock that shows
+    // tenths, so ten times a second is its natural rate rather than a compromise - and the objects it
+    // builds (`run.snapshot()`, a shard lookup, a trial lookup, the snapshot literal itself) stop
+    // being two hundred and forty a second of garbage while the player stands still.
+    const elapsed = this.stats.snapshot().elapsedSeconds;
+    if (elapsed - this.lastGameHud >= 0.1) {
+      this.lastGameHud = elapsed;
+      this.updateGameHud();
+    }
 
     const stats = this.stats.snapshot();
     const interval = 1 / Math.max(1, this.config.debug.hudRefreshHz);
