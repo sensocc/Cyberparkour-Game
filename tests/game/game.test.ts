@@ -1507,25 +1507,6 @@ describe('the V0.5.1 fixes', () => {
   });
 });
 
-describe('the frame budget', () => {
-  it('drops a quality step when the frame cannot hold sixty, and does not drop one when it can', () => {
-    // **A settings menu cannot know what a machine can do.** The presets are a guess, and the only
-    // measurement that matters is taken while the game runs on it - which matters most on the frame
-    // where the player has chosen max and the machine has answered twenty.
-    const slow = createHarness({ settings: { ...DEFAULT_SETTINGS, quality: 'high' } });
-    slow.game.start();
-    // Sixty frames at forty milliseconds: twenty-five a second, which is a machine that cannot.
-    stepFrames(slow, 70, 40);
-    expect(slow.game.currentSettings.quality).toBe('medium');
-
-    const fast = createHarness({ settings: { ...DEFAULT_SETTINGS, quality: 'high' } });
-    fast.game.start();
-    // ...and a machine that can hold sixteen stays where the player put it.
-    stepFrames(fast, 70, 16);
-    expect(fast.game.currentSettings.quality).toBe('high');
-  });
-});
-
 describe('settings, from the game', () => {
   /** A store that survives being handed to two games, for the persistence tests. */
   function fakeStore(initial: Record<string, string> = {}) {

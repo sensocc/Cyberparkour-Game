@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.7` |
+| Version | `1.0.8` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1149 in 42 files |
+| Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -128,96 +128,26 @@ Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the land
 and pipe climbs — ordinary states in one machine rather than special cases, and built to be felt
 rather than to be counted.
 
-### The frame always comes first
-
-**V1.0.4 to V1.0.6 made the frame worse, and the report that said so was right.** What they added was
-bloom — three full-screen blurs — on top of a pixel ratio of 1.5, on the preset called "max". On a
-high-DPI panel that is 2.25 times the fragments of a 1.0 ratio *and* four extra full-screen passes, and
-the answer on real hardware was ten to twenty frames a second. The features are worth having; they were
-priced as if nothing cost anything.
-
-So the price is paid honestly, and the guesswork is gone:
-
-- **Pixel ratio 1.25 on high**, not 1.5. A quarter of the sharpness a 2x panel can show, and a third of
-  the frame back.
-- **The bloom blurs at a quarter of the frame** — a sixteenth of the pixels — and is **off at medium**
-  rather than weaker, because three full-screen blurs cost what they cost whatever the strength is.
-- **Fewer dynamic lights on high**: six was the whole frame's per-fragment budget spent on pools of
-  light on a street that is mostly neon anyway.
-- **And the preset is a starting point, not a promise.** The game measures its own frame time as it
-  runs: if the average over a second misses 18.5 ms, it steps down a preset, says so in the log, and
-  stays there. It never steps back up — a machine that stumbled over one shader compile should not be
-  walked into the stutter it just escaped. The player asked for sixty and gets as close as their
-  hardware can come, rather than a number in a menu that lies.
-
 ### The frame
 
-The frame is **60 FPS mean while sprinting through the district** — 16.6 ms, with a worst frame of 17.6
-— measured in a browser on a *software* rasteriser, which is the floor rather than the ceiling. What
-that took, in order of how much it matters on real hardware:
+The rendering is V1.0.3's, deliberately and exactly: the same three presets, the same exposure, the
+same lighting and no post-processing chain. V1.0.4 added bloom and a higher exposure and V1.0.7 tried
+to price them; the honest conclusion was that the frame the game already had is the one to keep.
 
-- **The high preset draws at 1.5x pixel ratio, not 2.** The ratio multiplies the fragment work of
-  everything — every lamp loop, every lit fragment, every bloom blur — and 1.5 is where the image
-  stops looking sharper while the frame still costs 78 per cent more. High-DPI displays are exactly
-  the hardware that reports frames dropping while it moves.
-- **The bloom blurs at half resolution.** `UnrealBloomPass` blurs at a quarter, an eighth and a
-  sixteenth of what it is given, so a source sharper than the widest of those is wasted work — and a
-  glow is by definition not sharp.
-- **Nothing is compiled or uploaded while the player is watching.** three.js does its GPU work
-  lazily: a program the first time a material is drawn, buffers the first time a mesh is visible.
-  Both happen in one warm-up at the loading screen instead, so the first seconds are not spent
-  compiling and a chunk is not uploaded the first time a player turns and finds it. (On this machine
-  that made no measurable difference — its driver compiles asynchronously — so it is insurance
-  against the drivers where it is not.)
-
-### Down as well as up
-
-A ladder could be climbed but not descended: back-input let go of it wherever the player was, so
-pressing back at the top of a twenty-eight metre ladder detached them and dropped them - and worse,
-the mantle hand-over fired first and threw them *over* the edge they were trying to leave.
-
-Back-input climbs down now, walking the same sections in reverse. The release fires only where there
-is no section below, which is the bottom of the stack, and that is also where stepping off is right.
-The hand-over to a mantle is gated on `forward > 0` for the same reason: it should happen when you
-reach the top going up, not when you start going down from it.
+Two things under it are invisible and were kept: the renderer **compiles every shader and uploads
+every buffer before the first frame** rather than lazily while the player watches, and the **shadow map
+is redrawn when the sun's camera moves instead of every frame**, since nothing in this district moves
+but the player. Neither changes a pixel; both are pure savings.
 
 ### Nothing pops while you are moving
 
 Rapid movement is where a world shows its seams, and two of them were showing:
 
-- **Chunks vanished while still visible.** The draw distance was 420 m against fog that runs to 480,
-  so a chunk three per cent opaque was disappearing out of the haze. It is 470 now, where the fog is
-  finished: past the point of seeing, not merely small.
-- **The shadow map was rendered for nothing.** Nothing in this district moves but the player, and the
-  sun's shadow camera is snapped to whole texels as it follows them - so on most frames the map was
-  drawn from the exact place it was drawn from last time, re-drawing every caster in the city to
-  produce a pixel-identical texture. It is redrawn when the snap moves and every third frame besides,
-  which keeps the player's own shadow alive at 20 Hz where a freeze would show.
 - **The lamps snapped on and off.** Six of five hundred and seventy-six sources are lit at a time and
   the set changes every 24 m, so sprinting down a street used to watch pools of light switch like a
   hand on a wall. They fade over about a fifth of a second now. The *visibility* pass, which was
   briefly cached by position cell the same way, is deliberately not: cached, chunks arrive in
   twenty-metre steps — a pop is a worse glitch than the two hundred microseconds the walk costs.
-
-### The light
-
-A night city lives or dies on its exposure. Three.js's ACES tone curve rolls off the highlights and
-pulls the mid-tones down with them, so an exposure that looks right on a grey test cube leaves a
-cyberpunk skyline in the mud - which is exactly what it did. The exposure is 1.45 and the ambient
-light is a third brighter, and the difference is not subtle: the concrete, the deck plating and the
-street all read, where before they were a smudge.
-
-**And the bright parts bleed.** A city of three hundred and fifty neon signs, six colours of window
-glass and a finish line made of light does not read as neon until the highlights bloom, so there is an
-`UnrealBloomPass` in the chain, scaled by the graphics preset - the most expensive thing in the
-renderer, and the first thing a low preset turns off.
-
-**With one caveat worth stating plainly: I have not seen it.** The machine this was built on has no
-GPU worth the name, and the post chain renders black on a software rasteriser. What is verified is
-that it *cannot* leave a black screen: on the first composed frame the chain is compared against a
-direct render of the same scene, and if it produced nothing while the plain path produced something
-then it is switched off for the session and the log says why. On a real GPU the effect is there; the
-worst case here is the picture without it.
 
 ### Smooth, and measured as smooth
 
@@ -334,3 +264,4 @@ tests/        unit, integration, and the invariants
 | V1.0.5 | A warm loading screen, a cheaper frame, and nothing popping |
 | V1.0.6 | Down the ladder, a shadow map drawn on purpose, and distances in 3D |
 | V1.0.7 | The frame first: cheaper presets, and a preset that measures itself |
+| V1.0.8 | Graphics back to V1.0.3, features kept |

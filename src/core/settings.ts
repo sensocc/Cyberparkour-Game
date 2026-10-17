@@ -49,15 +49,6 @@ export interface QualityPreset {
   readonly smokeScale: number;
   /** Fraction of the scene's point lights to keep lit. */
   readonly lightScale: number;
-  /**
-   * How much bloom to add, 0 to 1.
-   *
-   * The one effect this game is *about*: a city of three hundred and fifty neon signs, six colours of
-   * window glass and a finish line made of light does not read as neon at all until the bright parts
-   * of it bleed. Zero is a real setting rather than a fallback - a low preset has to be playable, and
-   * bloom is a full-screen pass at every resolution the player's machine can manage.
-   */
-  readonly bloom: number;
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
@@ -69,36 +60,24 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 2,
     smokeScale: 0.35,
     lightScale: 0.4,
-    bloom: 0,
   },
   medium: {
     label: 'Medium',
-    pixelRatioCap: 1,
+    pixelRatioCap: 1.5,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 8,
     smokeScale: 0.7,
-    lightScale: 0.5,
-    // Off at medium, not merely weaker. A bloom pass is three full-screen blurs whatever its
-    // strength is, and a preset that costs a third of the frame to soften the neon is not a medium
-    // preset - it is a high one with the dial turned down.
-    bloom: 0,
+    lightScale: 0.75,
   },
   high: {
     label: 'High',
-    // **1.25, and it matters more than anything else here.** The pixel ratio multiplies the fragment
-    // work of the entire frame - every lamp loop, every lit fragment, every bloom blur - and on a
-    // high-DPI display a cap of 1.5 is 2.25 times the fragments of 1.0. A report of ten frames a
-    // second on a 4K panel is not a mystery when the frame is also running a four-pass bloom on top
-    // of that. 1.25 costs a quarter of the sharpness a 2x panel can show and buys back a third of
-    // the frame, and the anti-aliasing covers most of the difference.
-    pixelRatioCap: 1.25,
+    pixelRatioCap: 2,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 16,
     smokeScale: 1,
-    lightScale: 0.65,
-    bloom: 0.9,
+    lightScale: 1,
   },
 };
 

@@ -7,10 +7,6 @@
  */
 
 import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 
 import type { GameConfig } from '../core/config.js';
 import { logger } from '../core/log.js';
@@ -141,17 +137,6 @@ export class GameView implements GameViewLike {
   private lampCell = '';
   /** The graphics preset's share of the lamps, applied to the cap. */
   private lightScale = 1;
-  /**
-   * The bloom chain, when the preset asks for one.
-   *
-   * Built once and enabled or disabled by the preset rather than created and destroyed: a composer
-   * owns render targets, and rebuilding them on every settings change is a hitch the player would
-   * feel for no reason.
-   */
-  private composer: EffectComposer | null = null;
-  private bloomPass: UnrealBloomPass | null = null;
-  /** Whether the post chain has been checked against a direct render yet. */
-  private bloomVerified = false;
   /** The snapped shadow-camera centre the map was last rendered from. */
   private shadowX = Number.NaN;
   private shadowZ = Number.NaN;
@@ -184,11 +169,7 @@ export class GameView implements GameViewLike {
     this.renderer.setPixelRatio(drawingRatio(this.quality));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // **The city is a night city, and ACES darkens a night city.** The tone curve rolls off the
-    // highlights and pulls the mid-tones down with them, so an exposure that looks right on a grey
-    // test cube leaves a cyberpunk skyline in the mud. This is the single value that decides whether
-    // the neon reads; everything else here is detail.
-    this.renderer.toneMappingExposure = 1.45;
+    this.renderer.toneMappingExposure = 1.1;
     this.renderer.shadowMap.enabled = true;
     // `PCFSoftShadowMap` was removed from three.js in r186: setting it logs a warning
     // and silently falls back to `PCFShadowMap`, so the demo spent a version asking
@@ -294,40 +275,6 @@ export class GameView implements GameViewLike {
   }
 
   /**
-   * The bloom chain, built against the current quality.
-   *
-   * `UnrealBloomPass` blurs a bright-pass at a quarter, an eighth and a sixteenth of the frame and
-   * adds them back, which is what makes a sign *glow* rather than merely be bright. It is the most
-   * expensive thing in the renderer by design, which is why it is the first thing a preset turns off.
-   */
-  private buildBloom(): void {
-    const size = new THREE.Vector2();
-    this.renderer.getSize(size);
-    // **A quarter resolution for the blur chain.** `UnrealBloomPass` blurs at a quarter, an eighth and a
-    // sixteenth of whatever it is given and adds the result back, so the source it samples only has
-    // to be as sharp as the widest of those - and a glow is by definition not sharp. Rendering the
-    // bright pass at a quarter of the frame is a sixteenth of the pixels, for a difference nobody
-    // can see on something that is by definition soft-edged.
-    const resolution = new THREE.Vector2(
-      Math.max(1, Math.round((size.x * drawingRatio(this.quality)) / 4)),
-      Math.max(1, Math.round((size.y * drawingRatio(this.quality)) / 4)),
-    );
-
-    const composer = new EffectComposer(this.renderer);
-    composer.addPass(new RenderPass(this.built.scene, this.camera));
-    const bloom = new UnrealBloomPass(resolution, 0.7, 0.85, 0.62);
-    composer.addPass(bloom);
-    // The output pass is what applies the renderer's tone mapping and colour space once the frame has
-    // been through a float target - without it a composer renders a linear image and everything the
-    // game does with ACES is silently thrown away.
-    composer.addPass(new OutputPass());
-    composer.setSize(size.x, size.y);
-
-    this.composer = composer;
-    this.bloomPass = bloom;
-  }
-
-  /**
    * Compiles every shader and uploads every buffer, while the player is still on a loading screen.
    *
    * **This is the whole of the start-up jank and half of the movement jank.** three.js does its GPU
@@ -389,8 +336,6 @@ export class GameView implements GameViewLike {
 
     this.renderer.setPixelRatio(drawingRatio(this.quality));
     this.renderer.setSize(safeWidth, safeHeight, false);
-    if (!this.composer && this.quality.bloom > 0) this.buildBloom();
-    this.composer?.setSize(safeWidth, safeHeight);
     // Once, at the first size: this is the last moment before the player is watching.
     if (this.warmUpCost.programs === 0) this.warmUp();
 
@@ -421,58 +366,7 @@ export class GameView implements GameViewLike {
     // does for the game.
     this.camera.rotation.set(orientation.pitch, orientation.yaw, ((orientation.roll ?? 0) * Math.PI) / 180);
 
-    if (this.composer && this.bloomPass && this.bloomPass.enabled) {
-      this.composer.render();
-      // Once, on the first composed frame: see `verifyBloom`.
-      if (!this.bloomVerified) this.verifyBloom();
-      return;
-    }
     this.renderer.render(this.built.scene, this.camera);
-  }
-
-  /**
-   * Checks that the bloom chain actually draws something, and gives up on it if it does not.
-   *
-   * **A composer that renders black on this machine is a black screen for the player**, and no amount
-   * of capability checking predicts it: it depends on half-float render targets, on the driver's idea
-   * of them, and on things a `try`/`catch` around the constructor never sees. So the first composed
-   * frame is compared against a direct render of the same scene, once, and if the chain produces
-   * nothing while the plain path produces something then the chain is switched off for the session
-   * and the log says why.
-   *
-   * It costs one extra frame at startup and one `readPixels` of nine pixels.
-   */
-  private verifyBloom(): void {
-    this.bloomVerified = true;
-    if (!this.bloomPass) return;
-    try {
-      const gl = this.renderer.getContext();
-      const size = this.renderer.getDrawingBufferSize(new THREE.Vector2());
-      const x = Math.max(0, Math.floor(size.x / 2) - 1);
-      const y = Math.max(0, Math.floor(size.y / 2) - 1);
-      const pixels = new Uint8Array(4 * 9);
-      const brightness = (): number => {
-        gl.readPixels(x, y, 3, 3, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-        let total = 0;
-        for (let index = 0; index < pixels.length; index += 4) {
-          total += (pixels[index] as number) + (pixels[index + 1] as number) + (pixels[index + 2] as number);
-        }
-        return total;
-      };
-
-      const composed = brightness();
-      if (composed > 0) return;
-
-      // Nothing on screen from the chain: draw the same frame the plain way and look again.
-      this.renderer.render(this.built.scene, this.camera);
-      if (brightness() > 0) {
-        this.bloomPass.enabled = false;
-        logger.warn('render', 'bloom disabled: the post chain renders black on this machine');
-      }
-    } catch {
-      // A driver that cannot even read the frame back is a driver to keep the plain path on.
-      this.bloomPass.enabled = false;
-    }
   }
 
   /**
@@ -683,16 +577,6 @@ export class GameView implements GameViewLike {
     // decided per frame by how close they are - see `followLamps`.
     this.lightScale = preset.lightScale;
 
-    // The bloom is the preset's, and it is *enabled* rather than rebuilt: `strength` alone leaves the
-    // three full-screen blurs running, which is the whole cost of it.
-    if (preset.bloom > 0 && !this.composer) {
-      const size = this.renderer.getSize(new THREE.Vector2());
-      if (size.x > 0) this.buildBloom();
-    }
-    if (this.bloomPass) {
-      this.bloomPass.enabled = preset.bloom > 0;
-      this.bloomPass.strength = preset.bloom;
-    }
     this.lampCell = '';
 
     logger.info('render', 'quality applied', {
@@ -711,9 +595,6 @@ export class GameView implements GameViewLike {
     if (this.disposed) return;
     this.disposed = true;
 
-    this.composer?.dispose();
-    this.composer = null;
-    this.bloomPass = null;
     this.body.dispose();
     this.built.dispose();
     this.renderer.setAnimationLoop(null);

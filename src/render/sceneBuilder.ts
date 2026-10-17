@@ -351,15 +351,7 @@ export function fadeLamps(lamps: readonly THREE.PointLight[], dt: number): void 
   }
 }
 
-/**
- * How far a chunk is drawn, in metres.
- *
- * **It has to be past the fog.** A chunk that vanishes while it is still three per cent visible is a
- * silhouette popping out of the haze a few hundred metres away, and the player sees exactly where it
- * went. The fog runs to 480 m, and this is where it is all but finished - which is why the number is
- * this one rather than the smaller one that would save a handful of draw calls.
- */
-const DRAW_DISTANCE = 470;
+const DRAW_DISTANCE = 420;
 
 /**
  * Draws the chunks near the player, and stops drawing the rest.
