@@ -437,15 +437,41 @@ describe('Game.restart', () => {
     expect(player.velocity).toEqual({ x: 0, y: 0, z: 0 });
   });
 
-  it('disposes the old view and creates exactly one new one', () => {
+  it('keeps the view it already has, because the world it draws has not changed', () => {
+    // V1.0.16. A restart used to dispose the view and build it again - six hundred milliseconds
+    // of merging the city, a hundred and sixty of rebuilding the level, a re-upload of every
+    // texture and a fresh compile of every shader, to arrive back at the same picture. The
+    // canvas, the scene and the context are the same objects they were a frame ago.
+    const harness = createHarness();
+    harness.game.start();
+    const view = harness.views[0];
+
+    harness.game.restart();
+
+    expect(view?.disposed).toBe(false);
+    expect(harness.views).toHaveLength(1);
+    expect(harness.canvases()).toHaveLength(1);
+  });
+
+  it('builds a new view when the old one is gone, as after a crash', () => {
     const harness = createHarness();
     harness.game.start();
     const first = harness.views[0];
 
+    // A lost context, a fatal frame error: either way the view is disposed and there is nothing
+    // to keep, so a restart has to put a fresh canvas and context on the screen.
     harness.game.restart();
+    expect(harness.views).toHaveLength(1);
 
+    vi.spyOn(harness.views[0] as FakeView, 'render').mockImplementation(() => {
+      throw new Error('renderer exploded');
+    });
+    stepFrames(harness, 1);
     expect(first?.disposed).toBe(true);
+
+    harness.game.restart();
     expect(harness.views).toHaveLength(2);
+    expect(harness.views[1]?.disposed).toBe(false);
     expect(harness.canvases()).toHaveLength(1);
   });
 
@@ -1426,7 +1452,7 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     harness.game.restart();
     // The pickup is back: a restart is the route from the beginning.
     expect(harness.game.runSnapshot.collected).toBe(0);
-    expect(harness.views[1]?.pickups).toContainEqual({ id: 'test-shard', visible: true });
+    expect(harness.views[0]?.pickups).toContainEqual({ id: 'test-shard', visible: true });
   });
 });
 

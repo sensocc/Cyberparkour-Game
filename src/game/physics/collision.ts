@@ -148,6 +148,14 @@ export class CollisionWorld {
   private readonly cells = new Map<number, number[]>();
   /** Colliders too large to file by cell, tested on every query. */
   private readonly large: number[] = [];
+  /**
+   * Colliders by id, for the handful of places that hold one and ask for it again.
+   *
+   * The climbing code keeps an id rather than a collider (the world can be rebuilt under it) and
+   * used to look it up with `colliders.find(...)` - a scan of the whole city, every step, to find
+   * something it already had. A map makes that a hash instead of thirteen thousand comparisons.
+   */
+  private readonly indexById = new Map<string, Collider>();
   /** Cell lists built in ascending collider order, so a query can rely on it. */
   private readonly scratch: number[] = [];
   private scratchCount = 0;
@@ -191,14 +199,12 @@ export class CollisionWorld {
   }
 
   /**
-   * Collects the colliders that could overlap `box` into `this.scratch`.
+   * Collects the colliders whose cells overlap a range into `this.scratch`.
    *
-   * A collision query is a handful of cells rather than the level, which is the
-   * whole reason the city can be five thousand colliders and still cost what the
-   * district's two hundred cost. A sweeping box covers a few cells per query, so
-   * this is the hot path's only allocation-free step.
+   * The one implementation behind both the solver's query and the probes': they
+   * differ only in how much of the world they widen the box to cover.
    */
-  private gather(box: AABB): number {
+  private gatherRange(minX: number, minZ: number, maxX: number, maxZ: number): number {
     this.scratchCount = 0;
     if (this.broadphase === 'scan') {
       for (let index = 0; index < this.colliders.length; index += 1) this.scratch[index] = index;
@@ -215,10 +221,10 @@ export class CollisionWorld {
       this.scratchCount += 1;
     }
 
-    const x0 = CollisionWorld.cell(box.min.x);
-    const x1 = CollisionWorld.cell(box.max.x);
-    const z0 = CollisionWorld.cell(box.min.z);
-    const z1 = CollisionWorld.cell(box.max.z);
+    const x0 = CollisionWorld.cell(minX);
+    const x1 = CollisionWorld.cell(maxX);
+    const z0 = CollisionWorld.cell(minZ);
+    const z1 = CollisionWorld.cell(maxZ);
     for (let x = x0; x <= x1; x += 1) {
       for (let z = z0; z <= z1; z += 1) {
         const cell = this.cells.get(CollisionWorld.key(x, z));
@@ -233,6 +239,42 @@ export class CollisionWorld {
       }
     }
     return this.scratchCount;
+  }
+
+  private gather(box: AABB): number {
+    return this.gatherRange(box.min.x, box.min.z, box.max.x, box.max.z);
+  }
+
+  /**
+   * Collects the colliders that could reach `box` grown by `margin` into `out`.
+   *
+   * This is the broadphase, opened to the *probes* - mantling, pull-ups, climbing,
+   * wall running and vaulting - which used to ask "what is near me?" by testing
+   * every collider in the level. Walks are the same shape as the solver's: a box,
+   * a few cells, and no scan of a city that is thirteen thousand colliders.
+   *
+   * The caller owns `out` (and its contents are stale past the returned count), so
+   * a probe can keep one array and pay nothing per step. The margin is horizontal
+   * reach; the cell grid is coarser than any reach this game uses, so the answer is
+   * a superset of what the probe can touch and no candidate is ever missed.
+   */
+  candidates(box: AABB, margin: number, out: Collider[]): number {
+    const reach = Math.max(0, margin);
+    const count = this.gatherRange(
+      box.min.x - reach,
+      box.min.z - reach,
+      box.max.x + reach,
+      box.max.z + reach,
+    );
+    for (let index = 0; index < count; index += 1) {
+      out[index] = this.colliders[this.scratch[index] as number] as Collider;
+    }
+    return count;
+  }
+
+  /** One collider by id, or `null`. */
+  byId(id: string): Collider | null {
+    return this.indexById.get(id) ?? null;
   }
 
   constructor(colliders: readonly Collider[], options: CollisionWorldOptions = {}) {
@@ -251,6 +293,7 @@ export class CollisionWorld {
     this.maxSubStep = Math.min(requested, Number.isFinite(thinnest) ? thinnest : requested);
 
     this.seen = new Int32Array(this.colliders.length);
+    for (const collider of this.colliders) this.indexById.set(collider.id, collider);
     this.index();
   }
 

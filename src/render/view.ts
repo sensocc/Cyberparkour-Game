@@ -18,11 +18,13 @@ import type { PlayerPose } from '../game/pose.js';
 import { applyAnisotropy } from './assets.js';
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.js';
 import {
+  assignLamps,
   buildScene,
+  fadeLamps,
+  selectLamps,
   shadowReachFor,
   updateChunkVisibility,
-  fadeLamps,
-  updateLamps,
+  updateMovingVisibility,
   updateShadowCasters,
   type BuiltScene,
 } from './sceneBuilder.js';
@@ -131,6 +133,10 @@ export class GameView implements GameViewLike {
   private casters = 0;
   /** How many chunks are being drawn this frame, after the distance cull. */
   private chunksDrawn = 0;
+  /** How many gates, lift cars and pickups are drawn this frame, after theirs. */
+  private movingDrawn = 0;
+  /** Meshes and sprites in the scene, counted once: it does not change while the view lives. */
+  private objectCount = 0;
   /** How many of the level's lamps are lit this frame. */
   private lampsOn = 0;
   /** The last place the lamp selection was made for. */
@@ -238,12 +244,22 @@ export class GameView implements GameViewLike {
       (options.definition.collectibles ?? []).map((pickup) => [pickup.id, pickup.position] as const),
     );
 
+    // Counted once, because it cannot change while this view lives: `?perf` used to walk six
+    // thousand five hundred objects every frame to report a number that had not moved.
+    this.built.scene.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh || (object as THREE.Sprite).isSprite) this.objectCount += 1;
+    });
+
     logger.info('render', 'view created', {
       renderer: this.rendererInfo ?? 'unknown',
       skybox: options.assets?.skybox != null,
       backdrop: this.built.backdrop !== null,
       parts: [...this.built.parts.values()].reduce((total, info) => total + info.count, 0),
       chunks: this.built.chunks.length,
+      moving: this.built.moving.length,
+      objects: this.objectCount,
+      lampSources: this.built.lamps.sources.length,
+      lampPool: this.built.lamps.pool.length,
       casters: this.casters,
       drawn: this.chunksDrawn,
       lamps: this.lampsOn,
@@ -273,21 +289,18 @@ export class GameView implements GameViewLike {
     readonly objects: number;
     readonly chunksDrawn: number;
     readonly chunksTotal: number;
+    readonly movingDrawn: number;
+    readonly movingTotal: number;
   } {
-    // Counting what is in the scene on every frame would itself be the slow thing, so this walks it
-    // only when asked - the `?perf` readout samples it a few times a second, which is plenty to show
-    // whether the number is *growing*.
-    let objects = 0;
-    this.built.scene.traverse((object) => {
-      if ((object as THREE.Mesh).isMesh || (object as THREE.Sprite).isSprite) objects += 1;
-    });
     return {
       calls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
       programs: this.renderer.info.programs?.length ?? 0,
-      objects,
+      objects: this.objectCount,
       chunksDrawn: this.chunksDrawn,
       chunksTotal: this.built.chunks.length,
+      movingDrawn: this.movingDrawn,
+      movingTotal: this.built.moving.length,
     };
   }
 
@@ -331,8 +344,9 @@ export class GameView implements GameViewLike {
 
     this.followWithShadow(eye);
     this.followLamps(eye);
-    // Per frame, unlike the selection itself: the *set* of lamps is chosen by cell and can snap, and
-    // this is what stops the snap being visible.
+    // Per frame, unlike the selection itself: a pool light takes a new lamp only once it has faded
+    // out, and that release has to be observed frame by frame - see `assignLamps`.
+    assignLamps(this.built.lamps);
     fadeLamps(this.built.lamps, seconds);
 
     this.camera.position.set(eye.x, eye.y, eye.z);
@@ -442,14 +456,16 @@ export class GameView implements GameViewLike {
    * between two steps.
    */
   private followLamps(eye: ReadonlyVec3): void {
+    // **The selection, not the lights themselves.** Six of five hundred and seventy-six sources
+    // are lit at once and the set changes every twenty-four metres, so the O(576) search runs on a
+    // cell change and the eight-slot assignment runs every frame - see `selectLamps`.
     const cell = `${Math.round(eye.x / 24)}|${Math.round(eye.z / 24)}`;
     if (cell === this.lampCell) return;
     this.lampCell = cell;
-    // **Six, not twelve.** A point light is a per-fragment loop over the whole screen, and the
-    // nearest twelve of five hundred and seventy-six was still the most expensive thing in the frame.
-    // Six pools of light around the player and the neon carrying the rest: the city is a neon city,
-    // and it is emissive surfaces rather than lamps that make it one.
-    this.lampsOn = updateLamps(this.built.lamps, eye, Math.max(3, Math.round(6 * this.lightScale)));
+    // **Six, not twelve.** A point light is a per-fragment loop over the whole screen. Six pools of
+    // light around the player and the neon carrying the rest: the city is a neon city, and it is
+    // emissive surfaces rather than lamps that make it one.
+    this.lampsOn = selectLamps(this.built.lamps, eye, Math.max(3, Math.round(6 * this.lightScale)));
   }
 
   private followWithShadow(eye: ReadonlyVec3): void {
@@ -464,6 +480,9 @@ export class GameView implements GameViewLike {
     // microseconds this costs, and six hundred and twenty-six array reads is nothing.
     this.casters = updateShadowCasters(this.built.chunks, eye, this.shadowReach);
     this.chunksDrawn = updateChunkVisibility(this.built.chunks, eye);
+    // The moving set is where the chunk merge does not reach - gates, lift cars, pickups - so it
+    // gets the same distance cull rather than relying on the far plane.
+    this.movingDrawn = updateMovingVisibility(this.built.moving, eye);
 
     const extent = Math.max(1, shadow.camera.right);
     const texel = (extent * 2) / Math.max(1, shadow.mapSize.width);
@@ -542,8 +561,11 @@ export class GameView implements GameViewLike {
       }
     }
 
-    // Filtering belongs to the texture and is applied when it is uploaded.
-    applyAnisotropy(this.assets, Math.min(maxAnisotropy(this.renderer), preset.anisotropy));
+    // Filtering belongs to the texture and is applied when it is uploaded - so asking for it again
+    // is a full re-upload of every texture in the game, mipmaps and all. Only when it changed.
+    if (previous.anisotropy !== preset.anisotropy) {
+      applyAnisotropy(this.assets, Math.min(maxAnisotropy(this.renderer), preset.anisotropy));
+    }
     applyEvenScale(this.built.smoke.length, preset.smokeScale, (index, visible) => {
       const mesh = this.built.smoke[index];
       if (mesh) mesh.sprite.visible = visible;

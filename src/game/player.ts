@@ -688,6 +688,17 @@ function stepHanging(
 }
 
 /**
+ * How far around a ladder section to look for the next one.
+ *
+ * A section is a collider and the next one starts where it ends, so the answer is within a metre -
+ * which is why the ladder hand-over does not need to ask the whole city.
+ */
+const CLIMB_NEIGHBOURHOOD = 0.7;
+
+/** The broadphase's answer, kept and rewritten - see `climbContinuesAbove`. */
+const climbScratch: Collider[] = [];
+
+/**
  * Whether another climbable stands directly on top of this one.
  *
  * A ladder is a stack of sections, so the top of a section is a *step in a ladder* rather than the
@@ -701,7 +712,12 @@ function climbContinuesAbove(
   climbableIds: ReadonlySet<string>,
 ): boolean {
   const { box } = surface;
-  for (const other of world.colliders) {
+  // **The ladder's own neighbourhood, not the city.** This runs on the climbing path every step,
+  // and sections of one ladder are within a metre of each other, so the broadphase answers it with
+  // a handful of colliders instead of thirteen thousand.
+  const count = world.candidates(box, CLIMB_NEIGHBOURHOOD, climbScratch);
+  for (let index = 0; index < count; index += 1) {
+    const other = climbScratch[index] as Collider;
     if (other.id === surface.id || !climbableIds.has(other.id)) continue;
     // Overlapping in the plane, and reaching above this one's top: that is the next section up.
     if (other.box.min.x >= box.max.x || other.box.max.x <= box.min.x) continue;
@@ -723,7 +739,9 @@ function climbContinuesBelow(
   climbableIds: ReadonlySet<string>,
 ): boolean {
   const { box } = surface;
-  for (const other of world.colliders) {
+  const count = world.candidates(box, CLIMB_NEIGHBOURHOOD, climbScratch);
+  for (let index = 0; index < count; index += 1) {
+    const other = climbScratch[index] as Collider;
     if (other.id === surface.id || !climbableIds.has(other.id)) continue;
     if (other.box.min.x >= box.max.x || other.box.max.x <= box.min.x) continue;
     if (other.box.min.z >= box.max.z || other.box.max.z <= box.min.z) continue;
@@ -869,7 +887,7 @@ function stepPiping(
   copyVec3(state.previousPosition, state.position);
 
   const id = state.pipeId;
-  const collider = id === null ? undefined : world.colliders.find((entry) => entry.id === id);
+  const collider = id === null ? null : world.byId(id);
   if (!collider) {
     releasePipe(state, pipe.releaseCooldownSeconds);
     return outcome(createMoveResult(), { ended: 'climb' });

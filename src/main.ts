@@ -34,7 +34,7 @@ import {
 } from './diagnostics/crashSinks.js';
 import { createAudio, type AudioOutput } from './audio/engine.js';
 import { Game } from './game/game.js';
-import { DEMO_DISTRICT } from './game/level/levelData.js';
+import { DEMO_DISTRICT, type LevelDefinition } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
 import { disposeSceneAssets, loadSceneAssets } from './render/assets.js';
 import { NO_ASSETS, type SceneAssets } from './render/types.js';
@@ -91,8 +91,20 @@ function createAudioBackend(): AudioOutput {
  * Built once at module load rather than per game, because it is deterministic: the same
  * seed is the same city, and the only reason to build it twice would be to waste the
  * forty milliseconds.
+ *
+ * **And it can fail**, which is why it is wrapped. A module that throws before the shell exists
+ * never reaches the try/catch at the bottom of this file, so a generator bug would have been a
+ * blank page with a stack trace in the console - the one failure mode the reporter installed
+ * three lines later exists to prevent.
  */
-const CITY = buildCity(DEMO_DISTRICT);
+let CITY: LevelDefinition;
+try {
+  CITY = buildCity(DEMO_DISTRICT);
+} catch (error) {
+  logger.error('app', 'the city could not be built', { error: String(error) });
+  renderBootFailure(error);
+  throw error;
+}
 
 function createShell(): Shell {
   const app = requireElement('app');

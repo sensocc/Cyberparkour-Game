@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.14` |
+| Version | `1.0.16` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1148 in 42 files |
+| Tests | 1158 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -136,10 +136,11 @@ to price them; the honest conclusion was that the frame the game already had is 
 
 There is one more thing to know about it, and it cost three versions to learn: **the fixes that made
 this game playable were order-of-magnitude ones** - forty thousand draw calls to five hundred, five
-hundred and forty-five lights to six - and they were all spent before V1.0.3. What is left is a floor,
-and the dials left on it (one fewer light, a smaller shadow map) are worth single-digit percent. A
-frame that is missing by three times is not missing because of a graphics setting, and trimming
-settings until the picture is gone will not find out what it is missing by.
+hundred and forty-five lights to six - and the first of those was spent before V1.0.3, while the second
+turned out not to have been spent at all until V1.0.16 (see below). What is left is a floor, and the
+dials left on it (one fewer light, a smaller shadow map) are worth single-digit percent. A frame that
+is missing by three times is not missing because of a graphics setting, and trimming settings until the
+picture is gone will not find out what it is missing by.
 
 So the game now measures instead. Add `?perf` to the URL and the top-left corner reports the frame:
 the rate, the draw calls and triangles submitted, the milliseconds spent inside the renderer against the
@@ -167,8 +168,41 @@ triangles and far fewer things. It was reverted in V1.0.13. Forty-five meshes, f
 radius over two hundred metres, meant forty-four hit the "this mesh is the size of the map,
 never cull it" rule: the distance cull stopped doing anything and 778,000 triangles went
 out every frame against 349,000 before, for no gain. A chunk is a culling unit and it has to
-stay one. The draw calls were never the chunks anyway - they are four hundred and twenty-two
-gate groups and ninety lift parts, still unbatched, and that is the next thing to fix.
+stay one. The draw calls were never the chunks anyway - they were four hundred and twenty-two gate
+groups and ninety lift parts, and V1.0.16 is where that was paid.
+
+**V1.0.16: the two numbers that were actually wrong.** The readout had been reporting a frame in the
+thousands of draw calls and the answer was assumed to be the chunks. It was not, on either half:
+
+- **The gates were ten meshes each.** Everything that moves was built one mesh per model part, which
+  for a shutter is a base, eight slats and a hazard stripe. The city owns four hundred and twenty-two
+  shutters and ninety lift cars, and from a street they were **1,417 of the frame's 1,777 draw calls**
+  for fifty thousand triangles - the exact trade the chunk merge exists to avoid, undone for the parts
+  that move. They are merged per material now (a gate is three meshes) and they get the same *distance*
+  cull the chunks get, because a shutter two hundred metres away is a few pixels of dark grey. From a
+  street: **1,777 draw calls to 306.**
+- **The lights were never cut.** V0.7.11 capped the level's point lights at twelve and V1.0.x faded the
+  nearest six of the city's five hundred and seventy-six to full brightness - but three.js sizes its
+  per-fragment light loop from how many lights are *visible* and unrolls it, and a light faded to zero
+  intensity is still visible. Every lit pixel was running **576 light evaluations**, and each lit
+  program carried about **2,300 uniforms**; the graphics presets could not buy any of it back, because
+  `lightScale` only ever changed intensities. The scene now owns a **pool of eight** `PointLight`s and
+  moves the nearest ones onto the lamps as the player walks - a gate that leaves the selection fades out
+  where it stands, is freed when it is dark, and takes its new lamp at zero, so the fade the player sees
+  is unchanged. Each lit program: **2,333 uniforms to 59.** Eight lights is also under the uniform limit
+  of an integrated GPU, which five hundred and seventy-six was not.
+- **The probes were walking the whole level.** Mantling, pull-ups, climbing, wall running and vaulting
+  each asked "what is near me?" by testing all thirteen thousand colliders, four or five times a step,
+  allocating a box per candidate. They go through the collision grid now: **0.244 ms per walking step
+  to 0.007**, and the city is no longer something a step pays for by existing.
+- **A restart is a new run, not a new world.** It used to throw the view away and build it again - six
+  hundred milliseconds merging the city, a hundred and sixty rebuilding the level, every texture
+  re-uploaded and every shader recompiled - to arrive back at the same picture. The scene is
+  deterministic and the game already knows how to push its own state back into it, so it does.
+- The `?perf` readout no longer measures itself (it walked every object in the scene each frame and
+  built a six-hundred-character string per frame), the HUD's statistics are read once per frame instead
+  of three times, and the level and scene builders resolve the gate-to-lift mapping in one pass each
+  instead of a million string comparisons per lift.
 
 **And the frame no longer makes garbage.** A frame that allocates is a frame that ends in a garbage
 collection, and a collection is a dip you see while standing still doing nothing - which is exactly
@@ -313,3 +347,5 @@ tests/        unit, integration, and the invariants
 | V1.0.12 | Merged flat by material: 88 draw calls for a district |
 | V1.0.13 | The merge reverted: 349k triangles beats 88 draw calls |
 | V1.0.14 | No garbage per frame: pooled puffs, a ten-hertz HUD |
+| V1.0.15 | The readout says which machine it is on |
+| V1.0.16 | Eight lights, batched shutters, and a broadphase that reaches the ledges |

@@ -875,8 +875,9 @@ describe('what V0.8 puts in the city', () => {
   it('lights the place with signs rather than with lamps', () => {
     // Brightness bought with emissive surfaces, not with point lights: a sign's emissive channel
     // costs nothing to draw and no shader loop runs for it, which is what lets the city be neon
-    // *and* fast. V0.7.11 cut five hundred and forty-five lights to twelve for exactly this
-    // reason, and the lampposts added here are cheap only because they join that same cap.
+    // *and* fast. V0.7.11 capped the *district's* lights at twelve for exactly this reason - and
+    // the generated city quietly added hundreds back, which V1.0.16 fixed by making the scene own a
+    // pool of eight lights rather than one object per lamp in the level.
     expect(report['neon-sign'] ?? 0).toBeGreaterThan(200);
     expect(generated.filter((prop) => prop.model.startsWith('neon-')).length).toBeGreaterThan(400);
     // ...and they are varied: more than one silhouette and more than one colour.

@@ -12,9 +12,28 @@
  * lives with the rest of the movement config.
  */
 
-import { aabbFromCenterSize, overlapsWhenOffset, type AABB } from './aabb.js';
+import { aabbFromCenterSize, type AABB } from './aabb.js';
 import { COLLISION_SKIN, type Collider, type CollisionWorld } from './collision.js';
 import { copyVec3, normalizeVec3, vec3, type ReadonlyVec3, type Vec3 } from '../../core/vec3.js';
+
+/**
+ * The broadphase answer, kept and rewritten.
+ *
+ * **Five of these run per simulation step**, and a step is not a place to make garbage - but more
+ * to the point, the thing they used to iterate was `world.colliders`, every one of the city's
+ * thirteen thousand colliders, four or five times a step. That was 98% of the cost of a walking
+ * step. A query now asks the collision grid for the cells within reach and tests the handful of
+ * colliders in them, which is what the grid was built for.
+ *
+ * One shared array is safe: no query here calls another, and the ones that call back into the world
+ * (`isFree`, `isSupported`) use the world's own scratch rather than this one.
+ */
+const candidates: Collider[] = [];
+
+/** The colliders within `reach` of `box`, written into the shared array. */
+function gather(world: CollisionWorld, box: AABB, reach: number): number {
+  return world.candidates(box, reach, candidates);
+}
 
 export interface LedgeHit {
   readonly collider: Collider;
@@ -55,21 +74,18 @@ export function findLedge(query: LedgeQuery): LedgeHit | null {
   const direction = normalizeVec3(vec3(), query.direction);
   if (direction.x === 0 && direction.z === 0) return null;
 
-  const probe: AABB = {
-    min: { ...query.box.min },
-    max: { ...query.box.max },
-  };
-
   let best: LedgeHit | null = null;
 
-  for (const collider of query.world.colliders) {
+  const count = gather(query.world, query.box, query.reach);
+  for (let index = 0; index < count; index += 1) {
+    const collider = candidates[index] as Collider;
     if (collider.id === query.ignoreId) continue;
 
     const topY = collider.box.max.y;
     if (topY < query.minTopY || topY > query.maxTopY) continue;
 
     // Is the player up against it, or within reach of it?
-    if (!overlapsForward(probe, direction, query.reach, collider.box)) continue;
+    if (!overlapsForward(query.box, direction, query.reach, collider.box)) continue;
 
     // Is there room to stand on top?
     const landing = landingBox(query, direction, topY);
@@ -83,24 +99,22 @@ export function findLedge(query: LedgeQuery): LedgeHit | null {
   return best;
 }
 
-/** Overlap test for the player's box translated forward along the direction. */
+/**
+ * Overlap test for the player's box translated forward along the direction.
+ *
+ * Written out rather than built as a temporary box: this is the innermost test in
+ * every probe, it runs per candidate per step, and it used to allocate two objects
+ * and six numbers each time it was asked.
+ */
 export function overlapsForward(box: AABB, direction: ReadonlyVec3, distance: number, other: AABB): boolean {
-  // The direction is axis-aligned in practice (the player is either pushed into
-  // a face or probing along one axis), so resolving it into a single-axis offset
-  // test keeps this exact rather than approximated.
-  const shifted: AABB = {
-    min: {
-      x: box.min.x + direction.x * distance,
-      y: box.min.y,
-      z: box.min.z + direction.z * distance,
-    },
-    max: {
-      x: box.max.x + direction.x * distance,
-      y: box.max.y,
-      z: box.max.z + direction.z * distance,
-    },
-  };
-  return overlapsWhenOffset(shifted, 'y', 0, other);
+  const minX = box.min.x + direction.x * distance;
+  const maxX = box.max.x + direction.x * distance;
+  const minZ = box.min.z + direction.z * distance;
+  const maxZ = box.max.z + direction.z * distance;
+  if (minX >= other.max.x || maxX <= other.min.x) return false;
+  if (box.min.y >= other.max.y || box.max.y <= other.min.y) return false;
+  if (minZ >= other.max.z || maxZ <= other.min.z) return false;
+  return true;
 }
 
 /**
@@ -143,7 +157,9 @@ export function findClimbable(query: LedgeQuery & { readonly climbableIds: Reado
   const feetY = query.box.min.y;
   let best: Collider | null = null;
 
-  for (const collider of query.world.colliders) {
+  const count = gather(query.world, query.box, query.reach);
+  for (let index = 0; index < count; index += 1) {
+    const collider = candidates[index] as Collider;
     if (collider.id === query.ignoreId) continue;
     if (!query.climbableIds.has(collider.id)) continue;
     if (collider.box.max.y < feetY + query.minTopY) continue;
@@ -204,11 +220,15 @@ export function findWallRunSurface(query: WallQuery): WallHit | null {
   const minTopY = query.box.min.y + query.minHeight;
   let best: WallHit | null = null;
 
+  // One broadphase query for all four axes: they all look `reach` metres out from the same box.
+  const count = gather(query.world, query.box, query.reach);
+
   for (const axis of SIDE_AXES) {
     if (Math.abs(axis.x * travel.x + axis.z * travel.z) > 0.9) continue;
 
     let bestOnAxis: WallHit | null = null;
-    for (const collider of query.world.colliders) {
+    for (let index = 0; index < count; index += 1) {
+      const collider = candidates[index] as Collider;
       if (collider.id === query.ignoreId) continue;
       if (collider.id === query.ignoreWallId) continue;
       // Tall enough to be a wall, and tall enough to still be beside the player.
@@ -281,7 +301,9 @@ export function findVaultObstacle(query: VaultQuery): VaultHit | null {
 
   let best: VaultHit | null = null;
 
-  for (const collider of query.world.colliders) {
+  const count = gather(query.world, query.box, query.reach);
+  for (let index = 0; index < count; index += 1) {
+    const collider = candidates[index] as Collider;
     if (collider.id === query.ignoreId) continue;
 
     const topY = collider.box.max.y;

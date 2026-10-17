@@ -9,6 +9,14 @@ export default defineConfig({
     outDir: 'dist',
     sourcemap: true,
     chunkSizeWarningLimit: 800,
+    rollupOptions: {
+      output: {
+        // three.js is five sixths of the bundle and changes only when it is upgraded, so it gets
+        // its own chunk: a change to the game then invalidates forty kilobytes of cache rather
+        // than the whole download.
+        manualChunks: (id: string) => (id.includes('/node_modules/three/') ? 'three' : undefined),
+      },
+    },
   },
   server: {
     port: 5173,

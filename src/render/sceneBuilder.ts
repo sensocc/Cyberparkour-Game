@@ -16,7 +16,7 @@ import * as THREE from 'three';
 
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
-import { isElevatorGateOf, resolvePropParts } from '../game/level/level.js';
+import { gateOwners, resolvePropParts } from '../game/level/level.js';
 import { modelById, resolveModelParts, type ModelDefinition } from '../game/level/models.js';
 import { surfaceById } from '../game/level/surfaces.js';
 import { emptySpritePose, type SmokeEmitter, type SpritePose } from './effects.js';
@@ -78,16 +78,29 @@ export interface BuiltScene {
   readonly gates: ReadonlyMap<string, THREE.Object3D>;
   /** Pickups, keyed by id. Hidden once taken. */
   readonly collectibles: ReadonlyMap<string, THREE.Object3D>;
+  /**
+   * Everything the frame draws that is not a chunk: gate leaves, lift cars, pickups.
+   *
+   * These are merged per material like the static city (see `modelGroup`), so a gate is three
+   * meshes rather than ten - but they still cannot go into a chunk, because they move. What they
+   * can share with a chunk is the *distance cull*, and `updateMovingVisibility` gives it to them:
+   * a shutter three hundred metres away is a few pixels of dark grey, and it is not worth a draw
+   * call. From a street this is the difference between about 1,800 submissions and about 400.
+   *
+   * `userData.cullX`/`cullZ` hold each mesh's world position in the plane, which never changes -
+   * gates and cars only ever move vertically.
+   */
+  readonly moving: readonly THREE.Mesh[];
   /** Every smoke sprite, with its emitter, for the animation pass. */
   readonly smoke: readonly SmokeEmitterMesh[];
   /**
-   * The scene's point lights.
+   * The level's point lights, as data, plus the pool of real `PointLight`s that shows them.
    *
-   * Kept so a graphics preset can drop some of them: they are the most expensive
-   * thing in the scene to leave on (each one is a per-pixel loop iteration in every
-   * lit fragment), and on a low preset the lamps are the first thing to go.
+   * See `LampField`: the level asks for five hundred and seventy-six lights, the scene owns
+   * eight, and only the eight nearest are ever real. That is what keeps `NUM_POINT_LIGHTS` out
+   * of the hundreds - the number a forward renderer pays per lit pixel.
    */
-  readonly lamps: readonly THREE.PointLight[];
+  readonly lamps: LampField;
   /**
    * Every material the scene owns, keyed by the surface (or part) that uses it.
    *
@@ -271,93 +284,214 @@ export function shadowReachFor(extent: number): number {
 }
 
 /**
- * Lets only the chunks a shadow volume can reach cast into it, and reports how
- * many that is.
- *
- * A shadow pass draws every caster in the scene and clips the rest: vertices
- * outside the shadow camera are clipped, not culled. With a mesh per prop that cost
- * nothing worth measuring. With the city merged into a thousand chunks it is a
- * second full pass over half a million triangles for a map 220 m across, so a chunk
- * casts only while the volume is near it. What that changes *visually* is nothing -
- * everything switched off was outside the map already - and the pass gets short
- * enough to be worth the bookkeeping.
- *
- * A chunk that was never a caster is never made one: the prop's own flag is the
- * authority, and this only ever takes casting away.
- */
-/**
- * How many of the level's point lights are switched on at once.
+ * How many point lights the scene owns, whatever the level contains.
  *
  * **This is the frame.** A point light is not a cheap thing in a forward renderer: every lit
- * fragment of every surface runs the loop over every light in the scene, so 545 of them - which
- * is what a kilometre of city generates, two lamps per building - is 545 iterations of a shader
- * per pixel. That is not a slow frame, it is a slideshow, and it measured as one.
+ * fragment of every surface runs a loop over every light in the scene - three.js unrolls it at
+ * compile time - so five hundred and seventy-six of them, which is what a kilometre of city
+ * generates, is five hundred and seventy-six light evaluations per pixel. That is not a slow
+ * frame, it is a slideshow, and it measured as one.
  *
- * Only the nearest handful can be told apart anyway: a lamp forty metres away through three walls
- * contributes a colour nobody can see. Twelve are on, the rest are off, and the switch is
- * re-evaluated when the player has moved far enough for it to matter.
+ * V1.0.16: the lights are a **pool**, not one object per light in the level. The level still says
+ * where every lamp is; the scene keeps eight real `PointLight`s and moves the nearest ones onto
+ * them as the player walks. The old code swapped intensity instead, which looks identical and
+ * costs the same as leaving all of them on, because three.js decides the loop length from how many
+ * lights are *visible* - and a light faded to zero is still visible. Eight is enough to light a
+ * street corner and a doorway; the rest of the city's glow is emissive, which is what makes it
+ * cheap.
  */
-export function updateLamps(
-  lamps: readonly THREE.PointLight[],
-  eye: ReadonlyVec3,
-  limit: number,
-): number {
-  if (lamps.length === 0) return 0;
-  if (lamps.length <= limit) {
-    for (const lamp of lamps) if (!lamp.visible) lamp.visible = true;
-    return lamps.length;
-  }
+export const LAMP_POOL = 8;
 
-  // A selection rather than a sort: an insertion into a small array of the nearest, which is
-  // O(n * limit) and allocates nothing.
-  const best: number[] = [];
-  const distanceTo = (lamp: THREE.PointLight): number =>
-    (lamp.position.x - eye.x) * (lamp.position.x - eye.x) +
-    (lamp.position.y - eye.y) * (lamp.position.y - eye.y) +
-    (lamp.position.z - eye.z) * (lamp.position.z - eye.z);
-
-  for (let index = 0; index < lamps.length; index += 1) {
-    const distance = distanceTo(lamps[index] as THREE.PointLight);
-    let at = best.length;
-    while (at > 0 && distanceTo(lamps[best[at - 1] as number] as THREE.PointLight) > distance) at -= 1;
-    if (at < limit) {
-      best.splice(at, 0, index);
-      if (best.length > limit) best.pop();
-    }
-  }
-
-  // **The lamps fade instead of snapping.** Six of five hundred and seventy-six sources are lit at
-  // once, and the set changes every twenty-four metres - so a player sprinting down a street used to
-  // watch pools of light appear and vanish from one frame to the next, which reads as a light being
-  // switched on by a hand. The lights stay in the scene and their intensity is what moves, which is
-  // also why they are never hidden: a light at zero still costs a shader loop it shares with five
-  // others, and being able to fade it back in is worth far more than that.
-  const lit = new Set(best);
-  for (let index = 0; index < lamps.length; index += 1) {
-    const lamp = lamps[index] as THREE.PointLight;
-    if (lamp.userData.lampBase === undefined) {
-      lamp.userData.lampBase = lamp.intensity;
-      lamp.userData.lampTarget = lamp.intensity;
-    }
-    lamp.userData.lampTarget = lit.has(index) ? (lamp.userData.lampBase as number) : 0;
-    if (!lamp.visible) lamp.visible = true;
-  }
-  return best.length;
+/** One light the level asked for, as data - never a `PointLight` of its own. */
+export interface LampSource {
+  readonly id: string;
+  readonly position: ReadonlyVec3;
+  /** Pre-made, so taking a light into the pool copies rather than parses a hex string. */
+  readonly color: THREE.Color;
+  readonly intensity: number;
+  readonly distance: number;
 }
 
 /**
- * Moves every lamp's intensity towards where the selection says it should be.
+ * The pool, and the selection that drives it.
+ *
+ * Three steps, deliberately separate because they cost different amounts:
+ *
+ *  - `selectLamps` finds the nearest N *sources*, and it is the only O(576) part - so the view
+ *    only calls it when the player has moved far enough for the answer to change.
+ *  - `assignLamps` decides which pool light shows which source, and runs every frame: a light
+ *    that has left the selection fades out at the lamp it was showing, is freed when it is dark,
+ *    and only then is handed to a newly selected lamp, which fades it up in the new place. That
+ *    is the fade the old code had, without the shader cost that came with it.
+ *  - `fadeLamps` moves every pool light's intensity towards its target.
+ */
+export interface LampField {
+  /** The real lights. Their count never changes, which is what keeps the shader constant. */
+  readonly pool: readonly THREE.PointLight[];
+  readonly sources: readonly LampSource[];
+  /** Indices into `sources`, nearest first, rewritten by `selectLamps`. */
+  readonly chosen: number[];
+  chosenCount: number;
+  /** Which source each pool light is showing, or -1 for none. */
+  readonly slotSource: Int32Array;
+  /** Full-brightness intensity of that source. */
+  readonly slotBase: Float32Array;
+  /** Where its intensity is heading, which is 0 while it is being released. */
+  readonly slotTarget: Float32Array;
+  /**
+   * Whether the pool has ever been given a lamp.
+   *
+   * The first assignment is a *seed*, not a fade: the lights a player starts among should be on in
+   * the first frame, exactly as they were when each lamp had its own light. Only reassignment - a
+   * light being handed to a different lamp as the player walks - has to start from dark.
+   */
+  seeded: boolean;
+}
+
+export function createLampField(scene: THREE.Scene, sources: readonly LampSource[]): LampField {
+  const pool: THREE.PointLight[] = [];
+  for (let index = 0; index < LAMP_POOL; index += 1) {
+    // No shadow: a point-light shadow is a cube map per light, and the demo does not need one.
+    const light = new THREE.PointLight(0xffffff, 0, 20);
+    light.name = `lamp-pool-${index}`;
+    light.castShadow = false;
+    // Visible from the first frame, and dark until it is given a lamp. Visibility is *not* the
+    // mechanism for turning a light off - see `LAMP_POOL` - so nothing here ever toggles it.
+    scene.add(light);
+    pool.push(light);
+  }
+
+  return {
+    pool,
+    sources,
+    chosen: new Array<number>(LAMP_POOL).fill(-1),
+    chosenCount: 0,
+    slotSource: new Int32Array(LAMP_POOL).fill(-1),
+    slotBase: new Float32Array(LAMP_POOL),
+    slotTarget: new Float32Array(LAMP_POOL),
+    seeded: false,
+  };
+}
+
+/**
+ * The nearest `limit` sources to the eye, written into `field.chosen` and returned as a count.
+ *
+ * A selection rather than a sort: an insertion into a small array of the nearest, which is
+ * O(n * limit) and allocates nothing.
+ */
+export function selectLamps(field: LampField, eye: ReadonlyVec3, limit: number): number {
+  const { sources, chosen } = field;
+  const want = Math.max(0, Math.min(limit, LAMP_POOL, sources.length));
+  let count = 0;
+
+  for (let index = 0; index < sources.length; index += 1) {
+    const source = sources[index] as LampSource;
+    const dx = source.position.x - eye.x;
+    const dy = source.position.y - eye.y;
+    const dz = source.position.z - eye.z;
+    const distance = dx * dx + dy * dy + dz * dz;
+
+    // Where it belongs among the ones kept so far.
+    let at = count;
+    while (at > 0) {
+      const previous = sources[chosen[at - 1] as number] as LampSource;
+      const px = previous.position.x - eye.x;
+      const py = previous.position.y - eye.y;
+      const pz = previous.position.z - eye.z;
+      if (px * px + py * py + pz * pz <= distance) break;
+      at -= 1;
+    }
+    if (at >= want) continue;
+
+    for (let move = Math.min(count, want - 1); move > at; move -= 1) {
+      chosen[move] = chosen[move - 1] as number;
+    }
+    chosen[at] = index;
+    if (count < want) count += 1;
+  }
+
+  field.chosenCount = count;
+  return count;
+}
+
+/**
+ * Gives every selected lamp a pool light, and releases the ones that are no longer selected.
+ *
+ * Runs every frame and is cheap (eight slots against at most eight selections) because the
+ * *release* has to be observed frame by frame: a light is only free to take a new lamp once it
+ * has finished fading, and that is what stops a pool light teleporting from one street corner to
+ * another with its brightness still up.
+ */
+export function assignLamps(field: LampField): void {
+  const { pool, sources, chosen, chosenCount, slotSource, slotBase, slotTarget } = field;
+
+  // 1. Anything no longer selected fades where it stands, and is freed once it is dark.
+  for (let slot = 0; slot < pool.length; slot += 1) {
+    const source = slotSource[slot] as number;
+    if (source < 0) continue;
+
+    let wanted = false;
+    for (let index = 0; index < chosenCount; index += 1) {
+      if (chosen[index] === source) {
+        wanted = true;
+        break;
+      }
+    }
+    if (wanted) continue;
+
+    slotTarget[slot] = 0;
+    const light = pool[slot] as THREE.PointLight;
+    if (light.intensity <= 0.01) {
+      light.intensity = 0;
+      slotSource[slot] = -1;
+    }
+  }
+
+  // 2. Anything selected without a slot takes a free one, dark, at the lamp it belongs to.
+  for (let index = 0; index < chosenCount; index += 1) {
+    const source = chosen[index] as number;
+
+    let assigned = false;
+    for (let slot = 0; slot < pool.length; slot += 1) {
+      if (slotSource[slot] === source) {
+        assigned = true;
+        break;
+      }
+    }
+    if (assigned) continue;
+
+    for (let slot = 0; slot < pool.length; slot += 1) {
+      if ((slotSource[slot] as number) >= 0) continue;
+      const lamp = sources[source] as LampSource;
+      const light = pool[slot] as THREE.PointLight;
+      light.position.set(lamp.position.x, lamp.position.y, lamp.position.z);
+      light.color.copy(lamp.color);
+      light.distance = lamp.distance;
+      light.intensity = field.seeded ? 0 : lamp.intensity;
+      slotSource[slot] = source;
+      slotBase[slot] = lamp.intensity;
+      slotTarget[slot] = lamp.intensity;
+      break;
+    }
+  }
+
+  field.seeded = true;
+}
+
+/**
+ * Moves every pool light's intensity towards where it should be.
  *
  * Full brightness in about a fifth of a second, which is slow enough to read as a light warming up
  * and fast enough that the pool is where the player is expecting it by the time they arrive.
  */
-export function fadeLamps(lamps: readonly THREE.PointLight[], dt: number): void {
+export function fadeLamps(field: LampField, dt: number): void {
   const k = Math.min(1, Math.max(0, dt) * 7);
-  for (const lamp of lamps) {
-    const target = lamp.userData.lampTarget;
-    if (typeof target !== 'number') continue;
-    const next = lamp.intensity + (target - lamp.intensity) * k;
-    lamp.intensity = Math.abs(next - target) < 0.01 ? target : next;
+  for (let slot = 0; slot < field.pool.length; slot += 1) {
+    const light = field.pool[slot] as THREE.PointLight;
+    const target = field.slotTarget[slot] as number;
+    if (light.intensity === target) continue;
+    const next = light.intensity + (target - light.intensity) * k;
+    light.intensity = Math.abs(next - target) < 0.01 ? target : next;
   }
 }
 
@@ -387,6 +521,7 @@ export function updateChunkVisibility(
   far = DRAW_DISTANCE,
 ): number {
   const reach = far * far;
+  const half = CHUNK / 2;
   let drawn = 0;
   for (const mesh of chunks) {
     // **A chunk bigger than a chunk is not a chunk.** The street is one prop 1200 m across, so
@@ -400,8 +535,13 @@ export function updateChunkVisibility(
       drawn += 1;
       continue;
     }
-    const dx = mesh.position.x - eye.x;
-    const dz = mesh.position.z - eye.z;
+    // **The chunk's near edge, not its centre.** A chunk is 334 m across, so a centre-to-eye test
+    // throws one away while a wall inside it is still a hundred and sixty metres in front of the
+    // player - which is what "the buildings pop out of existence" was. Asked of the footprint the
+    // chunk covers, the boundary is a consistent distance from the player rather than a moving
+    // one, and nothing disappears while it is still close enough to see.
+    const dx = Math.max(0, Math.abs(mesh.position.x - eye.x) - half);
+    const dz = Math.max(0, Math.abs(mesh.position.z - eye.z) - half);
     const visible = dx * dx + dz * dz < reach;
     if (mesh.visible !== visible) mesh.visible = visible;
     if (visible) drawn += 1;
@@ -409,6 +549,53 @@ export function updateChunkVisibility(
   return drawn;
 }
 
+/**
+ * How far a gate, a lift car or a pickup is drawn, in metres.
+ *
+ * The moving set is the one part of the scene whose draw calls the chunk merge could not absorb, so
+ * it gets the cull instead: a shutter is three metres tall and at this range covers a couple of
+ * pixels, which is why the number is what it is - far enough that nothing is seen to vanish, near
+ * enough that the thousands of shutters a kilometre of city owns are not submitted.
+ */
+const MOVING_DRAW_DISTANCE = 240;
+
+/**
+ * Draws the moving meshes near the player, and stops drawing the rest.
+ *
+ * Returns how many are still being drawn.
+ */
+export function updateMovingVisibility(
+  moving: readonly THREE.Mesh[],
+  eye: ReadonlyVec3,
+  far = MOVING_DRAW_DISTANCE,
+): number {
+  const reach = far * far;
+  let drawn = 0;
+  for (const mesh of moving) {
+    const dx = (mesh.userData.cullX as number) - eye.x;
+    const dz = (mesh.userData.cullZ as number) - eye.z;
+    const visible = dx * dx + dz * dz < reach;
+    if (mesh.visible !== visible) mesh.visible = visible;
+    if (visible) drawn += 1;
+  }
+  return drawn;
+}
+
+/**
+ * Lets only the chunks a shadow volume can reach cast into it, and reports how
+ * many that is.
+ *
+ * A shadow pass draws every caster in the scene and clips the rest: vertices
+ * outside the shadow camera are clipped, not culled. With a mesh per prop that cost
+ * nothing worth measuring. With the city merged into a thousand chunks it is a
+ * second full pass over half a million triangles for a map 220 m across, so a chunk
+ * casts only while the volume is near it. What that changes *visually* is nothing -
+ * everything switched off was outside the map already - and the pass gets short
+ * enough to be worth the bookkeeping.
+ *
+ * A chunk that was never a caster is never made one: the prop's own flag is the
+ * authority, and this only ever takes casting away.
+ */
 export function updateShadowCasters(
   chunks: readonly THREE.Mesh[],
   eye: ReadonlyVec3,
@@ -565,21 +752,32 @@ export function buildScene(
   /**
    * Builds a group of meshes from a model, in the group's own local space.
    *
-   * Doors, lifts and pickups all need the same thing - a model resolved into
-   * meshes that move together - so it lives in one place rather than three. The
-   * `origin` is where the model's own `[0, 1]` box starts, which for these is the
-   * group's local origin, so the caller can then move the group anywhere.
+   * Doors, lifts and pickups all need the same thing - a model resolved into parts that move
+   * together - so it lives in one place rather than three. The `origin` is where the model's own
+   * `[0, 1]` box starts, which for these is the group's local origin, so the caller can then move
+   * the group anywhere.
+   *
+   * **Merged per material, not per part.** V1.0.15 built one mesh per part, which for a gate is
+   * ten draw calls to draw one shutter: a shutter is a base, eight slats and a hazard stripe, and
+   * the city owns four hundred and twenty-two of them. They cannot join a chunk - they slide - but
+   * they can share a vertex buffer with the rest of their own gate, and a gate is three materials
+   * rather than ten meshes. From a street, gates were 1,417 of the frame's 1,777 draw calls.
+   *
+   * Parts are positioned into the buffer rather than by a mesh transform, so a part's UVs are
+   * exactly what an unmerged mesh would have drawn - the same guarantee the static merge makes.
    */
   const modelGroup = (
     name: string,
     model: ModelDefinition,
     origin: ReadonlyVec3,
     size: ReadonlyVec3,
+    flags: { readonly castShadow?: boolean; readonly receiveShadow?: boolean } = {},
   ): THREE.Group => {
     const group = new THREE.Group();
     group.name = name;
 
-    for (const [index, entry] of resolveModelParts(model, origin, size).entries()) {
+    const buckets = new Map<string, { material: THREE.Material; buffer: PartBuffer }>();
+    for (const entry of resolveModelParts(model, origin, size)) {
       const width = entry.max.x - entry.min.x;
       const height = entry.max.y - entry.min.y;
       const depth = entry.max.z - entry.min.z;
@@ -589,19 +787,34 @@ export function buildScene(
       const metresPerTile = surface?.metresPerTile ?? 2;
       const scales = uvScales(width, height, depth);
       const geometry = boxGeometry(width, height, depth, metresPerTile, scales.u, scales.v);
+      const tint = surface?.tint ?? '#8a8f99';
 
-      const mesh = new THREE.Mesh(geometry, materialFor(entry.surface, surface?.tint ?? '#8a8f99'));
-      mesh.position.set(
+      const key = `${entry.surface}|${tint}`;
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        // Small on purpose: a model is a handful of boxes, and the buffer's arrays are handed to
+        // the geometry as they are - an oversized starting capacity would be kept alive by it.
+        bucket = { material: materialFor(entry.surface, tint), buffer: new PartBuffer(256) };
+        buckets.set(key, bucket);
+      }
+      bucket.buffer.add(
+        geometry,
         (entry.min.x + entry.max.x) / 2,
         (entry.min.y + entry.max.y) / 2,
         (entry.min.z + entry.max.z) / 2,
       );
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+    }
+
+    let index = 0;
+    for (const { material, buffer } of buckets.values()) {
+      const mesh = new THREE.Mesh(buffer.bake(), material);
+      mesh.castShadow = flags.castShadow ?? true;
+      mesh.receiveShadow = flags.receiveShadow ?? true;
       mesh.name = `${name}#${index}`;
       mesh.matrixAutoUpdate = false;
       mesh.updateMatrix();
       group.add(mesh);
+      index += 1;
     }
 
     return group;
@@ -620,12 +833,9 @@ export function buildScene(
   // shutter that had opened still stood shut in front of the opening. A moving
   // part must not be merged, which is the same rule that keeps doors and lift cars
   // out of here.
-  const gateProps = new Set<string>();
-  for (const elevator of definition.elevators ?? []) {
-    for (const prop of definition.props) {
-      if (isElevatorGateOf(elevator.id, prop.id)) gateProps.add(prop.id);
-    }
-  }
+  // One pass over the props, not every prop per lift: the answer is `gateOwners`', which is the
+  // same test `isElevatorGateOf` makes, asked the other way round.
+  const gateProps = gateOwners(definition);
 
   const buckets = new Map<string, { material: THREE.Material; buffer: PartBuffer; cx: number; cz: number; cast: boolean; receive: boolean }>();
   const partInfo = new Map<string, { count: number; materials: THREE.Material[] }>();
@@ -765,6 +975,25 @@ export function buildScene(
   // translate as a unit.
   const lifts = new Map<string, THREE.Object3D>();
   const gates = new Map<string, THREE.Object3D>();
+  /**
+   * Everything the frame draws that is not a chunk, with the plane position it never leaves.
+   *
+   * The position is given rather than read off the transform: since V1.0.16 a group's meshes are
+   * merged buffers with the part positions baked in, so their own `position` is the group origin
+   * and says nothing about where on the map the mesh is. A gate's place is its prop's, a car's is
+   * the shaft it runs in, and neither ever moves in the plane.
+   */
+  const moving: THREE.Mesh[] = [];
+  const markMoving = (group: THREE.Object3D, x: number, z: number): void => {
+    for (const child of group.children) {
+      const mesh = child as THREE.Mesh;
+      if (!mesh.isMesh) continue;
+      mesh.userData.cullX = x;
+      mesh.userData.cullZ = z;
+      moving.push(mesh);
+    }
+  };
+
   const carModel = modelById('elevator-car') ?? modelById('lift-platform');
   for (const elevator of definition.elevators ?? []) {
     if (!carModel) break;
@@ -774,21 +1003,30 @@ export function buildScene(
     group.position.set(elevator.at[0] - size.x / 2, startY - size.y, elevator.at[1] - size.z / 2);
     scene.add(group);
     lifts.set(elevator.id, group);
+    markMoving(group, elevator.at[0], elevator.at[1]);
+  }
 
-    for (const prop of definition.props) {
-      if (!isElevatorGateOf(elevator.id, prop.id)) continue;
-      const gateModel = modelById(prop.model);
-      if (!gateModel) continue;
-      const origin = {
-        x: prop.position.x - prop.size.x / 2,
-        y: prop.position.y - prop.size.y / 2,
-        z: prop.position.z - prop.size.z / 2,
-      };
-      const gate = modelGroup(`gate:${prop.id}`, gateModel, origin, prop.size);
-      gate.position.set(0, 0, 0);
-      scene.add(gate);
-      gates.set(prop.id, gate);
-    }
+  // Every gate, in one pass over the props. A gate is a prop of its shaft's, and which shaft that
+  // is comes from `gateOwners` - the same naming convention, resolved once.
+  for (const prop of definition.props) {
+    if (!gateProps.has(prop.id)) continue;
+    const gateModel = modelById(prop.model);
+    if (!gateModel) continue;
+    const origin = {
+      x: prop.position.x - prop.size.x / 2,
+      y: prop.position.y - prop.size.y / 2,
+      z: prop.position.z - prop.size.z / 2,
+    };
+    // The gate's own shadow flags, like a merged prop's - a shutter that does not cast should
+    // not start casting because it moves.
+    const gate = modelGroup(`gate:${prop.id}`, gateModel, origin, prop.size, {
+      castShadow: prop.castShadow ?? true,
+      receiveShadow: prop.receiveShadow ?? true,
+    });
+    gate.position.set(0, 0, 0);
+    scene.add(gate);
+    gates.set(prop.id, gate);
+    markMoving(gate, prop.position.x, prop.position.z);
   }
 
   // ----------------------------------------------------------- collectibles
@@ -804,6 +1042,7 @@ export function buildScene(
     group.position.set(pickup.position.x, pickup.position.y, pickup.position.z);
     scene.add(group);
     collectibles.set(pickup.id, group);
+    markMoving(group, pickup.position.x, pickup.position.z);
   }
 
   // ---------------------------------------------------------------- the goal
@@ -923,17 +1162,20 @@ export function buildScene(
   scene.add(sun.target);
 
   // ---------------------------------------------------------- scene lights
-  // Interior lamps and sign glow. These cast no shadows: a point light shadow is
-  // a cube map per light, and the demo's look does not need one.
-  const lamps: THREE.PointLight[] = [];
+  // Interior lamps and sign glow, kept as *data* and shown by a pool of eight real lights. These
+  // cast no shadows: a point-light shadow is a cube map per light, and the demo's look does not
+  // need one.
+  const sources: LampSource[] = [];
   for (const light of definition.lights ?? []) {
-    const point = new THREE.PointLight(new THREE.Color(light.color), light.intensity, light.distance);
-    point.position.set(light.position.x, light.position.y, light.position.z);
-    point.name = light.id;
-    point.castShadow = false;
-    scene.add(point);
-    lamps.push(point);
+    sources.push({
+      id: light.id,
+      position: light.position,
+      color: new THREE.Color(light.color),
+      intensity: light.intensity,
+      distance: light.distance,
+    });
   }
+  const lamps = createLampField(scene, sources);
 
   // --------------------------------------------------------- city backdrop
   const backdrop = buildCityBackdrop(definition, assets.cityBackdrop);
@@ -956,6 +1198,7 @@ export function buildScene(
     collectibles,
     lifts,
     gates,
+    moving,
     smoke,
     lamps,
     materials,

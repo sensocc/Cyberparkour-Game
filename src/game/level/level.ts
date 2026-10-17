@@ -88,12 +88,7 @@ export function toColliders(definition: LevelDefinition): Collider[] {
   // A gate is a prop for its *mesh*, but the elevator system owns its collider - it
   // moves, and the level cannot say where to. Skipping it here keeps one collider per
   // gate rather than two, one of which would sit in a doorway for ever.
-  const gateIds = new Set<string>();
-  for (const prop of definition.props) {
-    if ((definition.elevators ?? []).some((elevator) => isElevatorGateOf(elevator.id, prop.id))) {
-      gateIds.add(prop.id);
-    }
-  }
+  const gateIds = new Set(gateOwners(definition).keys());
 
   const colliders: Collider[] = definition.props
     .filter((prop) => !gateIds.has(prop.id))
@@ -142,6 +137,7 @@ export function toColliders(definition: LevelDefinition): Collider[] {
   // car begins on and an opening that is shut. Gates are props as well - the level
   // authors a shutter mesh at each opening - but the collider is this one, because the
   // gate has to move independently of anything the level can express.
+  const gates = gateOwners(definition);
   for (const elevator of definition.elevators ?? []) {
     const startY = elevator.floors[elevator.start ?? 0] ?? 0;
     colliders.push({
@@ -153,18 +149,18 @@ export function toColliders(definition: LevelDefinition): Collider[] {
       ),
       surface: 'metal',
     });
+  }
 
-    // A floor may have a gate on each of its two sides, and both are colliders: they are
-    // the same opening seen from two directions.
-    for (const prop of definition.props) {
-      if (!isElevatorGateOf(elevator.id, prop.id)) continue;
-      colliders.push({
-        id: prop.id,
-        kind: 'wall',
-        box: aabbFromCenterSize(prop.position, prop.size),
-        surface: 'metal',
-      });
-    }
+  // A floor may have a gate on each of its two sides, and both are colliders: they are the same
+  // opening seen from two directions. One pass over the gates rather than every prop per lift.
+  for (const prop of definition.props) {
+    if (!gates.has(prop.id)) continue;
+    colliders.push({
+      id: prop.id,
+      kind: 'wall',
+      box: aabbFromCenterSize(prop.position, prop.size),
+      surface: 'metal',
+    });
   }
 
   return colliders;
@@ -182,6 +178,34 @@ export function isElevatorGateOf(id: string, propId: string): boolean {
   if (!propId.startsWith(prefix)) return false;
   const rest = propId.slice(prefix.length).replace('-back', '');
   return /^\d+$/.test(rest);
+}
+
+/**
+ * Every gate prop, mapped to the lift whose shaft it shuts.
+ *
+ * The question `isElevatorGateOf` answers is "is this prop a gate of that lift?", which costs a
+ * scan of every prop per lift to answer for all of them: ninety lifts against twelve thousand
+ * props is a million and a bit string comparisons, and both the level builder and the scene
+ * builder used to pay it. This asks it the other way round - once per prop, splitting the id at
+ * its own `-gate-` - and still puts every candidate through `isElevatorGateOf`, so the naming
+ * convention has one authority rather than two.
+ */
+export function gateOwners(
+  definition: Pick<LevelDefinition, 'props' | 'elevators'>,
+): Map<string, string> {
+  const owners = new Map<string, string>();
+  const ids = new Set((definition.elevators ?? []).map((elevator) => elevator.id));
+  if (ids.size === 0) return owners;
+
+  for (const prop of definition.props) {
+    const at = prop.id.lastIndexOf('-gate-');
+    if (at <= 0) continue;
+    const owner = prop.id.slice(0, at);
+    if (!ids.has(owner)) continue;
+    if (!isElevatorGateOf(owner, prop.id)) continue;
+    owners.set(prop.id, owner);
+  }
+  return owners;
 }
 
 /** The collision tag for a prop: pipes and climbables are specialisations. */

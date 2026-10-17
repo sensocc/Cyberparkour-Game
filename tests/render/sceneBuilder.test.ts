@@ -9,7 +9,14 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
-import { buildScene } from '../../src/render/sceneBuilder.js';
+import {
+  LAMP_POOL,
+  assignLamps,
+  buildScene,
+  fadeLamps,
+  selectLamps,
+  updateMovingVisibility,
+} from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
 import { DEMO_DISTRICT, type LevelDefinition } from '../../src/game/level/levelData.js';
 import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
@@ -375,24 +382,144 @@ describe('buildScene lighting', () => {
   });
 });
 
-describe('buildScene V0.4 content', () => {
-  it('adds a point light for every level light', () => {
+describe('the lights, which are a pool', () => {
+  it('keeps every level light as data and puts only a pool of them in the scene', () => {
+    // **The point-light count is the frame.** three.js decides the length of the per-fragment
+    // light loop from how many lights are *visible*, and unrolls it. One `PointLight` per level
+    // light meant five hundred and seventy-six light evaluations per lit pixel on the city, and
+    // fading the unused ones to zero did not remove them from the loop.
     const built = buildScene(DEMO_DISTRICT, assetTextures());
     try {
-      const lights = built.scene.children.filter(
+      const sceneLights = built.scene.children.filter(
         (child): child is THREE.PointLight => child instanceof THREE.PointLight,
       );
-      expect(lights).toHaveLength(DEMO_DISTRICT.lights?.length ?? 0);
-      const names = lights.map((light) => light.name);
-      expect(names).toContain('lamp-east-room');
-      expect(names).toContain('glow-canyon');
-      // Interior lamps must not try to cast shadows: a point-light shadow is a
-      // cube map per light, and the demo does not need one.
-      expect(lights.every((light) => !light.castShadow)).toBe(true);
+      expect(sceneLights).toHaveLength(LAMP_POOL);
+      expect(LAMP_POOL).toBeLessThanOrEqual(8);
+
+      // Every level light is still there, as data.
+      expect(built.lamps.sources).toHaveLength(DEMO_DISTRICT.lights?.length ?? 0);
+      expect(built.lamps.sources.map((source) => source.id)).toContain('lamp-east-room');
+      expect(built.lamps.sources.map((source) => source.id)).toContain('glow-canyon');
+
+      // And no lamp casts: a point-light shadow is a cube map per light.
+      expect(sceneLights.every((light) => !light.castShadow)).toBe(true);
     } finally {
       built.dispose();
     }
   });
+
+  it('lights the nearest lamps, and never changes how many lights there are', () => {
+    // The generated city, because the district's own twelve lights are a kilometre apart and the
+    // question here is what happens when a *dense* field is walked through.
+    const built = buildScene(buildCity(DEMO_DISTRICT), assetTextures());
+    try {
+      const field = built.lamps;
+      const eye = { x: built.lamps.sources[3]?.position.x ?? 0, y: 0, z: built.lamps.sources[3]?.position.z ?? 0 };
+
+      selectLamps(field, eye, 6);
+      for (let frame = 0; frame < 60; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+
+      // Six sources lit, at their own lamp positions, at full brightness.
+      const lit = field.pool.filter((light) => light.intensity > 0.5);
+      expect(lit).toHaveLength(6);
+      const chosenPositions = field.chosen
+        .slice(0, field.chosenCount)
+        .map((index) => field.sources[index]?.position);
+      for (const light of lit) {
+        expect(chosenPositions).toContainEqual({ x: light.position.x, y: light.position.y, z: light.position.z });
+      }
+
+      // Walking away hands the pool to whoever is near the player *now*, and the lights are never
+      // hidden while it happens: a hidden light changes the shader's light count, and three.js
+      // recompiles every material when it does.
+      const elsewhere = { x: 400, y: 0, z: 400 };
+      selectLamps(field, elsewhere, 6);
+      for (let frame = 0; frame < 120; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+      expect(field.pool.every((light) => light.visible)).toBe(true);
+
+      const litElsewhere = field.pool.filter((light) => light.intensity > 0.5);
+      expect(litElsewhere).toHaveLength(6);
+      for (const light of litElsewhere) {
+        const distance = Math.hypot(light.position.x - elsewhere.x, light.position.z - elsewhere.z);
+        expect(distance, light.name).toBeLessThan(100);
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('lights the first frame it is asked to, rather than fading up from nothing', () => {
+    // The seed. A player who starts next to a lamp should see it on in the first frame, the way
+    // they did when every lamp had a light of its own; only a *reassignment* has to start dark.
+    const built = buildScene(buildCity(DEMO_DISTRICT), assetTextures());
+    try {
+      const field = built.lamps;
+      selectLamps(field, { x: 0, y: 0, z: 0 }, 6);
+      assignLamps(field);
+
+      const lit = field.pool.filter((light) => light.intensity > 0);
+      expect(lit).toHaveLength(6);
+      for (const light of lit) {
+        const slot = field.pool.indexOf(light);
+        expect(light.intensity).toBeCloseTo(field.slotBase[slot] as number, 5);
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('takes a new lamp only once the light that held it has faded out', () => {
+    // The fade is the whole reason the pool is safe: a light cannot teleport to a new lamp with
+    // its brightness still up, or a street corner would flash.
+    const built = buildScene(buildCity(DEMO_DISTRICT), assetTextures());
+    try {
+      const field = built.lamps;
+      const first = field.sources[0]?.position ?? { x: 0, y: 0, z: 0 };
+
+      selectLamps(field, first, 3);
+      for (let frame = 0; frame < 60; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+      const bright = field.pool.filter((light) => light.intensity > 0.5);
+      expect(bright).toHaveLength(3);
+      const wasSelected = new Set(field.chosen.slice(0, field.chosenCount));
+
+      // Move the eye across the map and step one frame. A light may only be showing a *new* lamp
+      // while it is still dark: a light that was released fades out where it stood, and is handed
+      // on once it has finished - so nothing teleports with its brightness up.
+      selectLamps(field, { x: 400, y: 0, z: 400 }, 3);
+      assignLamps(field);
+      for (let slot = 0; slot < field.pool.length; slot += 1) {
+        const source = field.slotSource[slot] as number;
+        if (source < 0 || wasSelected.has(source)) continue;
+        // Assigned this frame, and *dark*: the fade to full starts from here.
+        expect(field.pool[slot]?.intensity, field.pool[slot]?.name).toBe(0);
+      }
+
+      // ...and it does get handed on: the release finishes, the new lamp lights up.
+      for (let frame = 0; frame < 120; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+      const nowSelected = new Set(field.chosen.slice(0, field.chosenCount));
+      const showing = Array.from(field.slotSource).filter((source) => source >= 0);
+      expect(showing.length).toBe(3);
+      for (const source of showing) expect(nowSelected.has(source)).toBe(true);
+      expect(field.pool.filter((light) => light.intensity > 0.5)).toHaveLength(3);
+    } finally {
+      built.dispose();
+    }
+  });
+});
+
+describe('buildScene V0.4 content', () => {
 
   it('hangs each door off a pivot on its hinge line', () => {
     const built = buildScene(DEMO_DISTRICT, assetTextures());
@@ -547,6 +674,86 @@ describe('buildScene V0.5 content', () => {
       built.dispose();
     }
   });
+
+  it('draws a gate as one mesh per material rather than one per part', () => {
+    // V1.0.15 built a mesh per model part, which for a shutter is ten draw calls: a base, eight
+    // slats and a hazard stripe. The city owns four hundred and twenty-two shutters, and from a
+    // street they were 1,417 of the frame's 1,777 draw calls - for fifty thousand triangles.
+    const city = buildCity(DEMO_DISTRICT);
+    const built = buildScene(city);
+    try {
+      const gateProp = city.props.find((prop) => prop.model === 'elevator-gate');
+      expect(gateProp).toBeDefined();
+      const parts = resolvePropParts(gateProp as PropDefinition);
+      expect(parts.length).toBeGreaterThan(4);
+
+      const group = built.gates.get((gateProp as PropDefinition).id);
+      expect(group).toBeDefined();
+      const meshes = (group as THREE.Object3D).children.filter(
+        (child): child is THREE.Mesh => (child as THREE.Mesh).isMesh,
+      );
+
+      // Three materials, three meshes - not ten.
+      expect(meshes.length).toBeLessThan(parts.length);
+      expect(meshes.length).toBeLessThanOrEqual(3);
+
+      // Nothing was dropped in the merge: every part's twelve triangles are still in there.
+      let triangles = 0;
+      for (const mesh of meshes) triangles += (mesh.geometry.getIndex()?.count ?? 0) / 3;
+      expect(triangles).toBe(parts.length * 12);
+
+      // And each merged mesh still sits on the gate's own local origin, because the buffer carries
+      // the part positions rather than a transform - so the group is still the thing that slides.
+      for (const mesh of meshes) expect(mesh.position.equals(new THREE.Vector3())).toBe(true);
+
+      // Nothing moved in the merge either: the parts still fill the prop's own box. The vertices
+      // are in world space (the group sits at the origin, as it did when each part was its own
+      // mesh), which is what lets the group's own Y translate the whole shutter.
+      const bounds = new THREE.Box3();
+      for (const mesh of meshes) {
+        mesh.geometry.computeBoundingBox();
+        bounds.union(mesh.geometry.boundingBox as THREE.Box3);
+      }
+      const prop = gateProp as PropDefinition;
+      expect(bounds.min.x).toBeCloseTo(prop.position.x - prop.size.x / 2, 3);
+      expect(bounds.max.x).toBeCloseTo(prop.position.x + prop.size.x / 2, 3);
+      expect(bounds.min.y).toBeCloseTo(prop.position.y - prop.size.y / 2, 3);
+      expect(bounds.max.y).toBeCloseTo(prop.position.y + prop.size.y / 2, 3);
+    } finally {
+      built.dispose();
+    }
+  }), 120000;
+
+  it('cuts gates, lift cars and pickups at a distance, without unhiding a collected pickup', () => {
+    const city = buildCity(DEMO_DISTRICT);
+    const built = buildScene(city);
+    try {
+      expect(built.moving.length).toBeGreaterThan(0);
+
+      const mesh = built.gates.values().next().value?.children[0] as THREE.Mesh | undefined;
+      expect(mesh).toBeDefined();
+      const target = mesh as THREE.Mesh;
+      const x = target.userData.cullX as number;
+      const z = target.userData.cullZ as number;
+
+      updateMovingVisibility(built.moving, { x, y: 0, z });
+      expect(target.visible).toBe(true);
+      expect(updateMovingVisibility(built.moving, { x, y: 0, z })).toBeGreaterThan(0);
+
+      // Far away, everything in the moving set is dropped.
+      expect(updateMovingVisibility(built.moving, { x: x + 5000, y: 0, z })).toBe(0);
+      expect(target.visible).toBe(false);
+
+      // **A pickup taken is hidden by its group, not by its meshes**, so the distance cull cannot
+      // put it back on the screen - the two decisions compose.
+      const pickup = [...built.collectibles.values()][0] as THREE.Object3D;
+      pickup.visible = false;
+      updateMovingVisibility(built.moving, pickup.position);
+      expect(pickup.visible).toBe(false);
+    } finally {
+      built.dispose();
+    }
+  }), 120000;
 
   it('spreads the smoke into sprites, and skips it without the puff texture', () => {
     const assets = assetTextures();

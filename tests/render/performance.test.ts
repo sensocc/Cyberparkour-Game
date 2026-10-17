@@ -21,8 +21,15 @@ import { buildLevel } from '../../src/game/level/level.js';
 import { CollisionWorld } from '../../src/game/physics/collision.js';
 import { aabbFromFeet } from '../../src/game/physics/aabb.js';
 import { DEFAULT_CONFIG, fixedStep } from '../../src/core/config.js';
-import { standingSize } from '../../src/game/player.js';
-import { buildScene, shadowReachFor, updateShadowCasters } from '../../src/render/sceneBuilder.js';
+import { createPlayerState, standingSize, stepPlayer } from '../../src/game/player.js';
+import {
+  LAMP_POOL,
+  buildScene,
+  shadowReachFor,
+  updateChunkVisibility,
+  updateMovingVisibility,
+  updateShadowCasters,
+} from '../../src/render/sceneBuilder.js';
 
 const SIZE = standingSize(DEFAULT_CONFIG.player);
 const STEP = fixedStep(DEFAULT_CONFIG);
@@ -173,6 +180,59 @@ describe('the cost of a frame', () => {
     }
   }), 120000;
 
+  it('draws a street in a few hundred submissions, and the moving set is not most of them', () => {
+    // **Two regressions that this file did not catch, and now does.**
+    //
+    // V1.0.15 merged the static city into chunks and then built a mesh per model part for
+    // everything that moves: ten for a gate, six for a lift car, three for a shard. The city owns
+    // four hundred and twenty-two gates, and from a street they were 1,417 of the frame's 1,777
+    // draw calls - eighty per cent of the submission for *fifty thousand* triangles, which is the
+    // opposite of the trade the chunk merge exists to make.
+    const built = buildScene(city);
+    try {
+      // One mesh per material gives a three-material shutter three meshes, not ten.
+      expect(built.moving.length).toBeLessThan(city.props.length * 2);
+
+      const eye = { x: 40, y: -32, z: 40 };
+      const chunks = updateChunkVisibility(built.chunks, eye);
+      const moving = updateMovingVisibility(built.moving, eye);
+
+      // A street view is about three hundred chunks, and the moving set within reach should be
+      // the same order - not the whole city's worth.
+      expect(chunks).toBeGreaterThan(50);
+      expect(moving).toBeGreaterThan(0);
+      expect(moving).toBeLessThan(built.moving.length / 2);
+
+      // The number the renderer reported from this eye before the merge: 1,777 calls. What a
+      // machine with a GPU feels is the submission count, and it has to stay in the hundreds.
+      expect(chunks + moving).toBeLessThan(1_100);
+    } finally {
+      built.dispose();
+    }
+  }), 120000;
+
+  it('gives every shader the same eight point lights, not the level’s five hundred and seventy-six', () => {
+    // **The other half of the frame, and the one no graphics setting could touch.** three.js sizes
+    // its per-fragment light loop from the number of *visible* lights and unrolls it, so one
+    // `PointLight` per level light made every lit pixel run 576 light evaluations - measured on
+    // the built game as 2,333 active uniforms in each lit program. Fading unused lights to zero
+    // did not help, because a light at zero intensity is still visible.
+    const built = buildScene(city);
+    try {
+      expect(built.lamps.sources.length).toBeGreaterThan(LAMP_POOL * 10);
+      expect(built.lamps.pool).toHaveLength(LAMP_POOL);
+
+      const inScene = built.scene.children.filter(
+        (child): child is THREE.PointLight => child instanceof THREE.PointLight,
+      );
+      expect(inScene).toHaveLength(LAMP_POOL);
+      // Never hidden, because hiding one changes the count and recompiles every material.
+      expect(inScene.every((light) => light.visible)).toBe(true);
+    } finally {
+      built.dispose();
+    }
+  }), 120000;
+
   it('casts shadows from the chunks the shadow map can see, and no others', () => {
     const built = buildScene(city);
     try {
@@ -214,6 +274,45 @@ describe('the cost of a frame', () => {
     } finally {
       built.dispose();
     }
+  }), 120000;
+
+  it('does not pay for the city on a walking step', () => {
+    // **The ledges were walking the whole level.** Mantling, pull-ups, climbing, wall running and
+    // vaulting each asked "what is near me?" by testing every collider in the city - four or five
+    // times a step, with a temporary box allocated per candidate. Measured before the fix: 0.244
+    // milliseconds per walking step against the real city, and 0.005 against four colliders, so
+    // ninety-eight per cent of a step was the scan. They go through the collision grid now.
+    //
+    // The assertion is the *invariant* rather than a millisecond count: whether the world has
+    // thirteen thousand colliders or four must not change what a step costs. A machine that is
+    // slower than this one scales both halves together, which is the whole point.
+    const built = buildLevel(city, {
+      maxSubStep: DEFAULT_CONFIG.world.maxCollisionSubStep,
+      player: SIZE,
+    });
+    const full = new CollisionWorld(built.colliders, { broadphase: 'grid' });
+    const tiny = new CollisionWorld(built.colliders.slice(0, 4), { broadphase: 'grid' });
+    const spawn = city.spawn;
+    const forward = { forward: 1, right: 0, sprint: false, jump: false, crouch: false };
+
+    const perStep = (world: CollisionWorld): number => {
+      const state = createPlayerState(spawn, DEFAULT_CONFIG);
+      const options = {
+        world,
+        config: DEFAULT_CONFIG.player,
+        game: DEFAULT_CONFIG,
+        climbableIds: new Set<string>(),
+        pipeIds: new Set<string>(),
+      };
+      for (let warm = 0; warm < 120; warm += 1) stepPlayer(state, forward, STEP, options);
+      const started = performance.now();
+      for (let step = 0; step < 900; step += 1) stepPlayer(state, forward, STEP, options);
+      return (performance.now() - started) / 900;
+    };
+
+    const small = perStep(tiny);
+    const large = perStep(full);
+    expect(large).toBeLessThan(Math.max(0.02, small * 4));
   }), 120000;
 
   it('spends about a millisecond of physics on a second of falling', () => {

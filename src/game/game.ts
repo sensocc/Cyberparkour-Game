@@ -67,6 +67,7 @@ import {
   stepPlayer,
   type PlayerSnapshot,
   type PlayerState,
+  type PlayerStepOptions,
 } from './player.js';
 import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '../render/types.js';
 import type { ElevatorPrompt, GameHud } from '../ui/gameHud.js';
@@ -138,6 +139,9 @@ export interface GameSnapshot {
   readonly player: PlayerSnapshot;
   readonly renderer: string | null;
 }
+
+/** `PlayerStepOptions` with its `readonly` lifted, for the cached object `stepOptions` hands out. */
+type MutableStepOptions = { -readonly [K in keyof PlayerStepOptions]: PlayerStepOptions[K] };
 
 export class Game {
   private readonly options: GameOptions;
@@ -214,6 +218,18 @@ export class Game {
   private climbables: ReadonlySet<string> = new Set();
   /** Colliders that are climbable pipes, resolved once per level build. */
   private pipes: ReadonlySet<string> = new Set();
+  /** The step options, kept across frames - see `stepOptions`. */
+  private stepOptionsCache: MutableStepOptions | null = null;
+  /**
+   * What each lift's meshes were last told, so an idle shaft costs nothing.
+   *
+   * Reused objects rather than a fresh record per car: this is read on the simulation step, and a
+   * step is not a place to allocate ninety of anything.
+   */
+  private readonly elevatorShown = new Map<
+    string,
+    { topY: number; floor: number; doorsOpen: number }
+  >();
   /** Whether the player has muted the demo. */
   private muted = false;
   /**
@@ -450,12 +466,19 @@ export class Game {
     this.log?.info('game', 'returned to the main menu');
   }
 
-  /** Tears everything down and rebuilds from the spawn point. */
+  /** Starts a fresh run from the spawn point, keeping the world it is played in. */
   restart(): void {
-    this.log?.info('game', 'restarting', { from: this.status });
+    this.log?.info('game', 'restarting', { from: this.status, keepView: this.view !== null });
 
+    // **A restart is a new run, not a new world.**
+    //
+    // This used to throw the view away and build it again: about six hundred milliseconds merging
+    // the city into chunks, a hundred and sixty rebuilding the level, a full re-upload of every
+    // texture and a fresh compile of every shader - to arrive back at the same picture. The scene
+    // is deterministic and nothing in it has been lost; the game pushes the world state it owns
+    // back into it (`applyWorldState`) instead. A view that is *gone* - a crash, a lost context,
+    // the end of a session - is built again, because there is nothing there to keep.
     try {
-      this.disposeView();
       this.ensureView();
     } catch (error) {
       this.reportFatal(error, 'startup');
@@ -514,8 +537,19 @@ export class Game {
   // ------------------------------------------------------------- internals
 
   /** Options handed to every `stepPlayer` call. */
-  private stepOptions() {
-    return {
+  /**
+   * The options every `stepPlayer` call is handed.
+   *
+   * **Kept, not built.** This used to return a fresh nine-key object per simulation step - sixty a
+   * second, for a value that only changes when the level is rebuilt - and a step is the one place
+   * in the game that is supposed to allocate nothing. The cache is dropped by `resetSimulation`,
+   * which is the only thing that can change what is in it.
+   */
+  private stepOptions(): MutableStepOptions {
+    const cached = this.stepOptionsCache;
+    if (cached) return cached;
+
+    const options: MutableStepOptions = {
       world: this.level.world,
       config: this.config.player,
       game: this.motionConfig,
@@ -526,6 +560,8 @@ export class Game {
       respawnDelaySeconds: this.config.respawn.delaySeconds,
       safetyFloorY: this.config.world.safetyFloorY,
     };
+    this.stepOptionsCache = options;
+    return options;
   }
 
   /** Fall detection or fall damage killed the player. */
@@ -770,6 +806,8 @@ export class Game {
       speed: this.config.elevator.speed,
       doorSeconds: this.config.elevator.doorSeconds,
     });
+    // The level the options point at has just been replaced.
+    this.stepOptionsCache = null;
     this.run.begin();
     this.effectsSeconds = 0;
     resetPlayerState(this.player, this.config);
@@ -795,8 +833,15 @@ export class Game {
   private applyWorldState(): void {
     if (!this.view) return;
     for (const door of this.doors.snapshot()) this.view.setDoorOpen(door.id, door.open);
+    // Everything is being pushed, so nothing has been told anything yet.
+    this.elevatorShown.clear();
     for (const car of this.elevators.snapshot()) {
       this.view.setElevator(car.id, car.topY, car.floor, car.doorsOpen);
+      this.elevatorShown.set(car.id, {
+        topY: car.topY,
+        floor: car.floor,
+        doorsOpen: car.doorsOpen,
+      });
     }
     for (const pickup of this.collectibles) {
       this.view.setCollectibleVisible(pickup.id, !this.run.hasCollected(pickup.id));
@@ -1020,7 +1065,20 @@ export class Game {
       // that is the street. So the test is where the player is, not what the bookkeeping
       // says: inside the car's footprint, and on its roof.
       if (riders.has(car.id) && car.deltaY !== 0) carryRider(this.player, car.deltaY);
-      this.view?.setElevator(car.id, car.topY, car.floor, car.doorsOpen);
+      // **Only what moved.** This ran for all ninety cars every step - five and a half thousand
+      // calls a second, each walking eight gates of a lift that was standing still. A docked car
+      // does not change what it looks like, so it is not told again.
+      let shown = this.elevatorShown.get(car.id);
+      if (!shown) {
+        shown = { topY: Number.NaN, floor: -1, doorsOpen: Number.NaN };
+        this.elevatorShown.set(car.id, shown);
+      }
+      if (shown.topY !== car.topY || shown.floor !== car.floor || shown.doorsOpen !== car.doorsOpen) {
+        shown.topY = car.topY;
+        shown.floor = car.floor;
+        shown.doorsOpen = car.doorsOpen;
+        this.view?.setElevator(car.id, car.topY, car.floor, car.doorsOpen);
+      }
     }
     this.refreshElevatorPrompt();
   }
@@ -1463,6 +1521,14 @@ export class Game {
     const interval = this.perfLastAt === 0 ? delta * 1000 : nowMs - this.perfLastAt;
     this.perfLastAt = nowMs;
     this.perfOtherMs += (Math.max(0, interval - renderMs) - this.perfOtherMs) * k;
+
+    // **Formatted four times a second, not every frame.** The readout is a diagnostic, and a
+    // diagnostic that allocates a six-hundred-character string per frame is measuring itself: the
+    // number it reports for "other" includes the string it is about to write.
+    const now = performance.now();
+    if (now - this.perfShownAt < 250) return;
+    this.perfShownAt = now;
+
     const stats = this.view?.renderStats;
     this.perfText =
       `${(1000 / Math.max(0.001, this.perfRenderMs + this.perfOtherMs)).toFixed(0)} fps` +
@@ -1470,6 +1536,7 @@ export class Game {
       ` | ${this.perfRenderMs.toFixed(1)} ms render + ${this.perfOtherMs.toFixed(1)} ms other` +
       ` [sim ${this.perfSections.anim.toFixed(1)} hud ${this.perfSections.hud.toFixed(1)}]` +
       ` | ${stats?.objects ?? 0} objects, ${stats?.chunksDrawn ?? 0}/${stats?.chunksTotal ?? 0} chunks` +
+      `, ${stats?.movingDrawn ?? 0}/${stats?.movingTotal ?? 0} moving` +
       ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
       ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}` +
       // **What machine is this, and is it even using its graphics card.** A WebGL context that fell
@@ -1477,9 +1544,6 @@ export class Game {
       // fast - it needs to be visible in the readout rather than diagnosed over five versions.
       ` | ${(this.view?.rendererInfo ?? 'unknown gpu').slice(0, 48)}` +
       ` | dpr ${globalThis.devicePixelRatio?.toFixed(1) ?? '?'}, ${globalThis.navigator?.hardwareConcurrency ?? '?'} cores`;
-    const now = performance.now();
-    if (now - this.perfShownAt < 250) return;
-    this.perfShownAt = now;
     if (!this.perfElement && typeof document !== 'undefined') {
       // Monospace at the top-left, above everything and clickable-through: this is a diagnostic, not
       // part of the HUD, and it should be impossible to mistake for one.
@@ -1501,13 +1565,12 @@ export class Game {
     // tenths, so ten times a second is its natural rate rather than a compromise - and the objects it
     // builds (`run.snapshot()`, a shard lookup, a trial lookup, the snapshot literal itself) stop
     // being two hundred and forty a second of garbage while the player stands still.
-    const elapsed = this.stats.snapshot().elapsedSeconds;
-    if (elapsed - this.lastGameHud >= 0.1) {
-      this.lastGameHud = elapsed;
+    const stats = this.stats.snapshot();
+    if (stats.elapsedSeconds - this.lastGameHud >= 0.1) {
+      this.lastGameHud = stats.elapsedSeconds;
       this.updateGameHud();
     }
 
-    const stats = this.stats.snapshot();
     const interval = 1 / Math.max(1, this.config.debug.hudRefreshHz);
     if (stats.elapsedSeconds - this.lastHudUpdate < interval) return;
     this.lastHudUpdate = stats.elapsedSeconds;

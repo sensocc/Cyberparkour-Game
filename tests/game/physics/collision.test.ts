@@ -8,6 +8,11 @@ import { buildLevel } from '../../../src/game/level/level.js';
 import { standingSize } from '../../../src/game/player.js';
 import { DEFAULT_CONFIG } from '../../../src/core/config.js';
 import {
+  findClimbable,
+  findLedge,
+  findWallRunSurface,
+} from '../../../src/game/physics/ledges.js';
+import {
   COLLISION_SKIN,
   CollisionWorld,
   applySafetyFloor,
@@ -530,6 +535,111 @@ describe('the broadphase the city needs', () => {
       push(grid, { x: 40, y: 60 - move * 0.05, z: 40 }, { x: 0.05, y: -0.4, z: 0 });
     }
     expect(performance.now() - start).toBeLessThan(400);
+  }), 120000;
+
+  it('hands the movement probes the same candidates a scan would', () => {
+    // V1.0.16 routed mantling, pull-ups, climbing, wall running and vaulting through the grid.
+    // They used to walk `world.colliders` - every one of the city's thirteen thousand - four or
+    // five times per step, which was 98% of the cost of a walking step. What must not change is
+    // the answer, so the candidate set is held to the scan's: everything the scan would test is
+    // in it, and nothing else is missing from it.
+    const { grid, scan, colliders } = worlds();
+    const out: Collider[] = [];
+    let seed = 991;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+
+    let checked = 0;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const centre = {
+        x: (random() - 0.5) * 800,
+        y: -30 + random() * 100,
+        z: (random() - 0.5) * 800,
+      };
+      const box = aabbFromFeet(centre, size.radius, size.height);
+      const margin = 0.6 + random() * 2;
+
+      const count = grid.candidates(box, margin, out);
+      const near = new Set(out.slice(0, count).map((collider) => collider.id));
+
+      // Anything the scan would find that touches the widened box has to be in the answer.
+      const widened = {
+        min: { x: box.min.x - margin, y: box.min.y, z: box.min.z - margin },
+        max: { x: box.max.x + margin, y: box.max.y, z: box.max.z + margin },
+      };
+      for (const collider of scan.colliders) {
+        if (!overlaps(widened, collider.box)) continue;
+        expect(near.has(collider.id), `${collider.id} from ${JSON.stringify(centre)}`).toBe(true);
+      }
+      // ...and the answer is a shortlist, not the city.
+      expect(count).toBeLessThan(colliders.length / 4);
+      checked += 1;
+    }
+    expect(checked).toBe(60);
+  }), 120000;
+
+  it('finds the same ledge and the same wall through the grid as through a scan', () => {
+    // The three abilities that share a probe: they ask about height bands and faces, which is a
+    // different question from the solver's, and it is the one that changed. Probed from just
+    // outside real faces, because a random point in a city is mostly mid-air.
+    const { grid, scan, colliders } = worlds();
+    const climbableIds = new Set<string>();
+    let foundLedge = 0;
+    let foundWall = 0;
+
+    for (const collider of colliders.slice(0, 80)) {
+      // Standing beside the +X face, looking into it.
+      const feet = {
+        x: collider.box.max.x + 0.5,
+        y: collider.box.max.y - 1.4,
+        z: (collider.box.min.z + collider.box.max.z) / 2,
+      };
+      const box = aabbFromFeet(feet, size.radius, size.height);
+      const ledgeQuery = {
+        world: grid,
+        box,
+        direction: { x: -1, y: 0, z: 0 },
+        reach: 0.9,
+        minTopY: feet.y + 0.4,
+        maxTopY: feet.y + 3,
+        radius: size.radius,
+        standHeight: size.height,
+      };
+
+      const mine = findLedge(ledgeQuery);
+      const theirs = findLedge({ ...ledgeQuery, world: scan });
+      expect(mine?.collider.id ?? null, collider.id).toBe(theirs?.collider.id ?? null);
+      if (mine) foundLedge += 1;
+
+      const wallQuery = {
+        world: grid,
+        box,
+        travel: { x: 0, y: 0, z: 1 },
+        reach: 0.9,
+        minHeight: 1.2,
+      };
+      const mineWall = findWallRunSurface(wallQuery);
+      const theirsWall = findWallRunSurface({ ...wallQuery, world: scan });
+      expect(mineWall?.collider.id ?? null, collider.id).toBe(theirsWall?.collider.id ?? null);
+      if (mineWall) foundWall += 1;
+
+      const climbQuery = {
+        ...ledgeQuery,
+        minTopY: 0,
+        maxTopY: Number.POSITIVE_INFINITY,
+        climbableIds,
+      };
+      expect(findClimbable(climbQuery)?.id ?? null, collider.id).toBe(
+        findClimbable({ ...climbQuery, world: scan })?.id ?? null,
+      );
+    }
+
+    // Some of those faces really were in reach, so this is not a test of two functions agreeing
+    // that there is nothing there.
+    expect(foundLedge).toBeGreaterThan(0);
+    expect(foundWall).toBeGreaterThan(0);
   }), 120000;
 
   it('finds the same ground when two things both support the player', () => {
