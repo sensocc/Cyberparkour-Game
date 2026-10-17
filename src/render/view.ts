@@ -25,6 +25,7 @@ import {
   buildScene,
   shadowReachFor,
   updateChunkVisibility,
+  fadeLamps,
   updateLamps,
   updateShadowCasters,
   type BuiltScene,
@@ -151,6 +152,11 @@ export class GameView implements GameViewLike {
   private bloomPass: UnrealBloomPass | null = null;
   /** Whether the post chain has been checked against a direct render yet. */
   private bloomVerified = false;
+  /** When the last frame was drawn, for the view's own frame-time estimate. */
+  private lastFrameAt = 0;
+  /** What the start-up warm-up cost, and how many programs it left compiled. */
+  private warmUpCost = { ms: 0, programs: 0 };
+
   private disposed = false;
 
   constructor(options: GameViewOptions) {
@@ -285,9 +291,13 @@ export class GameView implements GameViewLike {
   private buildBloom(): void {
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
+    // **Half resolution for the blur chain.** `UnrealBloomPass` blurs at a quarter, an eighth and a
+    // sixteenth of whatever it is given and adds the result back, so the source it samples only has
+    // to be as sharp as the widest of those - and a glow is by definition not sharp. Rendering the
+    // bright pass at half resolution halves the pass's cost for a difference nobody can see.
     const resolution = new THREE.Vector2(
-      Math.max(1, size.x * drawingRatio(this.quality)),
-      Math.max(1, size.y * drawingRatio(this.quality)),
+      Math.max(1, Math.round((size.x * drawingRatio(this.quality)) / 2)),
+      Math.max(1, Math.round((size.y * drawingRatio(this.quality)) / 2)),
     );
 
     const composer = new EffectComposer(this.renderer);
@@ -304,6 +314,59 @@ export class GameView implements GameViewLike {
     this.bloomPass = bloom;
   }
 
+  /**
+   * Compiles every shader and uploads every buffer, while the player is still on a loading screen.
+   *
+   * **This is the whole of the start-up jank and half of the movement jank.** three.js does its GPU
+   * work lazily: a material's program is compiled the first time it is *drawn*, and a geometry's
+   * buffers are uploaded when its mesh is first *visible*. The district has forty-odd materials
+   * across three hundred and fifty thousand triangles in six hundred and twenty-six chunks, so the
+   * first seconds of play were spent compiling programs a few at a time, and every chunk boundary
+   * crossed during a run spent a frame uploading the chunk on the other side of it. It does not
+   * matter how fast the frame is afterwards if the first one is two hundred milliseconds.
+   *
+   * So both happen once, here, where a stall is expected: `compile` walks the scene and builds every
+   * program it can, and then one frame is drawn with everything visible and nothing frustum-culled so
+   * that every buffer is uploaded.
+   */
+  private warmUp(): void {
+    const started = performance.now();
+
+    // Every program the scene's materials need, for this camera and this set of lights.
+    this.renderer.compile(this.built.scene, this.camera);
+
+    // And then every buffer: draw once with the culling turned off, so a chunk is uploaded now
+    // rather than the first time a player turns and finds it.
+    const chunks = this.built.chunks;
+    const state = chunks.map((chunk) => ({ visible: chunk.visible, culled: chunk.frustumCulled }));
+    try {
+      for (const chunk of chunks) {
+        chunk.visible = true;
+        chunk.frustumCulled = false;
+      }
+      this.renderer.render(this.built.scene, this.camera);
+    } finally {
+      chunks.forEach((chunk, index) => {
+        const saved = state[index];
+        if (saved) {
+          chunk.visible = saved.visible;
+          chunk.frustumCulled = saved.culled;
+        }
+      });
+    }
+
+    this.warmUpCost = {
+      ms: Math.round(performance.now() - started),
+      programs: this.renderer.info.programs?.length ?? 0,
+    };
+    logger.info('render', 'warmed up', this.warmUpCost);
+  }
+
+  /** What the start-up warm-up cost. Zero before the first `setSize`. */
+  get warmUpStats(): { readonly ms: number; readonly programs: number } {
+    return this.warmUpCost;
+  }
+
   /** Resizes the drawing buffer and camera to the given CSS pixel size. */
   setSize(width: number, height: number): void {
     if (this.disposed) return;
@@ -315,6 +378,8 @@ export class GameView implements GameViewLike {
     this.renderer.setSize(safeWidth, safeHeight, false);
     if (!this.composer && this.quality.bloom > 0) this.buildBloom();
     this.composer?.setSize(safeWidth, safeHeight);
+    // Once, at the first size: this is the last moment before the player is watching.
+    if (this.warmUpCost.programs === 0) this.warmUp();
 
     this.camera.aspect = safeWidth / safeHeight;
     this.camera.updateProjectionMatrix();
@@ -324,8 +389,18 @@ export class GameView implements GameViewLike {
   render(eye: ReadonlyVec3, orientation: Orientation): void {
     if (this.disposed) return;
 
+    // The view measures its own frame time, because the only thing it animates itself is the lamp
+    // fade - everything else is driven by the simulation. Clamped, so a tab restored after a minute
+    // does not arrive at full brightness in one step.
+    const now = performance.now();
+    const seconds = this.lastFrameAt === 0 ? 1 / 60 : Math.min(0.1, (now - this.lastFrameAt) / 1000);
+    this.lastFrameAt = now;
+
     this.followWithShadow(eye);
     this.followLamps(eye);
+    // Per frame, unlike the selection itself: the *set* of lamps is chosen by cell and can snap, and
+    // this is what stops the snap being visible.
+    fadeLamps(this.built.lamps, seconds);
 
     this.camera.position.set(eye.x, eye.y, eye.z);
     // Roll is in degrees on the way in (it comes from the settings-facing effect
@@ -500,8 +575,11 @@ export class GameView implements GameViewLike {
     const shadow = sun.shadow;
     if (!shadow) return;
 
-    // Cheap enough to do every frame, and it has to be: the reach changes with the
-    // graphics preset, so the cell cache would have to be invalidated by it.
+    // **Every frame, and it has to be.** Caching this by a position cell - which is what the lamp
+    // selection does - was tried and reverted: a player running at eleven metres a second crosses a
+    // twenty-metre cell twice a second, and the chunks at the edge of the draw distance would appear
+    // and then disappear in twenty-metre steps. A pop is a worse glitch than the two hundred
+    // microseconds this costs, and six hundred and twenty-six array reads is nothing.
     this.casters = updateShadowCasters(this.built.chunks, eye, this.shadowReach);
     this.chunksDrawn = updateChunkVisibility(this.built.chunks, eye);
 

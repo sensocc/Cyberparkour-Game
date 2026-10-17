@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.4` |
+| Version | `1.0.5` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1147 in 42 files |
 | Coverage | ~91% of statements |
@@ -127,6 +127,39 @@ can shortcut. Call it with `E`, walk in, pick a floor with `1`–`8`, and the ga
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders,
 and pipe climbs — ordinary states in one machine rather than special cases, and built to be felt
 rather than to be counted.
+
+### The frame
+
+The frame is **60 FPS mean while sprinting through the district** — 16.6 ms, with a worst frame of 17.6
+— measured in a browser on a *software* rasteriser, which is the floor rather than the ceiling. What
+that took, in order of how much it matters on real hardware:
+
+- **The high preset draws at 1.5x pixel ratio, not 2.** The ratio multiplies the fragment work of
+  everything — every lamp loop, every lit fragment, every bloom blur — and 1.5 is where the image
+  stops looking sharper while the frame still costs 78 per cent more. High-DPI displays are exactly
+  the hardware that reports frames dropping while it moves.
+- **The bloom blurs at half resolution.** `UnrealBloomPass` blurs at a quarter, an eighth and a
+  sixteenth of what it is given, so a source sharper than the widest of those is wasted work — and a
+  glow is by definition not sharp.
+- **Nothing is compiled or uploaded while the player is watching.** three.js does its GPU work
+  lazily: a program the first time a material is drawn, buffers the first time a mesh is visible.
+  Both happen in one warm-up at the loading screen instead, so the first seconds are not spent
+  compiling and a chunk is not uploaded the first time a player turns and finds it. (On this machine
+  that made no measurable difference — its driver compiles asynchronously — so it is insurance
+  against the drivers where it is not.)
+
+### Nothing pops while you are moving
+
+Rapid movement is where a world shows its seams, and two of them were showing:
+
+- **Chunks vanished while still visible.** The draw distance was 420 m against fog that runs to 480,
+  so a chunk three per cent opaque was disappearing out of the haze. It is 470 now, where the fog is
+  finished: past the point of seeing, not merely small.
+- **The lamps snapped on and off.** Six of five hundred and seventy-six sources are lit at a time and
+  the set changes every 24 m, so sprinting down a street used to watch pools of light switch like a
+  hand on a wall. They fade over about a fifth of a second now. The *visibility* pass, which was
+  briefly cached by position cell the same way, is deliberately not: cached, chunks arrive in
+  twenty-metre steps — a pop is a worse glitch than the two hundred microseconds the walk costs.
 
 ### The light
 
@@ -260,3 +293,4 @@ tests/        unit, integration, and the invariants
 | V1.0.2 | More ways up from the street, and the ladder that let go of you |
 | V1.0.3 | Momentum through the moves, a sprung eye, and the jank measured away |
 | V1.0.4 | The light, bloom, a flash on a shard, and a playable game |
+| V1.0.5 | A warm loading screen, a cheaper frame, and nothing popping |

@@ -73,7 +73,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
   },
   medium: {
     label: 'Medium',
-    pixelRatioCap: 1.5,
+    pixelRatioCap: 1.25,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 8,
@@ -83,7 +83,11 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
   },
   high: {
     label: 'High',
-    pixelRatioCap: 2,
+    // **Not 2.** The pixel ratio multiplies the fragment work of everything - every lamp loop, every
+    // lit fragment, the bloom blurs - and 1.5 is where the image stops looking sharper and the
+    // frame starts costing 78 per cent more. A high-DPI display is exactly the hardware that reports
+    // frames dropping while it moves, and this is the single largest lever there is on that.
+    pixelRatioCap: 1.5,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 16,

@@ -316,23 +316,50 @@ export function updateLamps(
     }
   }
 
+  // **The lamps fade instead of snapping.** Six of five hundred and seventy-six sources are lit at
+  // once, and the set changes every twenty-four metres - so a player sprinting down a street used to
+  // watch pools of light appear and vanish from one frame to the next, which reads as a light being
+  // switched on by a hand. The lights stay in the scene and their intensity is what moves, which is
+  // also why they are never hidden: a light at zero still costs a shader loop it shares with five
+  // others, and being able to fade it back in is worth far more than that.
   const lit = new Set(best);
   for (let index = 0; index < lamps.length; index += 1) {
-    const on = lit.has(index);
     const lamp = lamps[index] as THREE.PointLight;
-    if (lamp.visible !== on) lamp.visible = on;
+    if (lamp.userData.lampBase === undefined) {
+      lamp.userData.lampBase = lamp.intensity;
+      lamp.userData.lampTarget = lamp.intensity;
+    }
+    lamp.userData.lampTarget = lit.has(index) ? (lamp.userData.lampBase as number) : 0;
+    if (!lamp.visible) lamp.visible = true;
   }
   return best.length;
 }
 
 /**
- * How far a chunk stays drawn, in metres.
+ * Moves every lamp's intensity towards where the selection says it should be.
  *
- * The fog runs from 260 m to 1150, and by 420 m a chunk is a fifth of the way to opaque -
- * a silhouette of a silhouette. The city is a kilometre across, so at this distance a street
- * view draws a third of it, and what it drops is what nobody can see anyway.
+ * Full brightness in about a fifth of a second, which is slow enough to read as a light warming up
+ * and fast enough that the pool is where the player is expecting it by the time they arrive.
  */
-const DRAW_DISTANCE = 420;
+export function fadeLamps(lamps: readonly THREE.PointLight[], dt: number): void {
+  const k = Math.min(1, Math.max(0, dt) * 7);
+  for (const lamp of lamps) {
+    const target = lamp.userData.lampTarget;
+    if (typeof target !== 'number') continue;
+    const next = lamp.intensity + (target - lamp.intensity) * k;
+    lamp.intensity = Math.abs(next - target) < 0.01 ? target : next;
+  }
+}
+
+/**
+ * How far a chunk is drawn, in metres.
+ *
+ * **It has to be past the fog.** A chunk that vanishes while it is still three per cent visible is a
+ * silhouette popping out of the haze a few hundred metres away, and the player sees exactly where it
+ * went. The fog runs to 480 m, and this is where it is all but finished - which is why the number is
+ * this one rather than the smaller one that would save a handful of draw calls.
+ */
+const DRAW_DISTANCE = 470;
 
 /**
  * Draws the chunks near the player, and stops drawing the rest.
