@@ -37,17 +37,6 @@ import * as THREE from 'three';
  */
 export const MAX_PUFFS = 512;
 
-/** A puff's place and look for one frame. */
-export interface PuffSample {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-  /** Diameter, in metres. */
-  readonly scale: number;
-  /** 0..1. */
-  readonly opacity: number;
-}
-
 /**
  * Adds billboarding and per-instance opacity to a `MeshBasicMaterial`.
  *
@@ -155,15 +144,21 @@ export class InstancedPuffs {
     this.count = 0;
   }
 
-  /** Adds one puff. Silently ignored once the field is full, so a caller cannot overrun it. */
-  push(sample: PuffSample): void {
+  /**
+   * Adds one puff. Silently ignored once the field is full, so a caller cannot overrun it.
+   *
+   * Positional, not an object: a puff is pushed once per plume per frame - seventy-odd times a
+   * frame - and an object literal there is seventy-odd allocations a second for five numbers. The
+   * names live in the call sites, which are the two places a puff is born.
+   */
+  push(x: number, y: number, z: number, scale: number, opacity: number): void {
     const index = this.count;
     if (index >= this.capacity) return;
 
-    const size = Number.isFinite(sample.scale) ? Math.max(0, sample.scale) : 0;
-    const x = Number.isFinite(sample.x) ? sample.x : 0;
-    const y = Number.isFinite(sample.y) ? sample.y : 0;
-    const z = Number.isFinite(sample.z) ? sample.z : 0;
+    const size = Number.isFinite(scale) ? Math.max(0, scale) : 0;
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    const pz = Number.isFinite(z) ? z : 0;
 
     // A translation-and-scale matrix, written in place: three.js stores matrices column-major.
     const at = index * 16;
@@ -180,14 +175,12 @@ export class InstancedPuffs {
     m[at + 9] = 0;
     m[at + 10] = size;
     m[at + 11] = 0;
-    m[at + 12] = x;
-    m[at + 13] = y;
-    m[at + 14] = z;
+    m[at + 12] = px;
+    m[at + 13] = py;
+    m[at + 14] = pz;
     m[at + 15] = 1;
 
-    this.opacity.array[index] = Number.isFinite(sample.opacity)
-      ? Math.min(1, Math.max(0, sample.opacity))
-      : 0;
+    this.opacity.array[index] = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0;
 
     this.count += 1;
   }
@@ -307,13 +300,13 @@ export class PuffPool {
       // Fade in over the first fifth and out over the rest, so nothing ever appears or vanishes
       // abruptly - the same rule the plumes follow.
       const fade = t < 0.2 ? t / 0.2 : 1 - (t - 0.2) / 0.8;
-      field.push({
-        x: this.x[index] as number,
-        y: this.y[index] as number,
-        z: this.z[index] as number,
-        scale: (this.size[index] as number) * (0.6 + t * 1.1),
-        opacity: (this.peak[index] as number) * Math.max(0, fade),
-      });
+      field.push(
+        this.x[index] as number,
+        this.y[index] as number,
+        this.z[index] as number,
+        (this.size[index] as number) * (0.6 + t * 1.1),
+        (this.peak[index] as number) * Math.max(0, fade),
+      );
     }
   }
 

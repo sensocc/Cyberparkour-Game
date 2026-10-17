@@ -30,6 +30,18 @@ export class FrameStats {
     this.samples = new Float64Array(sampleCount);
   }
 
+  /**
+   * Seconds of simulated time since the last reset, without building a snapshot.
+   *
+   * `snapshot()` iterates the whole sample window and allocates a fresh object, so it is the wrong
+   * thing to call just to ask "is it time to refresh the HUD yet?" - and it was called every frame
+   * to do exactly that: ~120 iterations and an allocation per frame to serve a 10 Hz overlay. The
+   * HUD's timing gate reads this instead, and `snapshot()` runs only on the frames that draw.
+   */
+  get elapsedSeconds(): number {
+    return this.elapsed;
+  }
+
   /** Records one frame. `deltaSeconds` is the frame's clamped delta. */
   push(deltaSeconds: number): void {
     if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0) {

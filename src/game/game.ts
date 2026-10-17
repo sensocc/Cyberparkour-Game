@@ -1695,16 +1695,20 @@ export class Game {
     // tenths, so ten times a second is its natural rate rather than a compromise - and the objects it
     // builds (`run.snapshot()`, a shard lookup, a trial lookup, the snapshot literal itself) stop
     // being two hundred and forty a second of garbage while the player stands still.
-    const stats = this.stats.snapshot();
-    if (stats.elapsedSeconds - this.lastGameHud >= 0.1) {
-      this.lastGameHud = stats.elapsedSeconds;
+    //
+    // The timing gate itself reads the cheap `elapsedSeconds` getter, not `snapshot()`: the latter
+    // walks the whole sample window and allocates, which is exactly the per-frame work the throttle
+    // is there to avoid, so `snapshot()` runs only on the frames that actually draw.
+    const elapsed = this.stats.elapsedSeconds;
+    if (elapsed - this.lastGameHud >= 0.1) {
+      this.lastGameHud = elapsed;
       this.updateGameHud();
     }
 
     const interval = 1 / Math.max(1, this.config.debug.hudRefreshHz);
-    if (stats.elapsedSeconds - this.lastHudUpdate < interval) return;
-    this.lastHudUpdate = stats.elapsedSeconds;
-    this.options.hud.update(this.hudSnapshot(stats));
+    if (elapsed - this.lastHudUpdate < interval) return;
+    this.lastHudUpdate = elapsed;
+    this.options.hud.update(this.hudSnapshot(this.stats.snapshot()));
   }
 
   private hudSnapshot(stats: StatsSnapshot): HudSnapshot {

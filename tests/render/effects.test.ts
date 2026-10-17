@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  emptyPickupPose,
   emptySpritePose,
   pickupPose,
   smokePose,
@@ -83,23 +84,33 @@ describe('pickupPose', () => {
   it('bobs around where it was placed', () => {
     let lowest = Number.POSITIVE_INFINITY;
     let highest = Number.NEGATIVE_INFINITY;
+    const out = emptyPickupPose();
     for (let t = 0; t < 10; t += 0.05) {
-      const { y } = pickupPose(HOME, t);
-      lowest = Math.min(lowest, y);
-      highest = Math.max(highest, y);
+      pickupPose(HOME, t, out);
+      lowest = Math.min(lowest, out.y);
+      highest = Math.max(highest, out.y);
     }
     expect(lowest).toBeGreaterThanOrEqual(HOME.y - 0.18);
     expect(highest).toBeLessThanOrEqual(HOME.y + 0.18);
   });
 
   it('spins steadily', () => {
-    expect(pickupPose(HOME, 0).spin).toBe(0);
-    expect(pickupPose(HOME, 1).spin).toBeGreaterThan(0);
-    expect(pickupPose(HOME, 2).spin).toBeGreaterThan(pickupPose(HOME, 1).spin);
+    const out = emptyPickupPose();
+    pickupPose(HOME, 0, out);
+    expect(out.spin).toBe(0);
+    pickupPose(HOME, 1, out);
+    expect(out.spin).toBeGreaterThan(0);
+    const atOne = out.spin;
+    pickupPose(HOME, 2, out);
+    expect(out.spin).toBeGreaterThan(atOne);
   });
 
   it('offsets the bob by the pickup’s own position, so a row is not in unison', () => {
     const other = { x: HOME.x + 2, y: HOME.y, z: HOME.z };
-    expect(pickupPose(other, 0.4).y).not.toBeCloseTo(pickupPose(HOME, 0.4).y, 6);
+    const a = emptyPickupPose();
+    const b = emptyPickupPose();
+    pickupPose(other, 0.4, a);
+    pickupPose(HOME, 0.4, b);
+    expect(a.y).not.toBeCloseTo(b.y, 6);
   });
 });

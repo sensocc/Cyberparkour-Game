@@ -74,9 +74,14 @@ export function smokePose(emitter: SmokeEmitter, elapsed: number, out: SpritePos
 
 export interface PickupPose {
   /** Y of the pickup's centre. */
-  readonly y: number;
+  y: number;
   /** Rotation about Y, in radians. */
-  readonly spin: number;
+  spin: number;
+}
+
+/** A pose to write into, so a frame does not make one per pickup. */
+export function emptyPickupPose(): PickupPose {
+  return { y: 0, spin: 0 };
 }
 
 /**
@@ -84,10 +89,12 @@ export interface PickupPose {
  *
  * The bob is offset by the pickup's own X so a row of them does not rise and
  * fall in unison - which reads as a machine rather than as a row of things.
+ *
+ * Writes into `out` for the same reason `smokePose` does: one runs per visible pickup per frame,
+ * and a fresh object per call is garbage the render path does not need to make.
  */
-export function pickupPose(position: Vector3Like, elapsed: number): PickupPose {
-  return {
-    y: position.y + Math.sin(elapsed * 1.4 + position.x * 0.5) * 0.18,
-    spin: elapsed * 1.1,
-  };
+export function pickupPose(position: Vector3Like, elapsed: number, out: PickupPose): PickupPose {
+  out.y = position.y + Math.sin(elapsed * 1.4 + position.x * 0.5) * 0.18;
+  out.spin = elapsed * 1.1;
+  return out;
 }

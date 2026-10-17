@@ -30,7 +30,7 @@ import {
   updateShadowCasters,
   type BuiltScene,
 } from './sceneBuilder.js';
-import { pickupPose, smokePose } from './effects.js';
+import { emptyPickupPose, pickupPose, smokePose } from './effects.js';
 import { BLOOM_DEFAULTS, BloomChain } from './bloom.js';
 import { PuffPool } from './puffs.js';
 import { QUALITY_PRESETS, type QualityPreset } from '../core/settings.js';
@@ -164,8 +164,9 @@ export class GameView implements GameViewLike {
   private objectCount = 0;
   /** How many of the level's lamps are lit this frame. */
   private lampsOn = 0;
-  /** The last place the lamp selection was made for. */
-  private lampCell = '';
+  /** The cell the lamp selection was last made for, as two snapped integers. */
+  private lampCellX = Number.NaN;
+  private lampCellZ = Number.NaN;
   /**
    * How many of the pool's lights the current preset uses.
    *
@@ -179,6 +180,31 @@ export class GameView implements GameViewLike {
   private shadowX = Number.NaN;
   private shadowZ = Number.NaN;
   private shadowFrames = 0;
+  /**
+   * Whether a shadow caster has moved since the map was last rendered.
+   *
+   * The map redraws when its camera snaps to a new texel, and - while this flag is set - every
+   * third frame, so a body falling between snaps keeps its shadow. That "every third frame" used
+   * to run *unconditionally*: a player standing still paid a full shadow pass, about two thirds of
+   * the frame's submission, for a map whose content had not changed. The flag is raised by every
+   * place the view moves a caster - the body, a lift, a gate, a collected pickup - and cleared by
+   * the redraw itself.
+   *
+   * The bobbing pickup is deliberately *not* a caster move: it animates every frame, so tracking
+   * it would keep the map permanently dirty and there would be no gate at all, and its shadow is a
+   * glowing shard's - below the map's texel resolution in effect.
+   */
+  private shadowDirty = false;
+  /**
+   * The body pose scalars the shadow gate last saw, so a change to any of them is a change to the
+   * body's shape and therefore its shadow. Kept as five numbers rather than a pose reference: a
+   * fresh pose object arrives every frame, and `Object.is` on the *fields* is what decides.
+   */
+  private bodyCrouch = Number.NaN;
+  private bodyStride = Number.NaN;
+  private bodyPhase = Number.NaN;
+  private bodyLean = Number.NaN;
+  private bodyProgress = Number.NaN;
   /** When the last frame was drawn, for the view's own frame-time estimate. */
   private lastFrameAt = 0;
   /**
@@ -189,6 +215,8 @@ export class GameView implements GameViewLike {
    * commit. The game says *that* a landing happened and how hard; this decides what it looks like.
    */
   private readonly dust = new PuffPool();
+  /** Reused per frame, so posing the pickups does not allocate one object per shard. */
+  private readonly pickupScratch = emptyPickupPose();
 
   private disposed = false;
 
@@ -498,6 +526,9 @@ export class GameView implements GameViewLike {
     const angle = this.doorAngles.get(id);
     if (!group || angle === undefined) return;
     group.rotation.y = clamp01(open) * angle;
+    // A swinging door casts a swinging shadow; the redraw must notice it even while the player
+    // stands still and watches.
+    this.shadowDirty = true;
   }
 
   /** Places an elevator car, and slides its gates. */
@@ -506,6 +537,10 @@ export class GameView implements GameViewLike {
     const group = this.built.lifts.get(id);
     const thickness = this.liftThickness.get(id);
     if (group && thickness !== undefined) group.position.y = topY - thickness;
+    // A lift car casts a shadow, and it can travel while the player stands still and watches from
+    // a balcony. A docked car is not told again - see `Game.updateElevators` - so reaching here
+    // at all is a car that moved.
+    this.shadowDirty = true;
 
     // A gate is a shutter that rolls *up* by its own height, so "open" is a gate
     // parked in the wall above the opening and "shut" is a gate in the opening.
@@ -529,6 +564,8 @@ export class GameView implements GameViewLike {
     if (this.disposed) return;
     const group = this.built.collectibles.get(id);
     if (group) group.visible = visible;
+    // A shard vanishing takes its shadow with it; the map must notice even if the player is still.
+    this.shadowDirty = true;
   }
 
   /**
@@ -552,7 +589,7 @@ export class GameView implements GameViewLike {
         // no per-sprite visibility to switch off.
         if (field.visible[index] === 0) continue;
         smokePose(field.emitters[index] as (typeof field.emitters)[number], elapsedSeconds, pose);
-        field.puffs.push({ x: pose.x, y: pose.y, z: pose.z, scale: pose.scale, opacity: pose.opacity });
+        field.puffs.push(pose.x, pose.y, pose.z, pose.scale, pose.opacity);
       }
       // The dust that a landing threw up rides the same buffer, so it is aged here and the field
       // is published once - one draw call for every soft blob in the air.
@@ -563,9 +600,11 @@ export class GameView implements GameViewLike {
     for (const [id, group] of this.built.collectibles) {
       const home = this.pickupHome.get(id);
       if (!home) continue;
-      const pose = pickupPose(home, elapsedSeconds);
-      group.position.y = pose.y;
-      group.rotation.y = pose.spin;
+      // A reused scratch, like `smokePose`'s: eight of these run every frame, and a frame is not
+      // a place to make eight objects.
+      pickupPose(home, elapsedSeconds, this.pickupScratch);
+      group.position.y = this.pickupScratch.y;
+      group.rotation.y = this.pickupScratch.spin;
     }
   }
 
@@ -613,8 +652,34 @@ export class GameView implements GameViewLike {
   /** Places and poses the player's body. */
   setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose, dt: number): void {
     if (this.disposed) return;
-    this.body.root.position.set(feet.x, feet.y, feet.z);
-    this.body.root.rotation.y = yaw;
+    const root = this.body.root;
+    // The body is the one shadow caster that moves without the view being told *that* it moved -
+    // this is called every frame, moving or not. Whether its shadow changed is "did the body move",
+    // which is more than just the feet and the yaw: a crouch in place compresses it, and the stride
+    // keeps fading for a beat after the feet stop. The pose's own numbers are bit-stable when the
+    // player is truly idle, so comparing them - feet, yaw, and the handful of pose scalars that
+    // change the body's shape - is exactly "did the shadow change", and it is what lets the map
+    // stop redrawing for a body that is standing still.
+    const shapeChanged =
+      root.position.x !== feet.x ||
+      root.position.y !== feet.y ||
+      root.position.z !== feet.z ||
+      root.rotation.y !== yaw ||
+      this.bodyCrouch !== pose.crouchAmount ||
+      this.bodyStride !== pose.strideAmount ||
+      this.bodyPhase !== pose.gaitPhase ||
+      this.bodyLean !== pose.lean ||
+      this.bodyProgress !== pose.maneuverProgress;
+    if (shapeChanged) {
+      this.shadowDirty = true;
+      this.bodyCrouch = pose.crouchAmount;
+      this.bodyStride = pose.strideAmount;
+      this.bodyPhase = pose.gaitPhase;
+      this.bodyLean = pose.lean;
+      this.bodyProgress = pose.maneuverProgress;
+    }
+    root.position.set(feet.x, feet.y, feet.z);
+    root.rotation.y = yaw;
     posePlayerBody(this.body, pose, this.config, dt);
   }
 
@@ -642,10 +707,14 @@ export class GameView implements GameViewLike {
   private followLamps(eye: ReadonlyVec3): void {
     // **The selection, not the lights themselves.** Six of five hundred and seventy-six sources
     // are lit at once and the set changes every twenty-four metres, so the O(576) search runs on a
-    // cell change and the eight-slot assignment runs every frame - see `selectLamps`.
-    const cell = `${Math.round(eye.x / 24)}|${Math.round(eye.z / 24)}`;
-    if (cell === this.lampCell) return;
-    this.lampCell = cell;
+    // cell change and the eight-slot assignment runs every frame - see `selectLamps`. The cell is
+    // two snapped integers, not a template string: a key built every frame purely to compare is an
+    // allocation per frame, and `NaN` for "never" means the first frame always selects.
+    const cellX = Math.round(eye.x / 24);
+    const cellZ = Math.round(eye.z / 24);
+    if (cellX === this.lampCellX && cellZ === this.lampCellZ) return;
+    this.lampCellX = cellX;
+    this.lampCellZ = cellZ;
     // **Six, not twelve.** A point light is a per-fragment loop over the whole screen. Six pools of
     // light around the player and the neon carrying the rest: the city is a neon city, and it is
     // emissive surfaces rather than lamps that make it one. The count is the *pool* rather than a
@@ -684,15 +753,19 @@ export class GameView implements GameViewLike {
       snappedZ + this.sunOffset.z,
     );
 
-    // Redraw the map when the snapped camera moved, and every third frame regardless so the player's
-    // own shadow follows them: at 20 Hz a falling body's shadow is invisible as a redraw and obvious
-    // as a freeze. `autoUpdate` is off - see the constructor.
+    // Redraw the map when the snapped camera moved, and - while something that casts has *moved* -
+    // every third frame, so the player's own shadow follows them: at 20 Hz a falling body's shadow
+    // is invisible as a redraw and obvious as a freeze. The "every third frame" half is what used
+    // to run unconditionally; gating it on `shadowDirty` is what stops a player who is standing
+    // still - body still, lifts docked, gates shut - paying for a shadow pass whose content has
+    // not changed. `autoUpdate` is off - see the constructor.
     this.shadowFrames += 1;
     const moved = snappedX !== this.shadowX || snappedZ !== this.shadowZ;
-    if (moved || this.shadowFrames >= 3) {
+    if (moved || (this.shadowDirty && this.shadowFrames >= 3)) {
       this.shadowX = snappedX;
       this.shadowZ = snappedZ;
       this.shadowFrames = 0;
+      this.shadowDirty = false;
       this.renderer.shadowMap.needsUpdate = true;
     }
   }
@@ -775,7 +848,8 @@ export class GameView implements GameViewLike {
     this.lampPool = applyLampPool(this.built.lamps, lampPoolFor(preset.lightScale));
     // ...and the selection is redone against the new pool size, so a shrunken pool cannot keep a
     // lamp in a slot that is no longer lit.
-    this.lampCell = '';
+    this.lampCellX = Number.NaN;
+    this.lampCellZ = Number.NaN;
 
     // The post chain, built or torn down to match. Last, because it is the most expensive thing a
     // preset does and nothing above it depends on it.

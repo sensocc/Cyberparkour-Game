@@ -14,6 +14,14 @@ describe('FrameStats', () => {
     });
   });
 
+  it('reports elapsed seconds without building a snapshot', () => {
+    const stats = new FrameStats(10);
+    expect(stats.elapsedSeconds).toBe(0);
+    stats.push(1 / 60);
+    stats.push(1 / 60);
+    expect(stats.elapsedSeconds).toBeCloseTo(1 / 30, 9);
+  });
+
   it('derives fps from the mean frame time', () => {
     const stats = new FrameStats(60);
     for (let index = 0; index < 60; index += 1) stats.push(1 / 60);

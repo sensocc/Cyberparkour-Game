@@ -66,8 +66,8 @@ describe('one draw, many puffs', () => {
     const field = new InstancedPuffs(texture, 4);
     try {
       field.begin();
-      field.push({ x: 10, y: 2, z: -3, scale: 1.5, opacity: 0.5 });
-      field.push({ x: -1, y: 0, z: 7, scale: 2, opacity: 0.25 });
+      field.push(10, 2, -3, 1.5, 0.5);
+      field.push(-1, 0, 7, 2, 0.25);
       field.commit();
 
       expect(field.live).toBe(2);
@@ -95,14 +95,14 @@ describe('one draw, many puffs', () => {
     const field = new InstancedPuffs(texture, 8);
     try {
       field.begin();
-      field.push({ x: 1, y: 0, z: 0, scale: 1, opacity: 1 });
+      field.push(1, 0, 0, 1, 1);
       field.commit();
       const firstMatrix = field.mesh.instanceMatrix.array;
       const firstOpacity = field.mesh.geometry.getAttribute('aPuffOpacity');
 
       for (let frame = 0; frame < 5; frame += 1) {
         field.begin();
-        field.push({ x: frame, y: 0, z: 0, scale: 1, opacity: 1 });
+        field.push(frame, 0, 0, 1, 1);
         field.commit();
       }
 
@@ -118,7 +118,7 @@ describe('one draw, many puffs', () => {
     try {
       field.begin();
       for (let index = 0; index < 10; index += 1) {
-        field.push({ x: index, y: 0, z: 0, scale: 1, opacity: 1 });
+        field.push(index, 0, 0, 1, 1);
       }
       field.commit();
       expect(field.live).toBe(2);
@@ -134,7 +134,7 @@ describe('one draw, many puffs', () => {
     const field = new InstancedPuffs(texture, 2);
     try {
       field.begin();
-      field.push({ x: Number.NaN, y: 0, z: 0, scale: Number.POSITIVE_INFINITY, opacity: Number.NaN });
+      field.push(Number.NaN, 0, 0, Number.POSITIVE_INFINITY, Number.NaN);
       field.commit();
 
       const m = field.mesh.instanceMatrix.array;

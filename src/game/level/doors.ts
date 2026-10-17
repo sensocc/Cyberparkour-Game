@@ -40,6 +40,16 @@ export interface DoorUpdate {
   readonly open: number;
 }
 
+/**
+ * A `DoorUpdate` whose fields may be rewritten, so `update` reports into a record the system
+ * already owns instead of building a fresh one. `readonly` is erased at the type level, so this is
+ * interchangeable with `DoorUpdate`.
+ */
+interface DoorRecord {
+  id: string;
+  open: number;
+}
+
 export class DoorSystem {
   private readonly world: CollisionWorld;
   private readonly swingSpeed: number;
@@ -49,6 +59,10 @@ export class DoorSystem {
   private readonly initial = new Map<string, number>();
   private readonly open = new Map<string, number>();
   private readonly target = new Map<string, number>();
+  /** One kept record per door, so `update` writes into them rather than allocating. */
+  private readonly records = new Map<string, DoorRecord>();
+  /** Reused from frame to frame: `update` empties it, fills it, and returns it. */
+  private readonly changed: DoorRecord[] = [];
 
   constructor(
     definitions: readonly DoorDefinition[],
@@ -65,6 +79,7 @@ export class DoorSystem {
       this.initial.set(door.id, start);
       this.open.set(door.id, start);
       this.target.set(door.id, start);
+      this.records.set(door.id, { id: door.id, open: start });
     }
 
     // The collider box per door, read once so the reach test allocates nothing.
@@ -96,7 +111,10 @@ export class DoorSystem {
    */
   update(dt: number): DoorUpdate[] {
     const step = this.swingSpeed * Math.max(0, dt);
-    const changes: DoorUpdate[] = [];
+    // The buffer is reused: a door swing is the exception, not the frame, and an empty array built
+    // every frame is exactly the garbage this returns-that-changed contract exists to avoid.
+    const changes = this.changed;
+    changes.length = 0;
 
     for (const id of this.ids) {
       const current = this.open.get(id) ?? 0;
@@ -105,7 +123,11 @@ export class DoorSystem {
 
       const next = target > current ? Math.min(target, current + step) : Math.max(target, current - step);
       this.open.set(id, next);
-      changes.push({ id, open: next });
+      const record = this.records.get(id);
+      if (record) {
+        record.open = next;
+        changes.push(record);
+      }
     }
 
     if (changes.length > 0) this.applyColliders();
