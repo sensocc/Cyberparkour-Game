@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.18` |
+| Version | `1.0.19` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1159 in 42 files |
 | Coverage | ~91% of statements |
@@ -209,6 +209,25 @@ thousands of draw calls and the answer was assumed to be the chunks. It was not,
   of three times, and the level and scene builders resolve the gate-to-lift mapping in one pass each
   instead of a million string comparisons per lift.
 
+**V1.0.19: the hardware was the variable, and the game had no answer for it.** The frame rate
+turned out to depend on how warm the machine was. Measured on the laptop this was tuned on, the same
+street view at the same 2.3 megapixels costs **16.7 ms at 59 °C and 19.6 ms at 87 °C** - sixty frames
+a second against fifty, with every second refresh dropped - because the integrated GPU clocks itself
+down from 2,200 MHz to about 1,800 once the APU heat-soaks (`gpu_busy_percent` at 100 the whole time,
+`temp1_input` 84-88 °C, `pp_dpm_sclk` never reaching its top state). There is no setting for that,
+and no way for a player to see it, so the game now measures its own frames and spends resolution to
+hold the rate: **dynamic resolution**, 10% at a time, down to 60% of the preset's cap, given back
+when the frames are easy again. It is deliberately asymmetric - down on the first second of late
+frames, up only after a sustained run of easy ones, with the wait doubling every time it has to step
+back - because a resolution that flaps is worse than one that is slightly low. It shows in the
+`?perf` readout as `(90% resolution)`.
+
+The same investigation found the presets were not doing what they said on the machine that needed
+them most: the caps are in pixels per CSS pixel, so on a panel with a device scale of 1.5 (which this
+one has), "Medium" at 1.5 and "High" at 2 both rendered at exactly 1.5 - the identical number of
+pixels, for a menu that offered a choice. Medium is 1.25 now, which makes the three presets three
+different resolutions on such a panel and leaves them unchanged on a 1x display.
+
 **V1.0.18: the far city was shimmering, and it was the depth buffer.** The scene draws a body
 part twenty centimetres from the eye and a skyline seven hundred and eighty metres away, and a
 24-bit depth buffer spends almost all of its precision on the first few metres: at three hundred
@@ -385,3 +404,4 @@ tests/        unit, integration, and the invariants
 | V1.0.16 | Eight lights, batched shutters, and a broadphase that reaches the ledges |
 | V1.0.17 | The readout measures work, and the copy tells the truth |
 | V1.0.18 | A logarithmic depth buffer: the far city stops shimmering |
+| V1.0.19 | Dynamic resolution: the frame rate stops depending on the temperature |

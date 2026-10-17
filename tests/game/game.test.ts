@@ -48,6 +48,8 @@ class FakeView implements GameViewLike {
   readonly fovs: number[] = [];
   readonly bodies: { feet: ReadonlyVec3; yaw: number; pose: PlayerPose; dt: number }[] = [];
   readonly qualities: QualityPreset[] = [];
+  /** Every resolution scale the game has asked for, in order. */
+  readonly renderScales: number[] = [];
   disposed = false;
 
   setSize(width: number, height: number): void {
@@ -84,6 +86,10 @@ class FakeView implements GameViewLike {
 
   setQuality(preset: QualityPreset): void {
     this.qualities.push(preset);
+  }
+
+  setRenderScale(scale: number): void {
+    this.renderScales.push(scale);
   }
 
   dispose(): void {
@@ -511,6 +517,98 @@ describe('Game.restart', () => {
 
     harness.game.restart();
     expect(harness.game.currentStatus).toBe('playing');
+  });
+});
+
+describe('dynamic resolution', () => {
+  /**
+   * A clock the test can walk, because the controller is rate-limited by wall time.
+   *
+   * `performance.now` is the only clock `adaptResolution` reads, so replacing it makes the whole
+   * thing deterministic: frames are simulated by the scheduler and seconds are simulated here.
+   */
+  function withClock(run: (advance: (ms: number) => void) => void): void {
+    let now = 1000;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    try {
+      run((ms) => { now += ms; });
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  it('takes the resolution down when the frames do not fit', () => {
+    // A heat-soaked integrated GPU, or a window twice the size: the frame stops fitting and the
+    // game is the only thing that can do anything about it. Measured on the machine this was tuned
+    // on, the same view costs 16.7 ms cool and 19.6 ms hot, which is sixty frames a second against
+    // fifty - the difference between playable and not.
+    withClock((advance) => {
+      const harness = createHarness();
+      harness.game.start();
+      const view = harness.views[0] as FakeView;
+
+      // A hundred and twenty frames at 40 ms: a frame time a 60 Hz display cannot show.
+      stepFrames(harness, 120, 40);
+      advance(2_000);
+
+      expect(view.renderScales.length).toBeGreaterThanOrEqual(1);
+      expect(view.renderScales[0]).toBeCloseTo(0.9, 5);
+    });
+  });
+
+  it('leaves the resolution alone when the frames fit', () => {
+    withClock((advance) => {
+      const harness = createHarness();
+      harness.game.start();
+      const view = harness.views[0] as FakeView;
+
+      stepFrames(harness, 240, 16.7);
+      advance(2_000);
+
+      expect(view.renderScales).toEqual([]);
+    });
+  });
+
+  it('walks all the way down to the floor and stops there', () => {
+    withClock((advance) => {
+      const harness = createHarness();
+      harness.game.start();
+      const view = harness.views[0] as FakeView;
+
+      // Hopeless frames, and enough simulated time for every rate-limited step to happen.
+      for (let round = 0; round < 12; round += 1) {
+        stepFrames(harness, 40, 60);
+        advance(2_000);
+      }
+
+      expect(view.renderScales.length).toBeGreaterThanOrEqual(4);
+      expect(view.renderScales[view.renderScales.length - 1]).toBe(0.6);
+      for (const scale of view.renderScales) {
+        expect(scale).toBeGreaterThanOrEqual(0.6);
+        expect(scale).toBeLessThanOrEqual(1);
+      }
+    });
+  });
+
+  it('starts a fresh view at its preset resolution', () => {
+    withClock((advance) => {
+      const harness = createHarness();
+      harness.game.start();
+      stepFrames(harness, 120, 40);
+      advance(2_000);
+      expect((harness.views[0] as FakeView).renderScales.length).toBe(1);
+
+      // A restart keeps the view (V1.0.16), but the *game* keeps its own scale; a rebuilt view is
+      // a new start. Crash one, so the restart has to build a new view.
+      vi.spyOn(harness.views[0] as FakeView, 'render').mockImplementation(() => {
+        throw new Error('renderer exploded');
+      });
+      stepFrames(harness, 1);
+      harness.game.restart();
+
+      expect(harness.views).toHaveLength(2);
+      expect((harness.views[1] as FakeView).renderScales).toEqual([]);
+    });
   });
 });
 

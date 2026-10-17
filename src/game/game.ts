@@ -140,6 +140,18 @@ export interface GameSnapshot {
   readonly renderer: string | null;
 }
 
+/**
+ * Dynamic resolution: how far the drawing buffer may drop below the preset's cap.
+ *
+ * A floor rather than nothing, because below this the picture is a smear and a settings change is
+ * the honest answer; and 0.6 still leaves a 1080p window drawing most of a million pixels.
+ */
+const MIN_RENDER_SCALE = 0.6;
+/** A frame worse than this is a dropped refresh at 60 Hz, and the signal to take resolution down. */
+const LATE_FRAME_MS = 24;
+/** This good for long enough means there is room to give some back. */
+const EASY_FRAME_MS = 19;
+
 /** `PlayerStepOptions` with its `readonly` lifted, for the cached object `stepOptions` hands out. */
 type MutableStepOptions = { -readonly [K in keyof PlayerStepOptions]: PlayerStepOptions[K] };
 
@@ -220,6 +232,18 @@ export class Game {
   private pipes: ReadonlySet<string> = new Set();
   /** The step options, kept across frames - see `stepOptions`. */
   private stepOptionsCache: MutableStepOptions | null = null;
+  /**
+   * The resolution the view is drawing at, as a fraction of its preset's cap.
+   *
+   * The game owns this rather than the view because the *frame statistics* that decide it live
+   * here; the view owns the renderer that obeys it. See `adaptResolution`.
+   */
+  private renderScale = 1;
+  /** When the last adaptation step was taken. */
+  private lastAdaptAt = 0;
+  /** When resolution was last given back, and how long to wait before trying again. */
+  private lastScaleUpAt = 0;
+  private scaleUpCooldownMs = 10_000;
   /**
    * What each lift's meshes were last told, so an idle shaft costs nothing.
    *
@@ -875,6 +899,11 @@ export class Game {
     }
 
     this.canvas = canvas;
+    // A new view starts at its preset's resolution, and at a fresh opinion about the machine.
+    this.renderScale = 1;
+    this.lastAdaptAt = 0;
+    this.lastScaleUpAt = 0;
+    this.scaleUpCooldownMs = 10_000;
     canvas.addEventListener('webglcontextlost', this.handleContextLost);
 
     const { width, height } = this.hostSize();
@@ -1027,6 +1056,9 @@ export class Game {
     for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
     this.view?.animate(this.effectsSeconds);
     this.stats.push(delta);
+    // After the statistics, not after the HUD: this is decided by the frame, not by the overlay
+    // that reports it.
+    this.adaptResolution();
     this.perfSection('anim');
     this.renderFrame(delta);
     this.perfSection('render');
@@ -1513,6 +1545,59 @@ export class Game {
   }
 
   /**
+   * Takes the resolution down when the frame stops fitting, and gives it back when it does.
+   *
+   * **Because the machine changes under the player.** A 15-watt APU runs this scene at sixty frames
+   * a second while it is cool and misses every second refresh once it is heat-soaked - measured on
+   * this one at 59 °C and 87 °C, same view, 16.7 ms against 19.6 ms, with the GPU dropping from
+   * 2,200 MHz to about 1,800. The player cannot see any of that, and the settings menu has no
+   * "cooler" option, so the frame rate is the game's problem to hold. What it costs is resolution:
+   * this is the one dial that buys frame time without touching the picture's composition.
+   *
+   * Deliberately asymmetric. Down is immediate and in 10% steps, because being late is being
+   * wrong. Up waits for a long run of easy frames and doubles its own cooldown every time it has to
+   * step back, so a machine that is only cool for a moment does not oscillate - a resolution that
+   * flaps is worse than one that is slightly low.
+   */
+  private adaptResolution(): void {
+    if (!this.view?.setRenderScale) return;
+    const now = performance.now();
+    if (now < this.lastAdaptAt) return;
+    // A second of frames, and a full window of statistics behind it: the first seconds are shader
+    // compiles and a level landing, not a measurement.
+    const stats = this.stats.snapshot();
+    // **Not the first seconds.** Shader compilation and the level landing are the worst frames the
+    // game will ever have, and they say nothing about the machine: without this, every session
+    // opened at 90% resolution because of a compile hitch that had already finished.
+    if (stats.frames < 120 || stats.elapsedSeconds < 3) return;
+
+    if (stats.worstFrameTimeMs > LATE_FRAME_MS && this.renderScale > MIN_RENDER_SCALE) {
+      this.renderScale = Math.max(MIN_RENDER_SCALE, this.renderScale - 0.1);
+      this.view.setRenderScale(this.renderScale);
+      // Wait for the window to refill before judging again: `worstFrameTimeMs` holds the last two
+      // seconds of frames, and stepping twice on the same late ones is how a controller oscillates.
+      this.lastAdaptAt = now + 1500;
+      this.lastScaleUpAt = now;
+      this.scaleUpCooldownMs = Math.min(120_000, this.scaleUpCooldownMs * 2);
+      return;
+    }
+
+    if (
+      stats.worstFrameTimeMs < EASY_FRAME_MS &&
+      this.renderScale < 1 &&
+      now - this.lastScaleUpAt > this.scaleUpCooldownMs
+    ) {
+      this.renderScale = Math.min(1, this.renderScale + 0.05);
+      this.view.setRenderScale(this.renderScale);
+      this.lastScaleUpAt = now;
+      this.lastAdaptAt = now + 1500;
+      return;
+    }
+
+    this.lastAdaptAt = now + 1000;
+  }
+
+  /**
    * Keeps a smoothed account of where the frame's time goes, for the `?perf` readout.
    *
    * **Two numbers, because they have opposite fixes.** Time inside `view.render` is the GPU and the
@@ -1557,6 +1642,7 @@ export class Game {
       ` | ${stats?.objects ?? 0} objects, ${stats?.chunksDrawn ?? 0}/${stats?.chunksTotal ?? 0} chunks` +
       `, ${stats?.movingDrawn ?? 0}/${stats?.movingTotal ?? 0} moving` +
       ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
+      (this.renderScale < 1 ? ` (${Math.round(this.renderScale * 100)}% resolution)` : '') +
       ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}` +
       // **What machine is this, and is it even using its graphics card.** A WebGL context that fell
       // back to software is a scene drawn on the CPU, and no amount of batching or culling makes that

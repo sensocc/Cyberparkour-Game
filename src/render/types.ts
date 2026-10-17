@@ -56,12 +56,22 @@ export interface GameViewLike {
     readonly chunksTotal?: number;
     readonly movingDrawn?: number;
     readonly movingTotal?: number;
+    /** Ratio of drawing-buffer pixels to CSS pixels actually in use, adaptation included. */
+    readonly pixelRatio?: number;
   };
 
   /** GPU description, used by the debug HUD and crash reports. */
   readonly rendererInfo: string | null;
   /** Resizes the drawing buffer to a CSS pixel size. */
   setSize(width: number, height: number): void;
+  /**
+   * Scales the drawing buffer against the preset's cap, 0.6..1.
+   *
+   * This is the dial dynamic resolution turns: 1 is the preset's own resolution, 0.8 is eighty per
+   * cent of it per axis. It exists on the interface because the *game* owns the frame statistics
+   * that decide when to turn it, and the view owns the renderer that obeys.
+   */
+  setRenderScale(scale: number): void;
   /** Draws one frame from an eye position and orientation. */
   render(eye: ReadonlyVec3, orientation: Orientation): void;
   /**

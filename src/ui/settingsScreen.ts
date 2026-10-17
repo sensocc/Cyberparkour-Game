@@ -373,6 +373,6 @@ const MOTION_LABELS: Record<MotionLevel, string> = {
 
 const QUALITY_NOTES: Record<QualityLevel, string> = {
   low: 'One pixel per pixel, no shadows, three lamps, 2x filtering. For a laptop on battery.',
-  medium: 'Up to 1.5x the pixels, 2048 shadows, five lamps, 8x filtering.',
+  medium: 'Up to 1.25x the pixels, 2048 shadows, five lamps, 8x filtering.',
   high: 'Up to 2x the pixels, 2048 shadows, six lamps, 16x filtering. Sharpest on a high-DPI screen.',
 };

@@ -113,6 +113,17 @@ export class GameView implements GameViewLike {
   /** Borrowed, not owned: the loader disposes them, and settings re-filter them. */
   private readonly assets: SceneAssets;
   private quality: QualityPreset = QUALITY_PRESETS.high;
+  /**
+   * How much of the preset's resolution is actually drawn, 0.6..1.
+   *
+   * **Dynamic resolution.** This laptop-class GPU can hold sixty frames a second at 2.3 megapixels
+   * when it is cool and cannot when it is heat-soaked: measured on the machine this was tuned on,
+   * the same view costs 16.7 ms at 59 °C and 19.6 ms at 87 °C, because the iGPU clocks down from
+   * 2,200 MHz to about 1,800. There is no setting that fixes that, because the player cannot see
+   * the temperature - so the game watches its own frames instead and takes the resolution down
+   * until they fit, raising it again when there is room. See `Game.adaptResolution`.
+   */
+  private renderScale = 1;
   private readonly body: PlayerBody;
   private readonly config: GameConfig;
   /**
@@ -301,6 +312,7 @@ export class GameView implements GameViewLike {
     readonly chunksTotal: number;
     readonly movingDrawn: number;
     readonly movingTotal: number;
+    readonly pixelRatio: number;
   } {
     return {
       calls: this.renderer.info.render.calls,
@@ -311,6 +323,7 @@ export class GameView implements GameViewLike {
       chunksTotal: this.built.chunks.length,
       movingDrawn: this.movingDrawn,
       movingTotal: this.built.moving.length,
+      pixelRatio: Number(this.drawingRatioNow().toFixed(2)),
     };
   }
 
@@ -334,11 +347,41 @@ export class GameView implements GameViewLike {
     const safeWidth = Math.max(1, Math.floor(width));
     const safeHeight = Math.max(1, Math.floor(height));
 
-    this.renderer.setPixelRatio(drawingRatio(this.quality));
+    this.applyDrawingSize();
     this.renderer.setSize(safeWidth, safeHeight, false);
 
     this.camera.aspect = safeWidth / safeHeight;
     this.camera.updateProjectionMatrix();
+  }
+
+  /** The pixel ratio in use: the preset's cap, scaled by whatever adaptation has settled on. */
+  private drawingRatioNow(): number {
+    return Math.max(0.5, drawingRatio(this.quality) * this.renderScale);
+  }
+
+  private applyDrawingSize(): void {
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.renderer.setPixelRatio(this.drawingRatioNow());
+    this.renderer.setSize(size.x, size.y, false);
+  }
+
+  /**
+   * Takes the drawing buffer down (or back up) against the preset's cap.
+   *
+   * Called by the game when the frame statistics say the frame no longer fits. Idempotent, and it
+   * keeps the canvas's CSS size: only the number of pixels behind it changes.
+   */
+  setRenderScale(scale: number): void {
+    if (this.disposed) return;
+    const next = Math.max(0.6, Math.min(1, scale));
+    if (Math.abs(next - this.renderScale) < 0.001) return;
+    this.renderScale = next;
+    this.applyDrawingSize();
+    logger.info('render', 'resolution adapted', {
+      scale: Number(next.toFixed(2)),
+      pixelRatio: Number(this.drawingRatioNow().toFixed(2)),
+      quality: this.quality.label,
+    });
   }
 
   /** Renders one frame from an eye position and orientation. */
@@ -550,10 +593,11 @@ export class GameView implements GameViewLike {
     if (this.disposed) return;
     const previous = this.quality;
     this.quality = preset;
+    // A preset change is a fresh start on purpose: the player has just said what they want, so the
+    // adaptation begins again at the new cap rather than carrying a guess about the last one.
+    this.renderScale = 1;
 
-    const size = this.renderer.getSize(new THREE.Vector2());
-    this.renderer.setPixelRatio(drawingRatio(preset));
-    this.renderer.setSize(size.x, size.y, false);
+    this.applyDrawingSize();
 
     const shadowsChanged = previous.shadows !== preset.shadows;
     this.renderer.shadowMap.enabled = preset.shadows;

@@ -63,7 +63,12 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
   },
   medium: {
     label: 'Medium',
-    pixelRatioCap: 1.5,
+    // **1.25, not 1.5.** The cap is in pixels per CSS pixel, and plenty of laptop panels run at a
+    // device scale of 1.5 - on one of those, a cap of 1.5 and a cap of 2 render the *identical*
+    // number of pixels, so "Medium" was indistinguishable from "High" on exactly the machines that
+    // needed it most. At 1.25 the three presets are three different resolutions on such a panel
+    // (1.0, 1.25, 1.5) and unchanged on a 1x display, where 1.0 is the sensible ceiling anyway.
+    pixelRatioCap: 1.25,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 8,
