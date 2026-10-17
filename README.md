@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.16` |
+| Version | `1.0.17` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1158 in 42 files |
+| Tests | 1159 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -143,11 +143,16 @@ is missing by three times is not missing because of a graphics setting, and trim
 picture is gone will not find out what it is missing by.
 
 So the game now measures instead. Add `?perf` to the URL and the top-left corner reports the frame:
-the rate, the draw calls and triangles submitted, the milliseconds spent inside the renderer against the
-milliseconds spent everywhere else, the compiled program count, the preset, and - because it matters -
-whether this is a development build or a production one. The split is the point: time inside the
-renderer is what a graphics setting can move, and everything else is the simulation, the pose and the
-DOM, which no setting can.
+the rate, the draw calls and triangles submitted, **the work the frame did on this thread against the
+interval it took**, the compiled program count, the preset, and - because it matters - whether this is
+a development build or a production one. The split is the point, and V1.0.17 made it an honest one: on
+a 60 Hz screen a frame spends most of its interval waiting for the vertical blank, so "interval minus
+render" (which is what it used to print) read as twelve milliseconds of work that did not exist. Work
+near the interval is this thread - the simulation, the pose, the submission, the DOM, and no settings
+menu can move any of it. Work well under the interval with the interval itself long is the GPU, which
+is what a graphics setting can move. One reading from the machine this was tuned on, at the spawn
+rooftop on the high preset at 1080p: `59 fps | draw 284 calls, 184k tris | 4.0 ms work of 18.3 ms
+interval [render 3.4 sim 0.1 hud 0.1]`.
 
 **The measurement finally named it, and it was the draw calls, twice over.** A reading from the machine that
 had the problem: simulation 0.0–0.2 ms, HUD 0.4–0.7 ms, render 9.9–44 ms, and **400 to 1,000 draw
@@ -203,6 +208,21 @@ thousands of draw calls and the answer was assumed to be the chunks. It was not,
   built a six-hundred-character string per frame), the HUD's statistics are read once per frame instead
   of three times, and the level and scene builders resolve the gate-to-lift mapping in one pass each
   instead of a million string comparisons per lift.
+
+**V1.0.17: what a playtest in a real browser found.** Driven through the whole loop - play, sprint,
+jump, ride a lift, take the cat's quest, fall off a roof and respawn, change the preset mid-run,
+restart - the game holds a locked 60 fps on an AMD Radeon 680M at 1080p on the high preset, with 4 ms
+of work per frame, 284 draw calls at the spawn rooftop and no console errors. Three things it also
+found, all of them copy or diagnostics rather than frames:
+
+- **The readout was measuring the vertical blank.** `interval - render` is not "other work"; it is
+  mostly the time a frame spends waiting for the display. It now prints the frame's own work next to
+  the interval, which is the pair that separates "this thread is too slow" from "the GPU is".
+- **The title, the About screen and the graphics presets described a game that no longer exists** -
+  nine roofs, two lifts, eight pickups, "4K shadows", "every plume" (there are no plumes; the district
+  is gone and the city has ninety lifts and ten shards). They describe what is actually there now.
+- **The level was still called "Rooftop District"** on the title card. It is called Neon Grid, because
+  that is what it is.
 
 **And the frame no longer makes garbage.** A frame that allocates is a frame that ends in a garbage
 collection, and a collection is a dip you see while standing still doing nothing - which is exactly
@@ -349,3 +369,4 @@ tests/        unit, integration, and the invariants
 | V1.0.14 | No garbage per frame: pooled puffs, a ten-hertz HUD |
 | V1.0.15 | The readout says which machine it is on |
 | V1.0.16 | Eight lights, batched shutters, and a broadphase that reaches the ledges |
+| V1.0.17 | The readout measures work, and the copy tells the truth |

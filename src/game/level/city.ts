@@ -228,6 +228,9 @@ export function buildCity(base: LevelDefinition, options: CityOptions = {}): Lev
   // and its sun.
   return {
     ...base,
+    // The name is the city's, not the file's: what is generated is a kilometre of grid, and calling
+    // it by the name of the district it replaced was a label on the wrong thing.
+    name: 'Neon Grid',
     props: parts.props,
     checkpoints: parts.checkpoints,
     collectibles: parts.collectibles,

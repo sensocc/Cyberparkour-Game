@@ -51,10 +51,11 @@ export interface GameUiOptions {
 
 /** What the demo is, in one sentence per entry, for the About panel. */
 export const ABOUT_LINES: readonly string[] = [
-  'A low-poly first-person parkour run across a cyberpunk rooftop district.',
-  'Nine roofs on two levels, crossed by mantling, pull-ups, climbing, vaulting, wall running, pipe climbing and well-timed landings — and joined by two lifts, so the district is a loop rather than a line.',
-  'Two of the roofs have machine rooms you can walk into, lit from the inside and behind a door you open yourself, and the signage across them glows.',
-  'Eight pickups are scattered along the route, including a few that need the abilities rather than a straight line. Reach the finish with every checkpoint behind you to complete the run — the clock is on the screen, and the record is kept.',
+  'A low-poly first-person parkour run across a kilometre of generated cyberpunk city.',
+  'Sixteen by sixteen blocks of buildings, courtyards and streets, thirty-five metres above the road — crossed by mantling, pull-ups, climbing, vaulting, wall running, pipe climbing and well-timed landings.',
+  'Ninety lifts serve the towers, so the street is never a dead end: call one, pick a floor, and step out where you meant to be. Ladders, fire escapes and scaffolds do the same job for the patient.',
+  'A courtyard cat wants ten shards. Find it first — nothing can be picked up until it has asked — then run the five checkpoints and bring them back to where the cat is sitting.',
+  'Three time trials start at a gate and end at a gate, scored one to three stars. Somewhere there is also a phone, which is not one of the ten and is not on any list.',
   'You have a body: look down and you will see your own chest, arms and legs, and the sun casts your shadow onto the roof.',
   'Every key, the mouse sensitivity, the field of view, the graphics preset, the volume and how much the camera moves can all be changed in Settings, and they are remembered between sessions.',
 ];
@@ -141,7 +142,7 @@ export class GameUi {
       el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a cyberpunk city. This build is the V0.7 technical demo: a hand-made district at the centre of a kilometre of generated city — rooftops in terraces, construction sites and their cranes, ladders and balconies, halls and buildings you can walk into, and lifts you call, ride and step out of fifty metres above the street.',
+        text: 'A first-person parkour run across a kilometre of generated cyberpunk city: a courtyard cat with ten shards to find, five checkpoints to run, three time trials, ninety lifts, and a street thirty-five metres below the rooftops. Mantle, vault, wall run and climb your way back up.',
       }),
       this.menu([
         button('Play', {

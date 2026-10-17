@@ -372,7 +372,7 @@ const MOTION_LABELS: Record<MotionLevel, string> = {
 };
 
 const QUALITY_NOTES: Record<QualityLevel, string> = {
-  low: 'No shadows, fewer lamps, less smoke. For a laptop on battery.',
-  medium: 'Shadows at half resolution, most of the lighting, all the smoke.',
-  high: 'Everything: 4K shadows, full lighting, every plume, 16x filtering.',
+  low: 'One pixel per pixel, no shadows, three lamps, 2x filtering. For a laptop on battery.',
+  medium: 'Up to 1.5x the pixels, 2048 shadows, five lamps, 8x filtering.',
+  high: 'Up to 2x the pixels, 2048 shadows, six lamps, 16x filtering. Sharpest on a high-DPI screen.',
 };

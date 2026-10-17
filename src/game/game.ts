@@ -245,7 +245,12 @@ export class Game {
   private readonly perfEnabled = typeof location !== 'undefined' && /[?&]perf\b/.test(location.search);
   private perfElement: HTMLElement | null = null;
   private perfRenderMs = 0;
-  private perfOtherMs = 0;
+  /** All the work the frame did on this thread, which is what tells CPU from GPU. */
+  private perfWorkMs = 0;
+  /** Wall clock between frames: pinned to the display's refresh unless the frame is missing it. */
+  private perfIntervalMs = 0;
+  /** When the current frame began, for `perfWorkMs`. */
+  private perfFrameStart = 0;
   private perfText = '';
   private perfShownAt = 0;
   private perfMarkAt = 0;
@@ -963,6 +968,7 @@ export class Game {
   // ---------------------------------------------------------------- frame
 
   private handleFrame(delta: number): void {
+    if (this.perfEnabled) this.perfFrameStart = performance.now();
     this.processActions();
     if (this.status !== 'playing') return;
 
@@ -1026,6 +1032,13 @@ export class Game {
     this.perfSection('render');
     this.updateHud();
     this.perfSection('hud');
+
+    // Everything this frame cost this thread, from the first line of it to the last - which is the
+    // number that says whether the frame is missing on the CPU or on the GPU. See `measureFrame`.
+    if (this.perfEnabled) {
+      const now = performance.now();
+      this.perfWorkMs += (now - this.perfFrameStart - this.perfWorkMs) * 0.15;
+    }
   }
 
   /** Starts timing a section of the frame, for the `?perf` readout. */
@@ -1520,7 +1533,12 @@ export class Game {
     const nowMs = performance.now();
     const interval = this.perfLastAt === 0 ? delta * 1000 : nowMs - this.perfLastAt;
     this.perfLastAt = nowMs;
-    this.perfOtherMs += (Math.max(0, interval - renderMs) - this.perfOtherMs) * k;
+    // **Compared against the work, not subtracted from it.** A frame locked to the display spends
+    // most of its interval waiting for the vertical blank, so "interval - render" reports a number
+    // that looks like work and is really idle: on a 60 Hz screen it read 12 ms of nothing. The three
+    // numbers together say which half is short - work near the interval is this thread, an interval
+    // near 33 ms with work of 5 is the GPU - and no single one of them does.
+    this.perfIntervalMs += (interval - this.perfIntervalMs) * k;
 
     // **Formatted four times a second, not every frame.** The readout is a diagnostic, and a
     // diagnostic that allocates a six-hundred-character string per frame is measuring itself: the
@@ -1531,10 +1549,11 @@ export class Game {
 
     const stats = this.view?.renderStats;
     this.perfText =
-      `${(1000 / Math.max(0.001, this.perfRenderMs + this.perfOtherMs)).toFixed(0)} fps` +
+      `${(1000 / Math.max(0.001, this.perfIntervalMs)).toFixed(0)} fps` +
       ` | draw ${stats?.calls ?? 0} calls, ${Math.round((stats?.triangles ?? 0) / 1000)}k tris` +
-      ` | ${this.perfRenderMs.toFixed(1)} ms render + ${this.perfOtherMs.toFixed(1)} ms other` +
-      ` [sim ${this.perfSections.anim.toFixed(1)} hud ${this.perfSections.hud.toFixed(1)}]` +
+      ` | ${this.perfWorkMs.toFixed(1)} ms work of ${this.perfIntervalMs.toFixed(1)} ms interval` +
+      ` [render ${this.perfRenderMs.toFixed(1)} sim ${this.perfSections.anim.toFixed(1)}` +
+      ` hud ${this.perfSections.hud.toFixed(1)}]` +
       ` | ${stats?.objects ?? 0} objects, ${stats?.chunksDrawn ?? 0}/${stats?.chunksTotal ?? 0} chunks` +
       `, ${stats?.movingDrawn ?? 0}/${stats?.movingTotal ?? 0} moving` +
       ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
