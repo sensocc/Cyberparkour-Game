@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.6` |
+| Version | `1.0.7` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1148 in 42 files |
+| Tests | 1149 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -127,6 +127,28 @@ can shortcut. Call it with `E`, walk in, pick a floor with `1`–`8`, and the ga
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders,
 and pipe climbs — ordinary states in one machine rather than special cases, and built to be felt
 rather than to be counted.
+
+### The frame always comes first
+
+**V1.0.4 to V1.0.6 made the frame worse, and the report that said so was right.** What they added was
+bloom — three full-screen blurs — on top of a pixel ratio of 1.5, on the preset called "max". On a
+high-DPI panel that is 2.25 times the fragments of a 1.0 ratio *and* four extra full-screen passes, and
+the answer on real hardware was ten to twenty frames a second. The features are worth having; they were
+priced as if nothing cost anything.
+
+So the price is paid honestly, and the guesswork is gone:
+
+- **Pixel ratio 1.25 on high**, not 1.5. A quarter of the sharpness a 2x panel can show, and a third of
+  the frame back.
+- **The bloom blurs at a quarter of the frame** — a sixteenth of the pixels — and is **off at medium**
+  rather than weaker, because three full-screen blurs cost what they cost whatever the strength is.
+- **Fewer dynamic lights on high**: six was the whole frame's per-fragment budget spent on pools of
+  light on a street that is mostly neon anyway.
+- **And the preset is a starting point, not a promise.** The game measures its own frame time as it
+  runs: if the average over a second misses 18.5 ms, it steps down a preset, says so in the log, and
+  stays there. It never steps back up — a machine that stumbled over one shader compile should not be
+  walked into the stutter it just escaped. The player asked for sixty and gets as close as their
+  hardware can come, rather than a number in a menu that lies.
 
 ### The frame
 
@@ -311,3 +333,4 @@ tests/        unit, integration, and the invariants
 | V1.0.4 | The light, bloom, a flash on a shard, and a playable game |
 | V1.0.5 | A warm loading screen, a cheaper frame, and nothing popping |
 | V1.0.6 | Down the ladder, a shadow map drawn on purpose, and distances in 3D |
+| V1.0.7 | The frame first: cheaper presets, and a preset that measures itself |

@@ -73,26 +73,31 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
   },
   medium: {
     label: 'Medium',
-    pixelRatioCap: 1.25,
+    pixelRatioCap: 1,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 8,
     smokeScale: 0.7,
-    lightScale: 0.75,
-    bloom: 0.5,
+    lightScale: 0.5,
+    // Off at medium, not merely weaker. A bloom pass is three full-screen blurs whatever its
+    // strength is, and a preset that costs a third of the frame to soften the neon is not a medium
+    // preset - it is a high one with the dial turned down.
+    bloom: 0,
   },
   high: {
     label: 'High',
-    // **Not 2.** The pixel ratio multiplies the fragment work of everything - every lamp loop, every
-    // lit fragment, the bloom blurs - and 1.5 is where the image stops looking sharper and the
-    // frame starts costing 78 per cent more. A high-DPI display is exactly the hardware that reports
-    // frames dropping while it moves, and this is the single largest lever there is on that.
-    pixelRatioCap: 1.5,
+    // **1.25, and it matters more than anything else here.** The pixel ratio multiplies the fragment
+    // work of the entire frame - every lamp loop, every lit fragment, every bloom blur - and on a
+    // high-DPI display a cap of 1.5 is 2.25 times the fragments of 1.0. A report of ten frames a
+    // second on a 4K panel is not a mystery when the frame is also running a four-pass bloom on top
+    // of that. 1.25 costs a quarter of the sharpness a 2x panel can show and buys back a third of
+    // the frame, and the anti-aliasing covers most of the difference.
+    pixelRatioCap: 1.25,
     shadows: true,
     shadowMapSize: 2048,
     anisotropy: 16,
     smokeScale: 1,
-    lightScale: 1,
+    lightScale: 0.65,
     bloom: 0.9,
   },
 };

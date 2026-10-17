@@ -303,13 +303,14 @@ export class GameView implements GameViewLike {
   private buildBloom(): void {
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
-    // **Half resolution for the blur chain.** `UnrealBloomPass` blurs at a quarter, an eighth and a
+    // **A quarter resolution for the blur chain.** `UnrealBloomPass` blurs at a quarter, an eighth and a
     // sixteenth of whatever it is given and adds the result back, so the source it samples only has
     // to be as sharp as the widest of those - and a glow is by definition not sharp. Rendering the
-    // bright pass at half resolution halves the pass's cost for a difference nobody can see.
+    // bright pass at a quarter of the frame is a sixteenth of the pixels, for a difference nobody
+    // can see on something that is by definition soft-edged.
     const resolution = new THREE.Vector2(
-      Math.max(1, Math.round((size.x * drawingRatio(this.quality)) / 2)),
-      Math.max(1, Math.round((size.y * drawingRatio(this.quality)) / 2)),
+      Math.max(1, Math.round((size.x * drawingRatio(this.quality)) / 4)),
+      Math.max(1, Math.round((size.y * drawingRatio(this.quality)) / 4)),
     );
 
     const composer = new EffectComposer(this.renderer);

@@ -20,6 +20,7 @@ import { DEFAULT_CONFIG, fixedStep, withMotionScale, type GameConfig } from '../
 import {
   DEFAULT_SETTINGS,
   MOTION_SCALES,
+  QUALITY_LEVELS,
   QUALITY_PRESETS,
   normaliseSettings,
   readSettings,
@@ -216,6 +217,11 @@ export class Game {
   private pipes: ReadonlySet<string> = new Set();
   /** Whether the player has muted the demo. */
   private muted = false;
+  /** Frame times seen since the last quality check. */
+  private readonly qualityWatch: number[] = [];
+  /** Frames to wait after a change before watching again. */
+  private qualityCooldown = 0;
+
   /** The smoothed eye height, and how fast it catches up. */
   private eyeSpring = Number.NaN;
   private readonly eyeRate = 20;
@@ -954,8 +960,56 @@ export class Game {
     for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
     this.view?.animate(this.effectsSeconds);
     this.stats.push(delta);
+    this.watchFrameRate(delta);
     this.renderFrame(delta);
     this.updateHud();
+  }
+
+  /**
+   * Steps the graphics preset down when the frame cannot hold, and says so once.
+   *
+   * **A settings menu cannot know what a machine can do.** The presets are a guess about the
+   * hardware, and the only measurement that matters is the one taken while the game is running on it.
+   * This is that measurement: a rolling window of the simulation's own frame time, and if the median
+   * of it is over the budget for two seconds then the preset drops a step and stays there for the
+   * session. It only ever goes down - a machine that stumbles over one frame of a shader compile
+   * should not be walked back up into the stutter it just escaped.
+   *
+   * The whole point is that the player asked for sixty and gets as close as their hardware can come,
+   * rather than a number in a menu that lies.
+   */
+  private watchFrameRate(delta: number): void {
+    // One second of frames to settle after a change, then two seconds of watching.
+    this.qualityWatch.push(delta);
+    if (this.qualityWatch.length < 60) return;
+    const window = this.qualityWatch.length;
+    if (this.qualityCooldown > 0) {
+      this.qualityCooldown -= 1;
+      if (this.qualityCooldown > 0) return;
+      this.qualityWatch.length = 0;
+      return;
+    }
+    // Average, not worst: one hitch is not a reason to take the neon away.
+    let total = 0;
+    for (const seconds of this.qualityWatch) total += seconds;
+    const average = total / window;
+    this.qualityWatch.length = 0;
+    // 60 FPS is 16.7 ms; 18.5 is the point where the frame is missing the target more often than not.
+    if (average <= 0.0185) return;
+
+    const current = QUALITY_LEVELS.indexOf(this.settings.quality);
+    const next = QUALITY_LEVELS[current - 1];
+    this.qualityWatch.length = 0;
+    if (!next) return;
+    this.log?.warn('game', 'frame budget missed, dropping a quality step', {
+      from: this.settings.quality,
+      to: next,
+      averageMs: Math.round(average * 10000) / 10,
+    });
+    // Two windows, about two seconds: long enough for the new preset to change the picture on
+    // screen before it is judged again.
+    this.qualityCooldown = 2;
+    this.updateSettings({ quality: next });
   }
 
   /**
