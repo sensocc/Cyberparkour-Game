@@ -43,6 +43,16 @@ export const NO_ASSETS: SceneAssets = {
 
 /** Everything the game needs from a renderer. */
 export interface GameViewLike {
+  /**
+   * What the last frame asked the GPU to do. Optional: the tests' stand-in view has no GPU to
+   * account for, and a diagnostic must not be a requirement.
+   */
+  readonly renderStats?: {
+    readonly calls: number;
+    readonly triangles: number;
+    readonly programs: number;
+  };
+
   /** GPU description, used by the debug HUD and crash reports. */
   readonly rendererInfo: string | null;
   /** Resizes the drawing buffer to a CSS pixel size. */

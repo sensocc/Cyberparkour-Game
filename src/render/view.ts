@@ -143,8 +143,6 @@ export class GameView implements GameViewLike {
   private shadowFrames = 0;
   /** When the last frame was drawn, for the view's own frame-time estimate. */
   private lastFrameAt = 0;
-  /** What the start-up warm-up cost, and how many programs it left compiled. */
-  private warmUpCost = { ms: 0, programs: 0 };
 
   private disposed = false;
 
@@ -261,6 +259,21 @@ export class GameView implements GameViewLike {
   }
 
   /** GPU description, used in the debug HUD and crash reports. */
+  /**
+   * What the last frame cost the GPU, and what it asked of it.
+   *
+   * `calls` is the number that decides which half of a slow frame the problem is in: a few hundred
+   * calls with a bad frame rate is fill-rate or shader work - something a resolution setting can
+   * fix - and a thousand is the CPU feeding the GPU one object at a time, which no setting can.
+   */
+  get renderStats(): { readonly calls: number; readonly triangles: number; readonly programs: number } {
+    return {
+      calls: this.renderer.info.render.calls,
+      triangles: this.renderer.info.render.triangles,
+      programs: this.renderer.info.programs?.length ?? 0,
+    };
+  }
+
   get rendererInfo(): string | null {
     try {
       const gl = this.renderer.getContext();
@@ -274,59 +287,6 @@ export class GameView implements GameViewLike {
     }
   }
 
-  /**
-   * Compiles every shader and uploads every buffer, while the player is still on a loading screen.
-   *
-   * **This is the whole of the start-up jank and half of the movement jank.** three.js does its GPU
-   * work lazily: a material's program is compiled the first time it is *drawn*, and a geometry's
-   * buffers are uploaded when its mesh is first *visible*. The district has forty-odd materials
-   * across three hundred and fifty thousand triangles in six hundred and twenty-six chunks, so the
-   * first seconds of play were spent compiling programs a few at a time, and every chunk boundary
-   * crossed during a run spent a frame uploading the chunk on the other side of it. It does not
-   * matter how fast the frame is afterwards if the first one is two hundred milliseconds.
-   *
-   * So both happen once, here, where a stall is expected: `compile` walks the scene and builds every
-   * program it can, and then one frame is drawn with everything visible and nothing frustum-culled so
-   * that every buffer is uploaded.
-   */
-  private warmUp(): void {
-    const started = performance.now();
-
-    // Every program the scene's materials need, for this camera and this set of lights.
-    this.renderer.compile(this.built.scene, this.camera);
-
-    // And then every buffer: draw once with the culling turned off, so a chunk is uploaded now
-    // rather than the first time a player turns and finds it.
-    const chunks = this.built.chunks;
-    const state = chunks.map((chunk) => ({ visible: chunk.visible, culled: chunk.frustumCulled }));
-    try {
-      for (const chunk of chunks) {
-        chunk.visible = true;
-        chunk.frustumCulled = false;
-      }
-      this.renderer.render(this.built.scene, this.camera);
-    } finally {
-      chunks.forEach((chunk, index) => {
-        const saved = state[index];
-        if (saved) {
-          chunk.visible = saved.visible;
-          chunk.frustumCulled = saved.culled;
-        }
-      });
-    }
-
-    this.warmUpCost = {
-      ms: Math.round(performance.now() - started),
-      programs: this.renderer.info.programs?.length ?? 0,
-    };
-    logger.info('render', 'warmed up', this.warmUpCost);
-  }
-
-  /** What the start-up warm-up cost. Zero before the first `setSize`. */
-  get warmUpStats(): { readonly ms: number; readonly programs: number } {
-    return this.warmUpCost;
-  }
-
   /** Resizes the drawing buffer and camera to the given CSS pixel size. */
   setSize(width: number, height: number): void {
     if (this.disposed) return;
@@ -336,8 +296,6 @@ export class GameView implements GameViewLike {
 
     this.renderer.setPixelRatio(drawingRatio(this.quality));
     this.renderer.setSize(safeWidth, safeHeight, false);
-    // Once, at the first size: this is the last moment before the player is watching.
-    if (this.warmUpCost.programs === 0) this.warmUp();
 
     this.camera.aspect = safeWidth / safeHeight;
     this.camera.updateProjectionMatrix();

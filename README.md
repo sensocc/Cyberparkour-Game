@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.8` |
+| Version | `1.0.9` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
@@ -134,10 +134,23 @@ The rendering is V1.0.3's, deliberately and exactly: the same three presets, the
 same lighting and no post-processing chain. V1.0.4 added bloom and a higher exposure and V1.0.7 tried
 to price them; the honest conclusion was that the frame the game already had is the one to keep.
 
-Two things under it are invisible and were kept: the renderer **compiles every shader and uploads
-every buffer before the first frame** rather than lazily while the player watches, and the **shadow map
-is redrawn when the sun's camera moves instead of every frame**, since nothing in this district moves
-but the player. Neither changes a pixel; both are pure savings.
+There is one more thing to know about it, and it cost three versions to learn: **the fixes that made
+this game playable were order-of-magnitude ones** - forty thousand draw calls to five hundred, five
+hundred and forty-five lights to six - and they were all spent before V1.0.3. What is left is a floor,
+and the dials left on it (one fewer light, a smaller shadow map) are worth single-digit percent. A
+frame that is missing by three times is not missing because of a graphics setting, and trimming
+settings until the picture is gone will not find out what it is missing by.
+
+So the game now measures instead. Add `?perf` to the URL and the top-left corner reports the frame:
+the rate, the draw calls and triangles submitted, the milliseconds spent inside the renderer against the
+milliseconds spent everywhere else, the compiled program count, the preset, and - because it matters -
+whether this is a development build or a production one. The split is the point: time inside the
+renderer is what a graphics setting can move, and everything else is the simulation, the pose and the
+DOM, which no setting can.
+
+One regression is also gone: a start-up warm-up that compiled every shader and uploaded every buffer
+before the first frame, added in V1.0.5 and removed here. It was the only start-up behaviour that
+differed from V1.0.3, and start-up is where the report was.
 
 ### Nothing pops while you are moving
 
@@ -265,3 +278,4 @@ tests/        unit, integration, and the invariants
 | V1.0.6 | Down the ladder, a shadow map drawn on purpose, and distances in 3D |
 | V1.0.7 | The frame first: cheaper presets, and a preset that measures itself |
 | V1.0.8 | Graphics back to V1.0.3, features kept |
+| V1.0.9 | The warm-up out, the measurements in |

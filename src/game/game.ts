@@ -216,6 +216,20 @@ export class Game {
   private pipes: ReadonlySet<string> = new Set();
   /** Whether the player has muted the demo. */
   private muted = false;
+  /**
+   * The `?perf` readout, if it was asked for.
+   *
+   * A URL flag rather than a settings item on purpose: it is a diagnostic, it is not part of the game,
+   * and someone who wants it can type it. It reports to the console as well as to the corner of the
+   * screen, so the numbers survive a screenshot of nothing but the log.
+   */
+  private readonly perfEnabled = typeof location !== 'undefined' && /[?&]perf\b/.test(location.search);
+  private perfElement: HTMLElement | null = null;
+  private perfRenderMs = 0;
+  private perfOtherMs = 0;
+  private perfText = '';
+  private perfShownAt = 0;
+
   /** The smoothed eye height, and how fast it catches up. */
   private eyeSpring = Number.NaN;
   private readonly eyeRate = 20;
@@ -1397,7 +1411,49 @@ export class Game {
       dt,
     );
 
+    const renderStarted = performance.now();
     this.view.render(this.scratchEye, this.scratchOrientation);
+    this.measureFrame(performance.now() - renderStarted, dt);
+  }
+
+  /**
+   * Keeps a smoothed account of where the frame's time goes, for the `?perf` readout.
+   *
+   * **Two numbers, because they have opposite fixes.** Time inside `view.render` is the GPU and the
+   * draw submission - the part a graphics setting can change. Everything else in the frame is the
+   * simulation, the pose, the HUD and the DOM, and no settings menu can touch it. A report of "twenty
+   * frames a second" is only actionable once you know which of the two owns the frame.
+   *
+   * `renderMs` is measured directly; `otherMs` is the frame delta minus it, so it includes the browser's
+   * own work and is an upper bound rather than a measurement of the simulation alone.
+   */
+  private measureFrame(renderMs: number, delta: number): void {
+    if (!this.perfEnabled) return;
+    const k = 0.15;
+    this.perfRenderMs += (renderMs - this.perfRenderMs) * k;
+    this.perfOtherMs += (Math.max(0, delta * 1000 - renderMs) - this.perfOtherMs) * k;
+    const stats = this.view?.renderStats;
+    this.perfText =
+      `${(1000 / Math.max(0.001, this.perfRenderMs + this.perfOtherMs)).toFixed(0)} fps` +
+      ` | draw ${stats?.calls ?? 0} calls, ${Math.round((stats?.triangles ?? 0) / 1000)}k tris` +
+      ` | ${this.perfRenderMs.toFixed(1)} ms render + ${this.perfOtherMs.toFixed(1)} ms other` +
+      ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
+      ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}`;
+    const now = performance.now();
+    if (now - this.perfShownAt < 250) return;
+    this.perfShownAt = now;
+    if (!this.perfElement && typeof document !== 'undefined') {
+      // Monospace at the top-left, above everything and clickable-through: this is a diagnostic, not
+      // part of the HUD, and it should be impossible to mistake for one.
+      const element = document.createElement('pre');
+      element.style.cssText =
+        'position:fixed;top:4px;left:4px;margin:0;padding:4px 6px;z-index:9999;pointer-events:none;' +
+        'font:11px ui-monospace,monospace;color:#9ff;background:#000a;border-radius:3px;';
+      document.body.append(element);
+      this.perfElement = element;
+    }
+    if (this.perfElement) this.perfElement.textContent = this.perfText;
+    this.log?.info('perf', this.perfText);
   }
 
   /** The play HUD lives next to the health and the checkpoints, not the debug rows. */
