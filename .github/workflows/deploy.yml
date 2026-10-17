@@ -42,6 +42,10 @@ jobs:
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          # Enables GitHub Pages on first run, so a fresh repository deploys
+          # without a manual trip to the repo's Pages settings.
+          enablement: true
 
       - name: Upload the build
         uses: actions/upload-pages-artifact@v3
