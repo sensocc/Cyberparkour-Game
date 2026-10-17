@@ -1011,8 +1011,13 @@ export class Game {
       const shardsIn = this.run.snapshot().collected >= this.run.snapshot().collectibleCount;
       if (quest === 'none' || shardsIn) {
         const dx = npc.position.x - this.player.position.x;
+        const dy = npc.position.y - this.player.position.y;
         const dz = npc.position.z - this.player.position.z;
-        return { bearing: Math.atan2(dx, dz) - this.player.yaw, distance: Math.hypot(dx, dz) };
+        // **Three dimensions, not two.** The city is climbed, not walked: a shard on a roof forty
+        // metres up is not "twelve metres away" because it is twelve metres horizontally, and a
+        // readout that says so while the player stands under it reads as broken. The bearing stays
+        // horizontal - an arrow points along the ground whoever the target is above.
+        return { bearing: Math.atan2(dx, dz) - this.player.yaw, distance: Math.hypot(dx, dy, dz) };
       }
     }
 
@@ -1023,8 +1028,11 @@ export class Game {
       if (shard.id.startsWith('secret-')) continue;
       if (this.run.hasCollected(shard.id)) continue;
       const dx = shard.position.x - this.player.position.x;
+      const dy = shard.position.y - this.player.position.y;
       const dz = shard.position.z - this.player.position.z;
-      const distance = Math.hypot(dx, dz);
+      // Which one is *nearest* is a 3D question for the same reason the readout is: the shard on the
+      // roof above is closer than the one down the street.
+      const distance = Math.hypot(dx, dy, dz);
       if (best && distance >= best.distance) continue;
       // Relative to where the player is looking, so "ahead" means ahead.
       best = { bearing: Math.atan2(dx, dz) - this.player.yaw, distance };

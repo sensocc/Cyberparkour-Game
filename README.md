@@ -7,9 +7,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.5` |
+| Version | `1.0.6` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1147 in 42 files |
+| Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -148,6 +148,17 @@ that took, in order of how much it matters on real hardware:
   that made no measurable difference — its driver compiles asynchronously — so it is insurance
   against the drivers where it is not.)
 
+### Down as well as up
+
+A ladder could be climbed but not descended: back-input let go of it wherever the player was, so
+pressing back at the top of a twenty-eight metre ladder detached them and dropped them - and worse,
+the mantle hand-over fired first and threw them *over* the edge they were trying to leave.
+
+Back-input climbs down now, walking the same sections in reverse. The release fires only where there
+is no section below, which is the bottom of the stack, and that is also where stepping off is right.
+The hand-over to a mantle is gated on `forward > 0` for the same reason: it should happen when you
+reach the top going up, not when you start going down from it.
+
 ### Nothing pops while you are moving
 
 Rapid movement is where a world shows its seams, and two of them were showing:
@@ -155,6 +166,11 @@ Rapid movement is where a world shows its seams, and two of them were showing:
 - **Chunks vanished while still visible.** The draw distance was 420 m against fog that runs to 480,
   so a chunk three per cent opaque was disappearing out of the haze. It is 470 now, where the fog is
   finished: past the point of seeing, not merely small.
+- **The shadow map was rendered for nothing.** Nothing in this district moves but the player, and the
+  sun's shadow camera is snapped to whole texels as it follows them - so on most frames the map was
+  drawn from the exact place it was drawn from last time, re-drawing every caster in the city to
+  produce a pixel-identical texture. It is redrawn when the snap moves and every third frame besides,
+  which keeps the player's own shadow alive at 20 Hz where a freeze would show.
 - **The lamps snapped on and off.** Six of five hundred and seventy-six sources are lit at a time and
   the set changes every 24 m, so sprinting down a street used to watch pools of light switch like a
   hand on a wall. They fade over about a fifth of a second now. The *visibility* pass, which was
@@ -294,3 +310,4 @@ tests/        unit, integration, and the invariants
 | V1.0.3 | Momentum through the moves, a sprung eye, and the jank measured away |
 | V1.0.4 | The light, bloom, a flash on a shard, and a playable game |
 | V1.0.5 | A warm loading screen, a cheaper frame, and nothing popping |
+| V1.0.6 | Down the ladder, a shadow map drawn on purpose, and distances in 3D |

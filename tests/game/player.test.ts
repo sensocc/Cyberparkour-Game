@@ -528,6 +528,42 @@ describe('climbing', () => {
     expect(highest).toBeGreaterThan(27);
   });
 
+  it('climbs a stack of sections back down, and lets go at the bottom of it', () => {
+    // The other half of the ladder: going down is walking the same sections in reverse, and the
+    // release fires where there is no section below rather than wherever the player happens to be.
+    // Before this, back-input let go on the spot - so the top of a twenty-eight metre ladder was a
+    // leap of faith, and a descent from it fired the *mantle* hand-over and threw the player over
+    // the edge they were trying to leave.
+    const sections = [0, 1, 2, 3].map((index) =>
+      collider(`rung-${index}`, vec3(0.8, index * 7 + 3.5, 0), vec3(0.6, 7, 1.2), 'climbable'),
+    );
+    const climbableIds = new Set(sections.map((section) => section.id));
+    const collisionWorld = world(FLOOR, ...sections);
+
+    // Up most of the way, holding the climb.
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const options = optionsFor(collisionWorld, { climbableIds });
+    for (let step = 0; step < 420; step += 1) stepPlayer(state, input({ forward: 1 }), STEP, options);
+    const climbedTo = state.position.y;
+    expect(climbedTo).toBeGreaterThan(15);
+
+    // Then down: the player stays on the ladder the whole way, and the height falls smoothly.
+    let drops = 0;
+    let previous = state.position.y;
+    let lowest = climbedTo;
+    for (let step = 0; step < 420; step += 1) {
+      stepPlayer(state, input({ forward: -1 }), STEP, options);
+      if (state.position.y < previous - 1) drops += 1;
+      previous = state.position.y;
+      lowest = Math.min(lowest, previous);
+    }
+
+    expect(drops, 'the descent must not drop the player off the ladder').toBe(0);
+    expect(lowest).toBeLessThan(1);
+    // ...and at the bottom of the stack it lets go, rather than walking into the floor.
+    expect(state.climbId).toBeNull();
+  });
+
   it('ignores a face that is not tagged climbable', () => {
     const wall = collider('wall', vec3(0.8, 3, 0), vec3(0.6, 6, 1.2), 'wall');
     const state = run(world(FLOOR, wall), {

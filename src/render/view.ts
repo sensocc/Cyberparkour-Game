@@ -152,6 +152,10 @@ export class GameView implements GameViewLike {
   private bloomPass: UnrealBloomPass | null = null;
   /** Whether the post chain has been checked against a direct render yet. */
   private bloomVerified = false;
+  /** The snapped shadow-camera centre the map was last rendered from. */
+  private shadowX = Number.NaN;
+  private shadowZ = Number.NaN;
+  private shadowFrames = 0;
   /** When the last frame was drawn, for the view's own frame-time estimate. */
   private lastFrameAt = 0;
   /** What the start-up warm-up cost, and how many programs it left compiled. */
@@ -193,6 +197,14 @@ export class GameView implements GameViewLike {
     // of - so the honest choice is hard PCF with a shadow map sized by the graphics
     // preset, where resolution is something the player can turn up.
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    // **The shadow map is rendered on purpose, not every frame.** Nothing in this district moves but
+    // the player, and the shadow camera is snapped to whole texels as it follows them - so on a frame
+    // where the snap has not moved, the shadow map would be rendered from the same place it was
+    // rendered from last time, drawing every caster in the district again to produce a pixel-identical
+    // texture. It is the most expensive pass in the renderer at high settings, and it is now drawn
+    // when the camera moves and every third frame besides, which keeps the player's own shadow alive.
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.setClearColor(new THREE.Color(options.definition.environment.skyColor), 1);
 
     // Filtering has to be decided before the first frame: three.js applies it when
@@ -597,6 +609,18 @@ export class GameView implements GameViewLike {
       this.sunOffset.y,
       snappedZ + this.sunOffset.z,
     );
+
+    // Redraw the map when the snapped camera moved, and every third frame regardless so the player's
+    // own shadow follows them: at 20 Hz a falling body's shadow is invisible as a redraw and obvious
+    // as a freeze. `autoUpdate` is off - see the constructor.
+    this.shadowFrames += 1;
+    const moved = snappedX !== this.shadowX || snappedZ !== this.shadowZ;
+    if (moved || this.shadowFrames >= 3) {
+      this.shadowX = snappedX;
+      this.shadowZ = snappedZ;
+      this.shadowFrames = 0;
+      this.renderer.shadowMap.needsUpdate = true;
+    }
   }
 
   /** Sets the vertical field of view. */

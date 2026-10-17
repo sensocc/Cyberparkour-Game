@@ -711,6 +711,27 @@ function climbContinuesAbove(
   return false;
 }
 
+/**
+ * Whether the ladder carries on *below* this section, the mirror of the check above.
+ *
+ * Both exist because a ladder is a stack of five-metre colliders. Going up, the hand-over to a mantle
+ * only fires on the top of the stack. Going down, the release only fires at the bottom of it.
+ */
+function climbContinuesBelow(
+  world: CollisionWorld,
+  surface: Collider,
+  climbableIds: ReadonlySet<string>,
+): boolean {
+  const { box } = surface;
+  for (const other of world.colliders) {
+    if (other.id === surface.id || !climbableIds.has(other.id)) continue;
+    if (other.box.min.x >= box.max.x || other.box.max.x <= box.min.x) continue;
+    if (other.box.min.z >= box.max.z || other.box.max.z <= box.min.z) continue;
+    if (other.box.min.y < box.min.y - 0.05 && other.box.max.y > box.min.y - 0.6) return true;
+  }
+  return false;
+}
+
 /** Ascending a climbable face. */
 function stepClimbing(
   state: PlayerState,
@@ -756,7 +777,11 @@ function stepClimbing(
   const feetY = state.position.y;
   // Reaching the top hands over to a mantle, so climbing a riser gets you onto
   // whatever it was carrying rather than leaving you pinned to its edge.
-  if (feetY + config.standHeight >= surface.box.max.y && !climbContinuesAbove(world, surface, climbableIds)) {
+  if (
+    input.forward > 0 &&
+    feetY + config.standHeight >= surface.box.max.y &&
+    !climbContinuesAbove(world, surface, climbableIds)
+  ) {
     const to = landingFeet(
       {
         world,
@@ -774,6 +799,32 @@ function stepClimbing(
     state.climbId = null;
     startLadderManeuver(state, to, 'mantle', options);
     return outcome(createMoveResult(), { ended: 'climb', started: 'mantle' });
+  }
+
+  // **Down as well as up.** Back-input used to let go of the ladder wherever the player was, which
+  // made the top of a twenty-eight metre ladder a leap of faith: press back and you detached and
+  // fell. Climbing down walks the same sections in reverse, and the release fires only where there
+  // is no section below - the bottom of the stack - which is also where stepping off is right.
+  //
+  // The mantle above is gated on `forward > 0` for the same reason: without it, beginning a descent
+  // from the top of a ladder fired the hand-over and threw the player over the edge they were
+  // trying to leave.
+  if (input.forward < 0) {
+    const atFoot = feetY <= surface.box.min.y + 0.05;
+    if (atFoot || !climbContinuesBelow(world, surface, climbableIds)) {
+      state.climbId = null;
+      state.velocity.y = 0;
+      return outcome(createMoveResult(), { ended: 'climb' });
+    }
+    state.velocity.x = 0;
+    state.velocity.z = 0;
+    state.velocity.y = -climb.speed;
+    const down = playerBox(state.position, config.radius, playerHeight(state, config));
+    const downMove = world.move(down, { x: 0, y: -climb.speed * dt, z: 0 }, state.velocity);
+    adoptBox(state, down, config, downMove);
+    state.peakFallSpeed = 0;
+    advanceHeadBob(state, options, dt, 0);
+    return outcome(downMove);
   }
 
   state.velocity.x = 0;
