@@ -1471,7 +1471,12 @@ export class Game {
       ` [sim ${this.perfSections.anim.toFixed(1)} hud ${this.perfSections.hud.toFixed(1)}]` +
       ` | ${stats?.objects ?? 0} objects, ${stats?.chunksDrawn ?? 0}/${stats?.chunksTotal ?? 0} chunks` +
       ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
-      ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}`;
+      ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}` +
+      // **What machine is this, and is it even using its graphics card.** A WebGL context that fell
+      // back to software is a scene drawn on the CPU, and no amount of batching or culling makes that
+      // fast - it needs to be visible in the readout rather than diagnosed over five versions.
+      ` | ${(this.view?.rendererInfo ?? 'unknown gpu').slice(0, 48)}` +
+      ` | dpr ${globalThis.devicePixelRatio?.toFixed(1) ?? '?'}, ${globalThis.navigator?.hardwareConcurrency ?? '?'} cores`;
     const now = performance.now();
     if (now - this.perfShownAt < 250) return;
     this.perfShownAt = now;
