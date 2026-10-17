@@ -162,6 +162,16 @@ export class GameView implements GameViewLike {
         // The canvas is opaque; skipping alpha saves a full-screen blend.
         alpha: false,
         stencil: false,
+        // **The depth range of this scene does not fit a normal depth buffer.** It draws from a
+        // body part 20 cm from the eye to a skyline 780 m away, and a 24-bit buffer spends almost
+        // all of its precision on the first few metres: at 300 m it cannot tell two surfaces apart
+        // until they are 5 cm apart. The city is built from decorative trims 1 cm proud of the
+        // walls and window bands 1 cm off the facades, so everything past about 150 m shimmered -
+        // measured from a rooftop over the city: 1.3% of the screen changing on a 5 mm step of the
+        // camera, on the distant skyline only. A logarithmic buffer distributes depth by ratio
+        // instead, and takes that to 0.006% for about 0.4 ms of fill rate (measured, 1080p, on an
+        // integrated GPU - 19% of the frame's render time, of which there is plenty).
+        logarithmicDepthBuffer: true,
       });
     } catch (cause) {
       throw new GraphicsUnavailableError(

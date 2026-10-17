@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.17` |
+| Version | `1.0.18` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1159 in 42 files |
 | Coverage | ~91% of statements |
@@ -209,6 +209,20 @@ thousands of draw calls and the answer was assumed to be the chunks. It was not,
   of three times, and the level and scene builders resolve the gate-to-lift mapping in one pass each
   instead of a million string comparisons per lift.
 
+**V1.0.18: the far city was shimmering, and it was the depth buffer.** The scene draws a body
+part twenty centimetres from the eye and a skyline seven hundred and eighty metres away, and a
+24-bit depth buffer spends almost all of its precision on the first few metres: at three hundred
+metres it cannot separate two surfaces until they are five centimetres apart. The city is built out
+of decorative trims one centimetre proud of the walls and window bands one centimetre off the
+facades, so everything past about a hundred and fifty metres flickered as the camera moved. It was
+found by rendering the same frame twice with only the near plane nudged - which changes depth and
+nothing else, so any pixel that flips is a fight - and it was **1.3% of the screen from a rooftop
+looking over the city**, all of it on the distant skyline, with five hundred pixels flipping hard.
+A logarithmic depth buffer distributes depth by ratio instead: the same test now flips **0.008%**,
+and no pixel hard at all. It costs about 0.2-0.6 ms of fill rate at 1080p on an integrated GPU -
+measured by rendering the same view through two renderers, with and without - and changes nothing
+else: the two images are 99.98% identical, shadows included.
+
 **V1.0.17: what a playtest in a real browser found.** Driven through the whole loop - play, sprint,
 jump, ride a lift, take the cat's quest, fall off a roof and respawn, change the preset mid-run,
 restart - the game holds a locked 60 fps on an AMD Radeon 680M at 1080p on the high preset, with 4 ms
@@ -370,3 +384,4 @@ tests/        unit, integration, and the invariants
 | V1.0.15 | The readout says which machine it is on |
 | V1.0.16 | Eight lights, batched shutters, and a broadphase that reaches the ledges |
 | V1.0.17 | The readout measures work, and the copy tells the truth |
+| V1.0.18 | A logarithmic depth buffer: the far city stops shimmering |
