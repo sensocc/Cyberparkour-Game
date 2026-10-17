@@ -613,7 +613,6 @@ function stepManeuver(state: PlayerState, dt: number, options: PlayerStepOptions
   const h10 = t * t * t - 2 * t * t + t;
   const h01 = -2 * t * t * t + 3 * t * t;
   const h11 = t * t * t - t * t;
-  copyVec3(state.previousPosition, state.position);
   state.position.x = h00 * maneuver.from.x + h10 * m0x * span + h01 * maneuver.to.x + h11 * m1x * span;
   state.position.z = h00 * maneuver.from.z + h10 * m0z * span + h01 * maneuver.to.z + h11 * m1z * span;
   // The vertical is the same curve plus the arch, which is what makes a mantle read as a haul-up.
@@ -1098,7 +1097,7 @@ function stepLocomotion(
   }
 
   if (state.sliding) {
-    applySteering(state, input, config, options, dt);
+    applySteering(state, input, options, dt);
   } else if (wishSpeed > 0) {
     const acceleration = state.grounded ? config.groundAcceleration : config.airAcceleration;
     const currentSpeed = state.velocity.x * wishX + state.velocity.z * wishZ;
@@ -1299,7 +1298,6 @@ function updateSlide(
 function applySteering(
   state: PlayerState,
   input: MoveInput,
-  config: PlayerConfig,
   options: PlayerStepOptions,
   dt: number,
 ): void {
@@ -1319,7 +1317,6 @@ function applySteering(
     state.velocity.x *= scale;
     state.velocity.z *= scale;
   }
-  void config;
 }
 
 /** Fall damage: how hard the landing was, and what it cost. */

@@ -477,16 +477,6 @@ const ladder: ModelDefinition = {
   ],
 };
 
-/** A solar array: a dark cell grid in an aluminium frame, raised on a kerb. */
-/**
- * A band of windows: glass in a frame, with mullions across it.
- *
- * V0.7.4 gave surfaces the ability to reflect the sky and then had almost nothing for the
- * sky to land on: the only `glass` in the city was a solar panel's face and a crane's cab,
- * so a density of towers read as a density of concrete. This is the model that makes a
- * skyline gleam - a strip of window scaled to whatever a building is, with the mullions in
- * the same model so one prop is one band.
- */
 /** A curtain wall: one sheet of reflective glass, for the buildings that are all window. */
 const glassSlab: ModelDefinition = {
   id: 'glass-slab',
@@ -586,6 +576,15 @@ const phone: ModelDefinition = {
   ],
 };
 
+/**
+ * A band of windows: glass in a frame, with mullions across it.
+ *
+ * V0.7.4 gave surfaces the ability to reflect the sky and then had almost nothing for the sky to
+ * land on: the only `glass` in the city was a solar panel's face and a crane's cab, so a density of
+ * towers read as a density of concrete. This is the model that makes a skyline gleam - a strip of
+ * window scaled to whatever a building is, with the mullions in the same model so one prop is one
+ * band.
+ */
 const windowBand: ModelDefinition = {
   id: 'window-band',
   note: 'A strip of lit or dark glass with mullions, sized to the wall it sits in.',
@@ -600,6 +599,7 @@ const windowBand: ModelDefinition = {
   ],
 };
 
+/** A solar array: a dark cell grid in an aluminium frame, raised on a kerb. */
 const solarPanel: ModelDefinition = {
   id: 'solar-panel',
   note: 'A photovoltaic array: cells in a frame, clear of the roof on a kerb.',

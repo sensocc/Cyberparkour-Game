@@ -1507,7 +1507,6 @@ function tower(
       balcony(context, `${id}-balcony-${index}`, shedX, cz - halfD - 0.4, shedHalf * 1.2, insideTop + 6 + index * 8);
     }
   }
-  void storeys;
 }
 
 /** A building under construction: a carcass, scaffolding, and a crane over it. */
@@ -1618,12 +1617,11 @@ function constructionSite(
  * a lift, so the city has an inside as well as a skyline.
  */
 function hall(context: Context, cx: number, cz: number, footprint: number, band: Band): void {
-  const { props, config, random } = context;
+  const { props, config } = context;
   const width = footprint * 2;
   const depth = footprint * 2;
   const wall = 0.6;
   const floor = config.groundY;
-  void random;
   // A hall is one storey, so its roof is its cell's terrace less a little - and a hall next
   // to a tower is the difference the rule allows rather than a canyon.
   // A *height*, not a level: the hall's roof lands on its cell's terrace, which is where its

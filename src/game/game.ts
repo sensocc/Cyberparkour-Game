@@ -565,7 +565,6 @@ export class Game {
 
   // ------------------------------------------------------------- internals
 
-  /** Options handed to every `stepPlayer` call. */
   /**
    * The options every `stepPlayer` call is handed.
    *
@@ -1129,13 +1128,6 @@ export class Game {
   }
 
   /**
-   * What the player can do with the lift in front of them.
-   *
-   * Worked out fresh every frame rather than kept as state, because it is a fact
-   * about where they are standing: a prompt that has to be cleared is a prompt that
-   * gets left on the screen.
-   */
-  /**
    * The nearest pickup still out there, as a bearing and a distance.
    *
    * Straight line rather than a route: the city is a grid, so the straight line *is* the route
@@ -1211,6 +1203,12 @@ export class Game {
     return { kind: 'call', title: name.toUpperCase(), detail: `${left} left to find` };
   }
 
+  /**
+   * What the player can do with the lift in front of them.
+   *
+   * Worked out fresh every frame rather than kept as state, because it is a fact about where they
+   * are standing: a prompt that has to be cleared is a prompt that gets left on the screen.
+   */
   private refreshElevatorPrompt(): void {
     if (this.status !== 'playing') return;
     if (this.nearNpc()) {

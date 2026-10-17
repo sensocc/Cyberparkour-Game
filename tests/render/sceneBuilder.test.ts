@@ -675,6 +675,24 @@ describe('buildScene V0.5 content', () => {
     }
   });
 
+  it('keys the second doorway of a two-sided tower, so both shutters can slide', () => {
+    // A tower that opens on two sides has two gates per floor. The renderer must key both of
+    // them - `setElevator` slides every gate of the floor it docks at, not just the first one,
+    // or the collider opens while the mesh stays visibly shut.
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    try {
+      const gateProps = DEMO_DISTRICT.props.filter((prop) => prop.model === 'elevator-gate');
+      const backGates = gateProps.filter((prop) => prop.id.endsWith('-back'));
+      // The demo's two towers both open on two sides.
+      expect(backGates.length).toBeGreaterThan(0);
+      for (const prop of backGates) {
+        expect(built.gates.get(prop.id), prop.id).toBeDefined();
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
   it('draws a gate as one mesh per material rather than one per part', () => {
     // V1.0.15 built a mesh per model part, which for a shutter is ten draw calls: a base, eight
     // slats and a hazard stripe. The city owns four hundred and twenty-two shutters, and from a

@@ -141,14 +141,6 @@ export interface DoorDefinition {
 }
 
 /**
- * A lift: a platform that travels between two heights, carrying whoever is
- * standing on it.
- *
- * Defined by the two *top surface* heights rather than by a position, because
- * that is what matters: a lift's job is to arrive flush with the floor at each
- * end, so the numbers a level author cares about are the two floors.
- */
-/**
  * An elevator: a car in a shaft, serving the floors of a building.
  *
  * V0.7 replaced V0.5's platform - a slab that cycled up and down on a timer - with
@@ -187,6 +179,15 @@ export interface ElevatorDefinition {
    */
   readonly facing?: 'x+' | 'x-' | 'z+' | 'z-';
 }
+
+/**
+ * The suffixes a lift's gate prop ids may carry.
+ *
+ * A floor can open on two sides of a tower, and both shutters are the same opening seen from two
+ * directions. The physics and the renderer both enumerate these suffixes when they look a gate up,
+ * and they must agree - or one side of a doorway stays shut while its collider opens.
+ */
+export const GATE_FACE_SUFFIXES: readonly string[] = ['', '-back'];
 
 /** A pickup: a thing to collect on the way, and part of the run's score. */
 export interface CollectibleDefinition {
@@ -369,18 +370,6 @@ function checkpoint(id: string, at: readonly [number, number, number], yaw?: num
   return { id: `checkpoint-${id}`, position: { x: at[0], y: at[1], z: at[2] }, ...(yaw === undefined ? {} : { yaw }) };
 }
 
-/**
- * A lift tower, built in full: the shaft, an opening and a shutter at every floor, and
- * the car to go in it.
- *
- * V0.5's lift was two floors and a footprint; V0.7's is a building. The difference is
- * not decoration - it is that this one has a *doorway on every floor*, and a gate on
- * each doorway that is only open when the car is docked there. That is what makes it a
- * lift you use rather than a platform you happen to be standing on.
- *
- * The geometry is derived from the floors rather than listed, so the openings line up
- * with the car at every level by construction: an opening is one storey tall and starts
- * at the floor's own height, and the gate fills it exactly.
 /**
  * A lift tower, built in full: the shaft, a doorway and a gate at every floor below the
  * top, the car to go in it, and the roof it opens onto.
@@ -741,7 +730,7 @@ function sign(spec: {
    * a different colour is not a district with signage, it is a district with one sign.
    * Defaults to the panel, which is the plainest of them.
    */
-  readonly model?: NeONSignModel;
+  readonly model?: NeonSignModel;
   /** Mounting depth, for the models that are not 0.25 m thick. */
   readonly depth?: number;
 }): PropDefinition {
@@ -755,7 +744,7 @@ function sign(spec: {
 }
 
 /** The sign silhouettes. All of them glow out of their +Z face. */
-type NeONSignModel = 'neon-sign' | 'neon-bar' | 'neon-blade' | 'neon-frame' | 'neon-badge';
+type NeonSignModel = 'neon-sign' | 'neon-bar' | 'neon-blade' | 'neon-frame' | 'neon-badge';
 
 /**
  * The two lift towers of the home district, defined before the district that uses them.

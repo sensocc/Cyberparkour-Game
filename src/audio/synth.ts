@@ -196,8 +196,8 @@ interface AcousticProfile {
   readonly scuffHighpass: number;
   /** Body tone at walking pace (Hz). */
   readonly bodyHz: number;
-  /** Body decay at walking pace (s). */
-  readonly bodyDecay: number;
+  /** Body tone's end frequency at walking pace (Hz): the pitch the thump sweeps down to. */
+  readonly bodyEndHz: number;
   /** Scuff level relative to metal. */
   readonly scuffMix: number;
   /** Body level relative to metal. */
@@ -206,13 +206,13 @@ interface AcousticProfile {
 
 const ACOUSTIC_PROFILE: Readonly<Record<AcousticMaterial, AcousticProfile>> = {
   // Tread plate and panels: the V0.3 sound, and the baseline everything scales from.
-  metal: { seed: 0, scuffCutoff: 1050, scuffHighpass: 95, bodyHz: 68, bodyDecay: 44, scuffMix: 1, bodyMix: 1 },
+  metal: { seed: 0, scuffCutoff: 1050, scuffHighpass: 95, bodyHz: 68, bodyEndHz: 44, scuffMix: 1, bodyMix: 1 },
   // Bare concrete: duller, lower, and mostly body.
-  concrete: { seed: 7, scuffCutoff: 700, scuffHighpass: 70, bodyHz: 58, bodyDecay: 42, scuffMix: 0.6, bodyMix: 1.15 },
+  concrete: { seed: 7, scuffCutoff: 700, scuffHighpass: 70, bodyHz: 58, bodyEndHz: 42, scuffMix: 0.6, bodyMix: 1.15 },
   // A grated walkway: bright and noisy, and hollow underneath.
-  grate: { seed: 13, scuffCutoff: 2400, scuffHighpass: 320, bodyHz: 96, bodyDecay: 62, scuffMix: 1.3, bodyMix: 0.5 },
+  grate: { seed: 13, scuffCutoff: 2400, scuffHighpass: 320, bodyHz: 96, bodyEndHz: 62, scuffMix: 1.3, bodyMix: 0.5 },
   // Glass: a high tick with almost no thump at all.
-  glass: { seed: 19, scuffCutoff: 3600, scuffHighpass: 900, bodyHz: 150, bodyDecay: 80, scuffMix: 1.15, bodyMix: 0.4 },
+  glass: { seed: 19, scuffCutoff: 3600, scuffHighpass: 900, bodyHz: 150, bodyEndHz: 80, scuffMix: 1.15, bodyMix: 0.4 },
 };
 
 /**
@@ -251,7 +251,7 @@ export function renderFootstep(options: FootstepOptions): Float32Array {
   const body = decayingTone(
     length,
     (gait === 'crouch' ? profile.bodyHz * 0.794 : profile.bodyHz) + options.variant * 5,
-    gait === 'crouch' ? profile.bodyDecay * 0.909 : profile.bodyDecay,
+    gait === 'crouch' ? profile.bodyEndHz * 0.909 : profile.bodyEndHz,
     0.075,
   );
   const bodyEnvelope = decayEnvelope(length, 0.006, 0.07);
@@ -367,13 +367,6 @@ export function renderGrab(): Float32Array {
 }
 
 /**
- * A pickup: a short bell that rises in pitch with each one taken.
- *
- * The rising pitch is the sound's whole job. It tells the player how many they
- * have without them having to read the counter, which is the difference between
- * a pickup that feels like progress and one that feels like a checkbox.
- */
-/**
  * Which pitch step a pickup index lands on.
  *
  * Shared with the engine, which caches one buffer per step: the two have to agree
@@ -384,6 +377,13 @@ export function pitchStep(index: number): number {
   return Math.min(10, Math.max(0, Math.round(index) - 1));
 }
 
+/**
+ * A pickup: a short bell that rises in pitch with each one taken.
+ *
+ * The rising pitch is the sound's whole job: it tells the player how many they have without them
+ * having to read the counter, which is the difference between a pickup that feels like progress and
+ * one that feels like a checkbox.
+ */
 export function renderPickup(index: number): Float32Array {
   const steps = pitchStep(index);
   const frequency = 740 * Math.pow(2, (steps * 2) / 12);
@@ -482,7 +482,8 @@ export function renderUiClick(): Float32Array {
 }
 
 /** A foot scraping onto a ledge, for the climb cadence. */
-export function renderClimbTick(variant: number): Float32Array {  const length = Math.round(SAMPLE_RATE * 0.22);
+export function renderClimbTick(variant: number): Float32Array {
+  const length = Math.round(SAMPLE_RATE * 0.22);
   const noise = whiteNoise(length, 0x6600 + variant * 17);
   lowpass(noise, 1200);
   highpass(noise, 300);

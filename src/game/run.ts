@@ -227,16 +227,9 @@ export class RunState {
    */
   get armed(): boolean {
     const checkpointsDone = this.checkpointCount === 0 || this.reached >= this.checkpointCount;
-    // And every shard in, and the cat told. A player who runs the checkpoints and arrives at the
-    // cat empty-handed is early rather than done - and since a shard cannot be picked up before the
-    // cat has asked, having them all *is* having taken the quest.
-    // The *report*, not merely the collecting: the run ends when the cat has been told, which is the
-    // return trip the quest is for.
+    // Every shard in and the cat told - the finish is the return trip. A level with no shards is
+    // armed by its checkpoints alone, which keeps the checkpoint tests about checkpoints.
     const questDone = this.collectibleCount === 0 || this.quest === 'done';
-    // **And the shards are in.** The finish is the return trip to the cat, so a player who runs
-    // the checkpoints and arrives empty-handed is early rather than done - and a level with no
-    // shards in it is armed by its checkpoints alone, which is what keeps the tests about
-    // checkpoints about checkpoints.
     return checkpointsDone && questDone;
   }
 

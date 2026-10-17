@@ -13,7 +13,7 @@ import { logger } from '../core/log.js';
 import { clamp01 } from '../core/math.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
-import type { LevelDefinition } from '../game/level/levelData.js';
+import { GATE_FACE_SUFFIXES, type LevelDefinition } from '../game/level/levelData.js';
 import type { PlayerPose } from '../game/pose.js';
 import { applyAnisotropy } from './assets.js';
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.js';
@@ -295,7 +295,6 @@ export class GameView implements GameViewLike {
     return this.camera;
   }
 
-  /** GPU description, used in the debug HUD and crash reports. */
   /**
    * What the last frame cost the GPU, and what it asked of it.
    *
@@ -327,6 +326,7 @@ export class GameView implements GameViewLike {
     };
   }
 
+  /** GPU description, used in the debug HUD and crash reports. */
   get rendererInfo(): string | null {
     try {
       const gl = this.renderer.getContext();
@@ -438,11 +438,15 @@ export class GameView implements GameViewLike {
     const floors = this.liftFloors.get(id);
     if (!floors) return;
     for (let index = 0; index < floors.length; index += 1) {
-      const gate = this.built.gates.get(`${id}-gate-${index}`);
-      if (!gate) continue;
-      // Only the gate at the car's own floor is up; the rest are shut.
-      const height = this.gateHeights.get(`${id}-gate-${index}`) ?? 0;
-      gate.position.y = index === floor ? Math.max(0, Math.min(1, doorsOpen)) * height : 0;
+      // A floor can open on two sides (`-back`), and both shutters are one opening: both have to
+      // slide, or the collider opens while the mesh stays visibly shut.
+      for (const suffix of GATE_FACE_SUFFIXES) {
+        const gate = this.built.gates.get(`${id}-gate-${index}${suffix}`);
+        if (!gate) continue;
+        // Only the gate at the car's own floor is up; the rest are shut.
+        const height = this.gateHeights.get(`${id}-gate-${index}${suffix}`) ?? 0;
+        gate.position.y = index === floor ? Math.max(0, Math.min(1, doorsOpen)) * height : 0;
+      }
     }
   }
 

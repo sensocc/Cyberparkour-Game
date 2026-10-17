@@ -46,19 +46,14 @@ export function emptySpritePose(): SpritePose {
 /**
  * Where one puff of smoke is, and how big and how solid, at a given moment.
  *
- * The plume is a *cycle*: a puff is born at the base, climbs, spreads and fades
- * out, and the next one starts. Fading on `sin(pi * t)` means a puff is
- * transparent at both ends of its life, which is what stops a plume from
- * popping: nothing ever appears or disappears abruptly.
- */
-/**
- * Writes a puff's pose into `out` rather than returning a new one.
+ * The plume is a *cycle*: a puff is born at the base, climbs, spreads and fades out, and the next
+ * one starts. Fading on `sin(pi * t)` means a puff is transparent at both ends of its life, which is
+ * what stops a plume from popping: nothing ever appears or disappears abruptly.
  *
- * **Forty-four of these run every frame, and a frame is not a place to make garbage.** The old
- * signature returned a fresh object per puff per frame - two and a half thousand a second, standing
- * still, doing nothing - which is a minor garbage collection every few seconds and a visible dip in
- * the frame rate every time one lands. The puff count and the frame rate have not changed since; the
- * allocations have.
+ * Writes into `out` rather than returning a new one: **forty-four of these run every frame, and a
+ * frame is not a place to make garbage.** The old signature returned a fresh object per puff per
+ * frame - two and a half thousand a second, standing still - which was a minor garbage collection
+ * every few seconds and a visible dip in the frame rate every time one landed.
  */
 export function smokePose(emitter: SmokeEmitter, elapsed: number, out: SpritePose): SpritePose {
   const period = Math.max(0.001, emitter.period);

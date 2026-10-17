@@ -24,7 +24,7 @@
 
 import type { AABB } from '../physics/aabb.js';
 import type { CollisionWorld } from '../physics/collision.js';
-import type { ElevatorDefinition } from './levelData.js';
+import { GATE_FACE_SUFFIXES, type ElevatorDefinition } from './levelData.js';
 
 /** What a car is doing. */
 export type ElevatorState = 'idle' | 'closing' | 'moving' | 'opening';
@@ -104,7 +104,7 @@ export class ElevatorSystem {
       // are the same opening seen from two directions.
       const gates: AABB[][] = definition.floors.map((_floor, index) => {
         const found: AABB[] = [];
-        for (const suffix of ['', '-back']) {
+        for (const suffix of GATE_FACE_SUFFIXES) {
           const gate = colliders.get(`${definition.id}-gate-${index}${suffix}`);
           if (gate) found.push(gate.box);
         }

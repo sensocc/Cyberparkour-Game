@@ -126,8 +126,6 @@ export class WebAudio implements AudioOutput {
     this.windSource.loop = true;
     this.windSource.connect(this.windGain);
     this.windSource.start();
-
-    void options.config;
   }
 
   private buffer(key: string, render: () => Float32Array): AudioBuffer {
