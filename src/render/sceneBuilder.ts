@@ -120,7 +120,15 @@ export interface BuiltScene {
  * chunk meshes and 485 of them in view at once. What a chunk size costs is culling resolution, and
  * what it buys is draw calls - and draw calls are what a browser runs out of first.
  */
-const CHUNK = 334;
+/**
+ * **Bigger chunks, on purpose.** Draw calls are what a browser runs out of first, and this frame was
+ * running four hundred to a thousand of them. V0.7.9 made exactly this trade in the other direction -
+ * 1,578 small meshes to 134 big ones - and it took the frame from 663 calls to 90; the chunk has been
+ * shrunk since, first for culling and then by accident, and the calls came back. Fatter chunks submit
+ * more triangles and fewer submissions, which on this hardware is the right way round: a million
+ * triangles is cheap, a thousand draw calls is not.
+ */
+const CHUNK = 480;
 
 /**
  * A growable buffer of box geometry, in one chunk's local space.
@@ -351,7 +359,15 @@ export function fadeLamps(lamps: readonly THREE.PointLight[], dt: number): void 
   }
 }
 
-const DRAW_DISTANCE = 420;
+/**
+ * How far a chunk is drawn, in metres.
+ *
+ * **The one graphic sacrificed for the frame.** Four hundred and twenty metres of a city whose
+ * silhouettes are haze anyway, against a chunk set that has to be drawn and submitted every frame -
+ * and the fog was already doing most of that work. At 320 the district still reads as a skyline and
+ * the frame has fewer chunks in it.
+ */
+const DRAW_DISTANCE = 320;
 
 /**
  * Draws the chunks near the player, and stops drawing the rest.

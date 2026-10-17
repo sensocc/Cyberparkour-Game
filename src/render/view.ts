@@ -266,11 +266,28 @@ export class GameView implements GameViewLike {
    * calls with a bad frame rate is fill-rate or shader work - something a resolution setting can
    * fix - and a thousand is the CPU feeding the GPU one object at a time, which no setting can.
    */
-  get renderStats(): { readonly calls: number; readonly triangles: number; readonly programs: number } {
+  get renderStats(): {
+    readonly calls: number;
+    readonly triangles: number;
+    readonly programs: number;
+    readonly objects: number;
+    readonly chunksDrawn: number;
+    readonly chunksTotal: number;
+  } {
+    // Counting what is in the scene on every frame would itself be the slow thing, so this walks it
+    // only when asked - the `?perf` readout samples it a few times a second, which is plenty to show
+    // whether the number is *growing*.
+    let objects = 0;
+    this.built.scene.traverse((object) => {
+      if ((object as THREE.Mesh).isMesh || (object as THREE.Sprite).isSprite) objects += 1;
+    });
     return {
       calls: this.renderer.info.render.calls,
       triangles: this.renderer.info.render.triangles,
       programs: this.renderer.info.programs?.length ?? 0,
+      objects,
+      chunksDrawn: this.chunksDrawn,
+      chunksTotal: this.built.chunks.length,
     };
   }
 

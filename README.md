@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.9` |
+| Version | `1.0.11` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
@@ -148,6 +148,16 @@ whether this is a development build or a production one. The split is the point:
 renderer is what a graphics setting can move, and everything else is the simulation, the pose and the
 DOM, which no setting can.
 
+**The measurement finally named it, and it was the draw calls.** A reading from the machine that
+had the problem: simulation 0.0–0.2 ms, HUD 0.4–0.7 ms, render 9.9–44 ms, and **400 to 1,000 draw
+calls** with 400k–700k triangles for eight to fourteen frames a second. Both halves of the frame — the
+submission and the GPU work behind it — scale with what is drawn, and the thing that is drawn too many
+times is *chunks*: V0.7.9 got a street view down to 90 draw calls by making the mesh count small, the
+chunk has been shrunk twice since (once for culling, once by accident), and the calls came back.
+Bigger chunks and a shorter draw distance now, which is the trade that version made and this one
+re-makes: submit more triangles, submit far fewer things. Cutting the pixel ratio never helped because
+the cost was never per-pixel.
+
 One regression is also gone: a start-up warm-up that compiled every shader and uploaded every buffer
 before the first frame, added in V1.0.5 and removed here. It was the only start-up behaviour that
 differed from V1.0.3, and start-up is where the report was.
@@ -279,3 +289,5 @@ tests/        unit, integration, and the invariants
 | V1.0.7 | The frame first: cheaper presets, and a preset that measures itself |
 | V1.0.8 | Graphics back to V1.0.3, features kept |
 | V1.0.9 | The warm-up out, the measurements in |
+| V1.0.10 | The frame measured instead of simulated |
+| V1.0.11 | Fewer, fatter chunks: the draw calls named at last |

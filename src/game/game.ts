@@ -1466,6 +1466,7 @@ export class Game {
       ` | draw ${stats?.calls ?? 0} calls, ${Math.round((stats?.triangles ?? 0) / 1000)}k tris` +
       ` | ${this.perfRenderMs.toFixed(1)} ms render + ${this.perfOtherMs.toFixed(1)} ms other` +
       ` [sim ${this.perfSections.anim.toFixed(1)} hud ${this.perfSections.hud.toFixed(1)}]` +
+      ` | ${stats?.objects ?? 0} objects, ${stats?.chunksDrawn ?? 0}/${stats?.chunksTotal ?? 0} chunks` +
       ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
       ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}`;
     const now = performance.now();

@@ -51,6 +51,9 @@ export interface GameViewLike {
     readonly calls: number;
     readonly triangles: number;
     readonly programs: number;
+    readonly objects?: number;
+    readonly chunksDrawn?: number;
+    readonly chunksTotal?: number;
   };
 
   /** GPU description, used by the debug HUD and crash reports. */
