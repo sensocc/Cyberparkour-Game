@@ -110,8 +110,28 @@ const JOINT_RATE = {
  * without a bounce, and never has a kink in its velocity. That is the whole difference
  * between a movement and a twitch.
  */
+/**
+ * How many joint axes the rig can spring at once.
+ *
+ * The body has fourteen moving groups and each needs at most one slot per axis and one for its
+ * height, so this is generous - and it is a *fixed* capacity on purpose: a pose call happens every
+ * frame, and a frame is not a place to grow an array.
+ */
+const JOINT_SLOTS = 96;
+
 class Joints {
-  private readonly velocity = new Map<string, number>();
+  /**
+   * One velocity per (group, axis), in a flat buffer.
+   *
+   * This was a `Map` keyed on `` `${object.uuid}:r${axis}` `` - a template string built on every
+   * joint of every frame, twenty-odd allocations a frame in the render path, to look up a float. A
+   * group is identified by an integer instead, assigned the first time it is touched and cached
+   * against the group itself.
+   */
+  private readonly velocity = new Float32Array(JOINT_SLOTS * 4);
+  /** Which slot a group owns, assigned on first use. */
+  private readonly slots = new WeakMap<THREE.Object3D, number>();
+  private nextSlot = 0;
   /** Written by `integrate` and read by its caller, so nothing here allocates. */
   private value = 0;
 
@@ -123,14 +143,29 @@ class Joints {
     rate: number,
     dt: number,
   ): void {
-    this.integrate(`${object.uuid}:r${axis}`, object.rotation[axis], target, rate, dt);
+    this.integrate(this.slotFor(object) + (axis === 'x' ? 0 : axis === 'y' ? 1 : 2), object.rotation[axis], target, rate, dt);
     object.rotation[axis] = this.value;
   }
 
   /** Moves a joint up or down, for the one that travels instead of turning. */
   height(object: THREE.Object3D, target: number, rate: number, dt: number): void {
-    this.integrate(`${object.uuid}:y`, object.position.y, target, rate, dt);
+    this.integrate(this.slotFor(object) + 3, object.position.y, target, rate, dt);
     object.position.y = this.value;
+  }
+
+  /** The base index of a group's four velocities, assigning one the first time it is seen. */
+  private slotFor(object: THREE.Object3D): number {
+    const existing = this.slots.get(object);
+    if (existing !== undefined) return existing;
+
+    // A body that somehow exceeded the buffer would wrap onto another joint's velocity, which
+    // would be a visible twitch - so the last slot is shared rather than overrun. The real rig
+    // uses fourteen of these.
+    const base = this.nextSlot < JOINT_SLOTS ? this.nextSlot : JOINT_SLOTS - 1;
+    this.nextSlot += 1;
+    const slot = base * 4;
+    this.slots.set(object, slot);
+    return slot;
   }
 
   /**
@@ -141,12 +176,12 @@ class Joints {
    * clamped rather than allowed out of that region: it settles a little slower instead of
    * exploding.
    */
-  private integrate(key: string, current: number, target: number, rate: number, dt: number): void {
+  private integrate(slot: number, current: number, target: number, rate: number, dt: number): void {
     const step = Math.min(1 / 30, Math.max(0, dt));
-    const velocity = this.velocity.get(key) ?? 0;
+    const velocity = this.velocity[slot] as number;
     const acceleration = rate * rate * (target - current) - 2 * rate * velocity;
     const next = velocity + acceleration * step;
-    this.velocity.set(key, next);
+    this.velocity[slot] = next;
     this.value = current + next * step;
   }
 }

@@ -65,6 +65,12 @@ describe('the defaults', () => {
       expect(better.lightScale, order[index]).toBeGreaterThanOrEqual(worse.lightScale);
       expect(better.label.length).toBeGreaterThan(0);
     }
+
+    // Bloom is the one preset knob that is a *yes/no*, and it is reserved for the top preset: it is
+    // a full-screen post chain, so it is the first thing a slower machine should lose.
+    expect(QUALITY_PRESETS.low.bloom).toBe(false);
+    expect(QUALITY_PRESETS.medium.bloom).toBe(false);
+    expect(QUALITY_PRESETS.high.bloom).toBe(true);
   });
 
   it('turns motion off completely, and down to a quarter for reduced', () => {

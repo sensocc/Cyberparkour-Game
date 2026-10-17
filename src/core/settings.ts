@@ -49,6 +49,14 @@ export interface QualityPreset {
   readonly smokeScale: number;
   /** Fraction of the scene's point lights to keep lit. */
   readonly lightScale: number;
+  /**
+   * Whether the frame goes through the bloom chain.
+   *
+   * The one setting that is *only* on the top preset. Bloom is a full-screen post chain - four
+   * extra passes over the whole drawing buffer - so it is the first thing a slower machine should
+   * lose, and the graphics menu is the way out.
+   */
+  readonly bloom: boolean;
 }
 
 export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
@@ -60,6 +68,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 2,
     smokeScale: 0.35,
     lightScale: 0.4,
+    bloom: false,
   },
   medium: {
     label: 'Medium',
@@ -74,6 +83,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 8,
     smokeScale: 0.7,
     lightScale: 0.75,
+    bloom: false,
   },
   high: {
     label: 'High',
@@ -83,6 +93,7 @@ export const QUALITY_PRESETS: Record<QualityLevel, QualityPreset> = {
     anisotropy: 16,
     smokeScale: 1,
     lightScale: 1,
+    bloom: true,
   },
 };
 

@@ -616,10 +616,23 @@ export class Game {
     // at the speed that would kill, so a landing that hurts is one that shows.
     const { safeImpactSpeed, fatalImpactSpeed } = this.config.fallDamage;
     const span = Math.max(1e-6, fatalImpactSpeed - safeImpactSpeed);
-    this.effects.land(
-      Math.min(1, Math.max(0, (impact - safeImpactSpeed) / span)),
-      this.config.cameraEffects,
-    );
+    const strength = Math.min(1, Math.max(0, (impact - safeImpactSpeed) / span));
+    this.effects.land(strength, this.config.cameraEffects);
+    // ...and so does the ground: a ring of dust from the feet, scaled by the same number, so what
+    // the eye sees and what the camera feels are the same event. Only above a threshold, so a step
+    // off a kerb is silent rather than puffy.
+    if (strength > 0.12) {
+      const feet = this.player.position;
+      this.view?.burstDust?.(
+        feet.x,
+        feet.y,
+        feet.z,
+        strength,
+        // A harder landing throws its dust further, but not without limit: a spread past a couple
+        // of metres reads as an explosion rather than a footfall.
+        0.8 + strength * 1.6,
+      );
+    }
     if (damage > 0) {
       this.options.ui.flashDamage(damage);
       this.log?.info('game', 'took fall damage', {
@@ -787,6 +800,9 @@ export class Game {
     respawnPlayer(this.player, this.config);
     this.eyeSpring = Number.NaN;
     this.accumulator.reset();
+    // The dust from the landing that killed them is left behind where they died, not carried to
+    // the spawn point.
+    this.view?.clearDust?.();
     this.options.ui.hideDeath();
     this.audioDirector.reset();
     this.audioOutput.silence();
@@ -847,6 +863,8 @@ export class Game {
     this.sprinting = false;
     this.options.input.clear();
     this.motion.reset();
+    // A new run starts with clean air: last run's dust has no business hanging over this one.
+    this.view?.clearDust?.();
     this.applyWorldState();
   }
 
@@ -1052,7 +1070,7 @@ export class Game {
     this.trackMotion();
     const swing = this.doors.update(simulated);
     for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
-    this.view?.animate(this.effectsSeconds);
+    this.view?.animate(this.effectsSeconds, simulated);
     this.stats.push(delta);
     // After the statistics, not after the HUD: this is decided by the frame, not by the overlay
     // that reports it.
@@ -1420,6 +1438,10 @@ export class Game {
     // more than can be kept consistent.
     sample.wallRunSide = this.scratchPose.wallSide;
     this.effects.update(dt, sample, this.config.cameraEffects, MOTION_SCALES[this.settings.motion]);
+    // The one effect that is not the camera: the vignette is a screen-space overlay, so the number
+    // goes to the UI. Pushed here rather than in the render path because it is state, not a
+    // transform - and guarded inside the UI, so a frame where it did not move writes nothing.
+    this.options.ui.setSpeedVignette(this.effects.current.vignette);
 
     this.updateTrials();
 

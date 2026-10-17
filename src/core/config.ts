@@ -86,6 +86,17 @@ export interface CameraEffectsConfig {
   readonly shakeDecay: number;
   /** Metres the camera moves with a full-strength shake (m). */
   readonly shakeReach: number;
+  /**
+   * Opacity of the speed vignette at full sprint, 0..1.
+   *
+   * The one camera effect that is not the camera: it is a screen-space darkening at the edges, so
+   * it lives in the UI and the game only says how strong it is. It shares this config because it
+   * is *camera motion* - the setting that turns the head bob down turns this down with it - and
+   * because a value that is not in the table is a value nobody can find.
+   */
+  readonly speedVignette: number;
+  /** How quickly the vignette follows the speed (1/s). */
+  readonly vignetteApproach: number;
 }
 
 export interface WorldConfig {
@@ -598,6 +609,12 @@ export const DEFAULT_CONFIG: GameConfig = {
     landingShake: 1.1,
     shakeDecay: 7.5,
     shakeReach: 0.035,
+    // Barely there. It is a *frame* the eye never looks straight at, and at a fifth of full
+    // opacity on a dark night city the edge of the screen is already dark - a stronger one would
+    // read as a tunnel rather than as speed. Slow to arrive and slow to leave, so running and
+    // stopping is a swell rather than a flicker at the edge of vision.
+    speedVignette: 0.22,
+    vignetteApproach: 2.2,
   },
   fallDamage: {
     maxHealth: 100,

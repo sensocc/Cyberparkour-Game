@@ -11,6 +11,7 @@ import * as THREE from 'three';
 
 import {
   LAMP_POOL,
+  applyLampPool,
   assignLamps,
   buildScene,
   fadeLamps,
@@ -432,9 +433,10 @@ describe('the lights, which are a pool', () => {
         expect(chosenPositions).toContainEqual({ x: light.position.x, y: light.position.y, z: light.position.z });
       }
 
-      // Walking away hands the pool to whoever is near the player *now*, and the lights are never
-      // hidden while it happens: a hidden light changes the shader's light count, and three.js
-      // recompiles every material when it does.
+      // Walking away hands the pool to whoever is near the player *now*, and the lights are not
+      // hidden while it happens: `assignLamps` never touches visibility, because a hidden light
+      // changes the shader's light count and three.js recompiles every material when it does.
+      // Visibility moves only in `applyLampPool`, which runs on a preset change.
       const elsewhere = { x: 400, y: 0, z: 400 };
       selectLamps(field, elsewhere, 6);
       for (let frame = 0; frame < 120; frame += 1) {
@@ -513,6 +515,85 @@ describe('the lights, which are a pool', () => {
       expect(showing.length).toBe(3);
       for (const source of showing) expect(nowSelected.has(source)).toBe(true);
       expect(field.pool.filter((light) => light.intensity > 0.5)).toHaveLength(3);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('lights only as many pool lights as the preset uses', () => {
+    // **A light nobody can see is a light the shader still evaluates.** three.js sizes its
+    // per-fragment light loop from the number of *visible* lights and unrolls it, so on the low
+    // preset five of the pool's eight were idle and paid for on every lit pixel of the frame.
+    const built = buildScene(buildCity(DEMO_DISTRICT), assetTextures());
+    try {
+      const field = built.lamps;
+
+      expect(applyLampPool(field, 3)).toBe(3);
+      expect(field.pool.filter((light) => light.visible)).toHaveLength(3);
+
+      // The pool's *size* never moves: that is what keeps the shader's uniform block constant and
+      // stops three.js rebuilding every program. Only visibility changes, and only here.
+      expect(field.pool).toHaveLength(LAMP_POOL);
+
+      expect(applyLampPool(field, LAMP_POOL)).toBe(LAMP_POOL);
+      expect(field.pool.every((light) => light.visible)).toBe(true);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('releases the lamp a hidden slot was holding, rather than losing it', () => {
+    // The trap: hiding a slot that still holds a lamp would leave that source selected, "lit" and
+    // invisible - the count would say three and the street would show two.
+    const built = buildScene(buildCity(DEMO_DISTRICT), assetTextures());
+    try {
+      const field = built.lamps;
+      const eye = { x: field.sources[3]?.position.x ?? 0, y: 0, z: field.sources[3]?.position.z ?? 0 };
+
+      selectLamps(field, eye, LAMP_POOL);
+      for (let frame = 0; frame < 60; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+      expect(field.pool.filter((light) => light.intensity > 0.5)).toHaveLength(LAMP_POOL);
+
+      // Shrink the pool, and re-select at the new size the way `setQuality` does.
+      const lit = applyLampPool(field, 3);
+      selectLamps(field, eye, lit);
+      for (let frame = 0; frame < 120; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+
+      // Three lit, all of them visible, and no lamp stranded in a hidden slot.
+      expect(field.pool.filter((light) => light.intensity > 0.5)).toHaveLength(3);
+      for (let slot = 0; slot < field.pool.length; slot += 1) {
+        const light = field.pool[slot] as THREE.PointLight;
+        if ((field.slotSource[slot] as number) >= 0) expect(light.visible, light.name).toBe(true);
+      }
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('never hands a lamp to a hidden slot while assigning', () => {
+    const built = buildScene(buildCity(DEMO_DISTRICT), assetTextures());
+    try {
+      const field = built.lamps;
+      applyLampPool(field, 2);
+      selectLamps(field, { x: 0, y: 0, z: 0 }, LAMP_POOL);
+      for (let frame = 0; frame < 60; frame += 1) {
+        assignLamps(field);
+        fadeLamps(field, 1 / 60);
+      }
+      // Only the two visible slots can hold anything, however many were selected.
+      const assigned = Array.from(field.slotSource).filter((source) => source >= 0);
+      expect(assigned).toHaveLength(2);
+      for (let slot = 0; slot < field.pool.length; slot += 1) {
+        if ((field.slotSource[slot] as number) >= 0) {
+          expect((field.pool[slot] as THREE.PointLight).visible).toBe(true);
+        }
+      }
     } finally {
       built.dispose();
     }
@@ -773,18 +854,27 @@ describe('buildScene V0.5 content', () => {
     }
   }), 120000;
 
-  it('spreads the smoke into sprites, and skips it without the puff texture', () => {
+  it('batches every plume into one draw, and skips it without the puff texture', () => {
     const assets = assetTextures();
     const built = buildScene(DEMO_DISTRICT, assets);
     const withoutPuff = buildScene(DEMO_DISTRICT, { ...assets, smoke: null });
     try {
       const expected = (DEMO_DISTRICT.smoke ?? []).reduce((total, plume) => total + plume.count, 0);
       expect(expected).toBeGreaterThan(0);
-      expect(built.smoke).toHaveLength(expected);
-      for (const { sprite } of built.smoke) expect(sprite).toBeInstanceOf(THREE.Sprite);
+
+      // One emitter per puff in the level, but ONE mesh for all of them - the whole point of the
+      // change. Forty-four sprites was forty-four draw calls and forty-four materials.
+      expect(built.smoke?.emitters).toHaveLength(expected);
+      expect(built.smoke?.puffs.mesh).toBeInstanceOf(THREE.InstancedMesh);
+      expect(built.scene.getObjectByName('smoke')).toBe(built.smoke?.puffs.mesh);
+
+      // Every instance starts invisible until `animate` fills it.
+      expect(built.smoke?.puffs.live).toBe(0);
+      const sprites = built.scene.children.filter((child) => (child as THREE.Sprite).isSprite);
+      expect(sprites).toHaveLength(0);
 
       // No texture, no smoke: a sprite without a map is a white square.
-      expect(withoutPuff.smoke).toEqual([]);
+      expect(withoutPuff.smoke).toBeNull();
     } finally {
       built.dispose();
       withoutPuff.dispose();

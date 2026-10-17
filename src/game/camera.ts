@@ -52,6 +52,14 @@ export interface CameraFrame {
   offsetX: number;
   offsetY: number;
   offsetZ: number;
+  /**
+   * How dark the edges of the screen are, 0..1.
+   *
+   * Not a camera transform - it is a screen-space overlay - but it is driven by the same sample
+   * and scaled by the same setting, so it is built here with the rest of the frame and the game
+   * does nothing but hand the number to the UI.
+   */
+  vignette: number;
 }
 
 const NONE: MotionSample = {
@@ -75,8 +83,10 @@ export class CameraEffects {
   private shake = 0;
   private shakePhase = 0;
   private roll = 0;
+  /** 0..1, how far the vignette has eased towards the speed's target. */
+  private vignette = 0;
   private enabled = true;
-  private readonly frame: CameraFrame = { fov: 0, roll: 0, offsetX: 0, offsetY: 0, offsetZ: 0 };
+  private readonly frame: CameraFrame = { fov: 0, roll: 0, offsetX: 0, offsetY: 0, offsetZ: 0, vignette: 0 };
 
   /**
    * Sets how much of the whole effect to apply.
@@ -97,11 +107,13 @@ export class CameraEffects {
     this.shake = 0;
     this.shakePhase = 0;
     this.roll = 0;
+    this.vignette = 0;
     this.frame.fov = 0;
     this.frame.roll = 0;
     this.frame.offsetX = 0;
     this.frame.offsetY = 0;
     this.frame.offsetZ = 0;
+    this.frame.vignette = 0;
   }
 
   /**
@@ -142,6 +154,7 @@ export class CameraEffects {
       frame.offsetX = 0;
       frame.offsetY = 0;
       frame.offsetZ = 0;
+      frame.vignette = 0;
       return frame;
     }
 
@@ -179,6 +192,17 @@ export class CameraEffects {
     frame.offsetX = Math.sin(this.shakePhase) * reach;
     frame.offsetY = this.dip * scale + Math.sin(this.shakePhase * 1.7) * reach * 0.6;
     frame.offsetZ = Math.cos(this.shakePhase * 0.8) * reach * 0.5;
+
+    // ------------------------------------------------------------- vignette
+    // Speed narrows what the eye is aware of. *Approached*, like the field of view, and rather
+    // more slowly: a vignette that snapped on would be a flash at the edge of vision every time
+    // the player stopped and started, which is exactly the flicker this is meant not to be.
+    //
+    // Crouching is subtracted rather than added: a crouched player is going slowly on purpose, and
+    // the effect should follow the speed, not the key.
+    const vignetteTarget = clamp01(sample.speedFraction) * config.speedVignette * scale;
+    this.vignette = easeToward(this.vignette, vignetteTarget, config.vignetteApproach, step);
+    frame.vignette = this.vignette;
 
     // A decayed effect can come out as negative zero - `sin(x) * 0` is signed - and
     // a `-0` camera offset is the kind of thing that makes a later equality check

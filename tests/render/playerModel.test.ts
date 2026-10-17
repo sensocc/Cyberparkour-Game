@@ -459,3 +459,48 @@ describe('the pose across a change of state', () => {
     expect(Math.max(...perFrameChange)).toBeLessThan(0.02);
   });
 });
+
+describe('where a joint keeps its velocity', () => {
+  it('gives two bodies their own springs, so one cannot inherit the other', () => {
+    // The springs live on the rig rather than in the module, which is what keeps a test's body
+    // and a real one from fighting over the same velocities. A shared map would show up here as
+    // the second body starting from the first one's speed.
+    const a = buildPlayerBody();
+    const b = buildPlayerBody();
+    try {
+      settle(a, pose({ legAction: 'tuck' }));
+      const aAngle = a.legLeft.root.rotation.x;
+
+      // A fresh body, given the same target for one frame, must start from rest - not from
+      // wherever `a` had got to. A spring covers 6.3% of a 1.15 rad gap in its first frame at
+      // 60 Hz; the eased-and-capped joint this replaced started at 22%, which is the twitch.
+      posePlayerBody(b, pose({ legAction: 'tuck' }), CONFIG, STEP);
+      const movedInOneFrame = Math.abs(b.legLeft.root.rotation.x);
+
+      expect(movedInOneFrame).toBeGreaterThan(0);
+      expect(movedInOneFrame).toBeLessThan(0.1);
+      // ...and `a` is undisturbed by `b` having been posed.
+      posePlayerBody(a, pose({ legAction: 'tuck' }), CONFIG, STEP);
+      expect(Math.abs(a.legLeft.root.rotation.x - aAngle)).toBeLessThan(0.02);
+    } finally {
+      a.dispose();
+      b.dispose();
+    }
+  });
+
+  it('is unchanged in where it settles after many frames', () => {
+    // The rewrite is from string keys to integer slots; what must not change is the *motion*.
+    // Run long enough to arrive, and the limb is at the pose's target either way.
+    const body = buildPlayerBody();
+    try {
+      settle(body, pose({ legAction: 'tuck' }), 300);
+      const settled = body.legLeft.root.rotation.x;
+      for (let frame = 0; frame < 30; frame += 1) {
+        posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, STEP);
+      }
+      expect(body.legLeft.root.rotation.x).toBeCloseTo(settled, 6);
+    } finally {
+      body.dispose();
+    }
+  });
+});

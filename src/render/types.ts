@@ -92,12 +92,14 @@ export interface GameViewLike {
   /** Shows or hides a pickup, which is gone once it has been taken. */
   setCollectibleVisible(id: string, visible: boolean): void;
   /**
-   * Advances purely visual animation - drifting smoke, spinning pickups.
+   * Advances purely visual animation - drifting smoke, spinning pickups, landing dust.
    *
    * `elapsedSeconds` rather than a delta, so the effect is a function of the
-   * clock and a dropped frame cannot accumulate drift.
+   * clock and a dropped frame cannot accumulate drift. `deltaSeconds` is passed as well for the
+   * one exception - impact dust, which is integrated rather than sampled, and which must be aged by
+   * *simulated* time so that pausing the game pauses the dust with it.
    */
-  animate(elapsedSeconds: number): void;
+  animate(elapsedSeconds: number, deltaSeconds: number): void;
   /**
    * Places and poses the player's body.
    *
@@ -107,6 +109,16 @@ export interface GameViewLike {
    * against the camera at a refresh rate the simulation does not share.
    */
   setPlayerBody(feet: ReadonlyVec3, yaw: number, pose: PlayerPose, dt: number): void;
+  /**
+   * Throws a burst of dust up from a landing, at a point.
+   *
+   * Optional: a stand-in view has nothing to throw dust with, and a missing effect must not be a
+   * reason a landing fails. The game calls this when it *knows* an impact happened - which only the
+   * simulation does - so the view never has to guess.
+   */
+  burstDust?(x: number, y: number, z: number, strength: number, spread: number): void;
+  /** Kills any live dust, for a respawn or a restart. */
+  clearDust?(): void;
   /**
    * Sets the vertical field of view, in degrees.
    *

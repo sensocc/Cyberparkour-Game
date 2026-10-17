@@ -123,6 +123,27 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ------------------------------------------------------- speed vignette --- */
+
+/* A darkening at the edges that follows how fast the player is going, so the frame closes in as
+   they sprint and opens again as they stop. Deliberately *barely* visible - it is at the edge of
+   vision, and it is the one effect the player is never supposed to look at directly.
+
+   Opacity is written from `GameUi.setSpeedVignette`; there is no transition here on purpose, since
+   the easing is the game's (it follows the speed with a time constant) and a CSS transition on top
+   of that would lag the two behind each other and read as a stutter. */
+.speed-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at 50% 50%,
+    rgba(4, 6, 14, 0) 42%,
+    rgba(4, 6, 14, 1) 118%
+  );
+}
+
 /* ------------------------------------------------------------ crosshair --- */
 
 .crosshair {

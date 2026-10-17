@@ -25,6 +25,7 @@ import { createPlayerState, standingSize, stepPlayer } from '../../src/game/play
 import {
   LAMP_POOL,
   buildScene,
+  DRAW_DISTANCE,
   shadowReachFor,
   updateChunkVisibility,
   updateMovingVisibility,
@@ -226,7 +227,9 @@ describe('the cost of a frame', () => {
         (child): child is THREE.PointLight => child instanceof THREE.PointLight,
       );
       expect(inScene).toHaveLength(LAMP_POOL);
-      // Never hidden, because hiding one changes the count and recompiles every material.
+      // The pool's *size* never changes - that is what keeps the shader's uniform block constant -
+      // but the number of them a preset *uses* does, and applyLampPool is the only thing that
+      // moves it. At the default scale every one of them is lit.
       expect(inScene.every((light) => light.visible)).toBe(true);
     } finally {
       built.dispose();
@@ -337,5 +340,24 @@ describe('the cost of a frame', () => {
     // the city, which sub-steps repeatedly on every axis - in well under a tenth of
     // a second. The scan this replaces needed most of a second for the same work.
     expect(elapsed).toBeLessThan(120);
+  }), 120000;
+
+  it('fogs to full opacity by the distance it stops drawing, so nothing pops', () => {
+    // **The bug this exists to stop coming back.** Fog's one job is to hide the edge of what is
+    // drawn. V0.7 asked for 260 -> 1150, a fog that reached full opacity 830 m *past* the last
+    // chunk the renderer submits - so at the 320 m cull the haze was 6.7%, and the far rooftops
+    // vanished with essentially nothing on them. A hard cut where a fade was meant to be, and the
+    // kind of seam nobody notices until they are looking straight at it.
+    const fog = { near: city.environment.fogNear, far: city.environment.fogFar };
+
+    // The fog has to be strong enough *at* the cull that the last drawn chunk is all but invisible.
+    const atCull = (DRAW_DISTANCE - fog.near) / (fog.far - fog.near);
+    expect(atCull).toBeGreaterThanOrEqual(0.95);
+
+    // ...and it must not begin inside the parkour range, or the map reads as a wall of haze.
+    expect(fog.near).toBeGreaterThan(120);
+
+    // A ramp, not a wall: a fog that goes from clear to opaque in a few metres is a visible plane.
+    expect(fog.far - fog.near).toBeGreaterThan(50);
   }), 120000;
 });

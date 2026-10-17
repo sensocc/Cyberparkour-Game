@@ -18,9 +18,11 @@ import type { PlayerPose } from '../game/pose.js';
 import { applyAnisotropy } from './assets.js';
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.js';
 import {
+  applyLampPool,
   assignLamps,
   buildScene,
   fadeLamps,
+  lampPoolFor,
   selectLamps,
   shadowReachFor,
   updateChunkVisibility,
@@ -29,6 +31,8 @@ import {
   type BuiltScene,
 } from './sceneBuilder.js';
 import { pickupPose, smokePose } from './effects.js';
+import { BLOOM_DEFAULTS, BloomChain } from './bloom.js';
+import { PuffPool } from './puffs.js';
 import { QUALITY_PRESETS, type QualityPreset } from '../core/settings.js';
 import { GraphicsUnavailableError, NO_ASSETS, type GameViewLike, type SceneAssets } from './types.js';
 
@@ -127,6 +131,16 @@ export class GameView implements GameViewLike {
   private readonly body: PlayerBody;
   private readonly config: GameConfig;
   /**
+   * The bloom chain, when the preset asks for one.
+   *
+   * `null` on every preset but high, and that is the gate: with no chain the frame renders straight
+   * to the canvas exactly as it did before bloom existed, so a machine that cannot afford the pass
+   * never pays for it. Rebuilt rather than toggled when the preset changes, because the composer
+   * owns render targets sized to the drawing buffer and swapping one in mid-run is not worth the
+   * bookkeeping for a setting the player changes by hand.
+   */
+  private bloomChain: BloomChain | null = null;
+  /**
    * Where the sun sits relative to the point it lights.
    *
    * Taken from the scene as built, so there is one authority on where the light is: the
@@ -152,14 +166,29 @@ export class GameView implements GameViewLike {
   private lampsOn = 0;
   /** The last place the lamp selection was made for. */
   private lampCell = '';
-  /** The graphics preset's share of the lamps, applied to the cap. */
-  private lightScale = 1;
+  /**
+   * How many of the pool's lights the current preset uses.
+   *
+   * Not the same as the pool's *size*: three.js sizes its per-fragment light loop from the number
+   * of *visible* lights, so lighting only six of eight while all eight are visible costs every lit
+   * pixel two evaluations for nothing. This is the number the shader actually pays for, and it is
+   * kept in step with `selectLamps` by `applyLampPool` so the two cannot disagree.
+   */
+  private lampPool = lampPoolFor(QUALITY_PRESETS.high.lightScale);
   /** The snapped shadow-camera centre the map was last rendered from. */
   private shadowX = Number.NaN;
   private shadowZ = Number.NaN;
   private shadowFrames = 0;
   /** When the last frame was drawn, for the view's own frame-time estimate. */
   private lastFrameAt = 0;
+  /**
+   * The impact dust the game has thrown, as a ring of pooled puffs.
+   *
+   * Owned by the view rather than the game, because it lives in the same batched draw as the
+   * smoke: two systems publishing into one instance buffer only works if one of them owns the
+   * commit. The game says *that* a landing happened and how hard; this decides what it looks like.
+   */
+  private readonly dust = new PuffPool();
 
   private disposed = false;
 
@@ -361,8 +390,49 @@ export class GameView implements GameViewLike {
 
   private applyDrawingSize(): void {
     const size = this.renderer.getSize(new THREE.Vector2());
-    this.renderer.setPixelRatio(this.drawingRatioNow());
+    const ratio = this.drawingRatioNow();
+    this.renderer.setPixelRatio(ratio);
     this.renderer.setSize(size.x, size.y, false);
+    // **The composer has its own buffers, and they are not the renderer's.** It sizes them from the
+    // CSS size * it is told, so a resize or a dynamic-resolution step that only reached the
+    // renderer would leave the whole post chain rendering at the old resolution - a bloom that is
+    // subtly the wrong size until the next preset change.
+    this.bloomChain?.setSize(size.x, size.y, ratio);
+  }
+
+  /**
+   * Builds or tears down the bloom chain to match the preset.
+   *
+   * Idempotent, and it *never throws*: a machine whose driver cannot give a multisampled half-float
+   * buffer gets no bloom and a working game, which is the only acceptable trade for a cosmetic
+   * pass. That is also why this is the one place the chain is created - a preset change, never a
+   * frame.
+   */
+  private syncBloom(): void {
+    const wanted = this.quality.bloom;
+    if (wanted === (this.bloomChain !== null)) return;
+
+    if (!wanted) {
+      this.bloomChain?.dispose();
+      this.bloomChain = null;
+      logger.info('render', 'bloom off');
+      return;
+    }
+
+    try {
+      const chain = new BloomChain(this.renderer, this.built.scene, this.camera);
+      const size = this.renderer.getSize(new THREE.Vector2());
+      chain.setSize(size.x, size.y, this.drawingRatioNow());
+      this.bloomChain = chain;
+      logger.info('render', 'bloom on', { strength: BLOOM_DEFAULTS.strength, threshold: BLOOM_DEFAULTS.threshold });
+    } catch (error) {
+      // Cosmetic, so it degrades rather than fails - and the game carries on rendering straight to
+      // the canvas, which is exactly what every other preset does.
+      this.bloomChain = null;
+      logger.warn('render', 'bloom is unavailable on this GPU - rendering without it', {
+        error: String(error),
+      });
+    }
   }
 
   /**
@@ -408,7 +478,11 @@ export class GameView implements GameViewLike {
     // does for the game.
     this.camera.rotation.set(orientation.pitch, orientation.yaw, ((orientation.roll ?? 0) * Math.PI) / 180);
 
-    this.renderer.render(this.built.scene, this.camera);
+    // Through the bloom chain when the preset has one, straight to the canvas when it does not.
+    // The direct path is not a fallback - it is what every preset but high does, and it is the same
+    // call this made before there was a post chain at all.
+    if (this.bloomChain) this.bloomChain.render();
+    else this.renderer.render(this.built.scene, this.camera);
   }
 
   /**
@@ -460,18 +534,30 @@ export class GameView implements GameViewLike {
   /**
    * Advances the purely visual animation.
    *
-   * `elapsedSeconds` rather than a delta: smoke drifts and pickups bob, and both
-   * are functions of the clock, so a frame that takes twice as long moves them
-   * exactly twice as far without anything having to be integrated.
+   * `elapsedSeconds` rather than a delta for the smoke: a plume is a *cycle*, so a puff's place is
+   * a pure function of the clock and a frame that takes twice as long moves it exactly twice as
+   * far with nothing to integrate. Impact dust does integrate, so it is aged by the *simulated*
+   * delta - which means it freezes when the game is paused, rather than drifting on behind the
+   * pause menu.
    */
-  animate(elapsedSeconds: number): void {
+  animate(elapsedSeconds: number, deltaSeconds: number): void {
     if (this.disposed) return;
 
-    for (const { sprite, emitter, pose } of this.built.smoke) {
-      smokePose(emitter, elapsedSeconds, pose);
-      sprite.position.set(pose.x, pose.y, pose.z);
-      sprite.scale.set(pose.scale, pose.scale, 1);
-      (sprite.material as THREE.SpriteMaterial).opacity = pose.opacity;
+    const field = this.built.smoke;
+    if (field) {
+      field.puffs.begin();
+      const pose = field.pose;
+      for (let index = 0; index < field.emitters.length; index += 1) {
+        // The preset's thinning, applied per emitter rather than per sprite: one batched draw has
+        // no per-sprite visibility to switch off.
+        if (field.visible[index] === 0) continue;
+        smokePose(field.emitters[index] as (typeof field.emitters)[number], elapsedSeconds, pose);
+        field.puffs.push({ x: pose.x, y: pose.y, z: pose.z, scale: pose.scale, opacity: pose.opacity });
+      }
+      // The dust that a landing threw up rides the same buffer, so it is aged here and the field
+      // is published once - one draw call for every soft blob in the air.
+      this.dust.emit(field.puffs, deltaSeconds);
+      field.puffs.commit();
     }
 
     for (const [id, group] of this.built.collectibles) {
@@ -481,6 +567,47 @@ export class GameView implements GameViewLike {
       group.position.y = pose.y;
       group.rotation.y = pose.spin;
     }
+  }
+
+  /**
+   * Throws a burst of dust up from a landing.
+   *
+   * Driven by the *game* rather than by the view's own state, because the only thing that knows a
+   * landing happened - and how hard - is the simulation. The count and the spread come from the
+   * impact, so a hop off a kerb barely puffs and a long drop blooms.
+   */
+  burstDust(x: number, y: number, z: number, strength: number, spread: number): void {
+    if (this.disposed) return;
+    // Nothing to draw into: without the puff texture there is no batched field, so spawning would
+    // fill a pool that never ages and never renders.
+    if (!this.built.smoke) return;
+    const amount = clamp01(strength);
+    if (amount <= 0.05) return;
+    const count = Math.max(1, Math.round(3 + amount * 11));
+    for (let index = 0; index < count; index += 1) {
+      // A ring, evenly spread with a little jitter, so a burst reads as a ring of dust rather than
+      // as a cone: `Math.random` would make two landings look different for no reason, so the
+      // angle is the index's and only the radius wobbles.
+      const angle = (index / count) * Math.PI * 2 + amount * 1.7;
+      const reach = spread * (0.45 + 0.55 * ((index * 7) % 5) / 5);
+      const lift = 0.6 + amount * 1.6;
+      this.dust.spawn(
+        x + Math.cos(angle) * 0.12,
+        y + 0.06,
+        z + Math.sin(angle) * 0.12,
+        Math.cos(angle) * reach,
+        lift,
+        Math.sin(angle) * reach,
+        0.45 + amount * 0.5,
+        0.28 + amount * 0.5,
+        0.16 + amount * 0.3,
+      );
+    }
+  }
+
+  /** Kills every puff of dust, for a respawn or a restart. */
+  clearDust(): void {
+    this.dust.clear();
   }
 
   /** Places and poses the player's body. */
@@ -521,8 +648,9 @@ export class GameView implements GameViewLike {
     this.lampCell = cell;
     // **Six, not twelve.** A point light is a per-fragment loop over the whole screen. Six pools of
     // light around the player and the neon carrying the rest: the city is a neon city, and it is
-    // emissive surfaces rather than lamps that make it one.
-    this.lampsOn = selectLamps(this.built.lamps, eye, Math.max(3, Math.round(6 * this.lightScale)));
+    // emissive surfaces rather than lamps that make it one. The count is the *pool* rather than a
+    // fresh round() of the preset, so the selection and the shader's loop are the same number.
+    this.lampsOn = selectLamps(this.built.lamps, eye, this.lampPool);
   }
 
   private followWithShadow(eye: ReadonlyVec3): void {
@@ -631,15 +759,27 @@ export class GameView implements GameViewLike {
     if (previous.anisotropy !== preset.anisotropy) {
       applyAnisotropy(this.assets, Math.min(maxAnisotropy(this.renderer), preset.anisotropy));
     }
-    applyEvenScale(this.built.smoke.length, preset.smokeScale, (index, visible) => {
-      const mesh = this.built.smoke[index];
-      if (mesh) mesh.sprite.visible = visible;
-    });
+    // The preset's share of the smoke, applied per *emitter*: one batched draw has no per-sprite
+    // visibility to switch off, so the list of what is drawn is thinned instead - the same even
+    // stride, and a setting that still means the same thing.
+    const field = this.built.smoke;
+    if (field) {
+      applyEvenScale(field.emitters.length, preset.smokeScale, (index, visible) => {
+        field.visible[index] = visible ? 1 : 0;
+      });
+    }
     // The preset's share of the lamps is a *cap* now, not a fixed pattern: which ones are lit is
-    // decided per frame by how close they are - see `followLamps`.
-    this.lightScale = preset.lightScale;
-
+    // decided per frame by how close they are - see `followLamps`. The pool is resized here too,
+    // because a light nobody can see is a light the shader still evaluates: this is the one place
+    // the visible count may change, since three.js recompiles every material when it does.
+    this.lampPool = applyLampPool(this.built.lamps, lampPoolFor(preset.lightScale));
+    // ...and the selection is redone against the new pool size, so a shrunken pool cannot keep a
+    // lamp in a slot that is no longer lit.
     this.lampCell = '';
+
+    // The post chain, built or torn down to match. Last, because it is the most expensive thing a
+    // preset does and nothing above it depends on it.
+    this.syncBloom();
 
     logger.info('render', 'quality applied', {
       quality: preset.label,
@@ -659,6 +799,9 @@ export class GameView implements GameViewLike {
 
     this.body.dispose();
     this.built.dispose();
+    this.dust.clear();
+    this.bloomChain?.dispose();
+    this.bloomChain = null;
     this.renderer.setAnimationLoop(null);
     this.renderer.dispose();
     // Frees the context immediately instead of waiting for GC, which matters

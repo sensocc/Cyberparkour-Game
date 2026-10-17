@@ -6,9 +6,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.21` |
+| Version | `1.0.22` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1171 in 42 files |
+| Tests | 1207 in 44 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -68,12 +68,24 @@ The interesting bugs in this project were all in the numbers, so it measures rat
 | Triangles drawn | ~350k |
 | Point lights lit at once | 6, of 576 |
 | Building the city scene | ~0.5 s |
+| Bloom (high preset only) | ~1 ms of render |
 
 The four things that do most of the work: merged geometry (one buffer per chunk instead of one mesh per part), a pool of eight point lights, a spatial-hash collision grid, and distance/shadow culling. Add `?perf` to the URL for a live frame readout.
 
+### What the frame shows
+
+- **Steam off the vents**, as one batched instanced draw rather than a sprite per puff — 72 puffs for the cost of a single submission.
+- **Selective bloom on the neon only.** The threshold sits above the city's lit surfaces, so the glow is the signs and not the concrete; the pass runs at half resolution and is gated to the high preset.
+- **Dust on a hard landing**, scaled to the impact and aged by simulated time, so it freezes with a pause and never follows you to the spawn point.
+- **A speed vignette** that closes the frame in at a sprint, eased so it never flickers, and scaled by the same Camera motion setting as the head bob.
+
+### What it does not do
+
+Bloom is the one effect a setting can cost. It is a full-screen post chain, so it is reserved for the preset that means "give me everything" and is the first thing a slower machine should lose — and the graphics menu is the way out.
+
 ## How it is verified
 
-- `npm run ci` — typecheck, 1171 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1207 tests with coverage, production build. Green on Node 22, 24 and 26.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - The physics is compared against itself: the collision grid is held to the linear scan it replaced, over the whole city.
 

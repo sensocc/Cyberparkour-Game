@@ -20,13 +20,31 @@ import { gateOwners, resolvePropParts } from '../game/level/level.js';
 import { modelById, resolveModelParts, type ModelDefinition } from '../game/level/models.js';
 import { surfaceById } from '../game/level/surfaces.js';
 import { emptySpritePose, type SmokeEmitter, type SpritePose } from './effects.js';
+import { InstancedPuffs, MAX_PUFFS } from './puffs.js';
 import { NO_ASSETS, type SceneAssets } from './types.js';
 
-/** One smoke sprite, with the emitter that drives it. */
-export interface SmokeEmitterMesh {
-  readonly sprite: THREE.Sprite;
-  readonly emitter: SmokeEmitter;
-  /** The puff's pose, kept and rewritten every frame instead of allocated. */
+/**
+ * The level's puffs: one instanced draw, and the emitters that place them.
+ *
+ * Smoke used to be one `Sprite` and one `SpriteMaterial` per puff - forty-four of each for a
+ * single district - which is why the city's smoke was dropped when the level became a kilometre
+ * of grid. This is the same trade V1.0.16 made for the lift shutters: many things that never
+ * needed to be separate draws become one. See `puffs.ts`.
+ */
+export interface SmokeField {
+  /** The batched draw every puff goes into - smoke and dust alike. */
+  readonly puffs: InstancedPuffs;
+  /** One emitter per puff in the level, with its place in the cycle. */
+  readonly emitters: readonly SmokeEmitter[];
+  /**
+   * Which emitters the graphics preset keeps, one per emitter.
+   *
+   * The preset used to hide individual sprites, which one batched draw cannot do; thinning the
+   * *emitter list* is the same idea and the same even stride, and it costs nothing per frame
+   * beyond the check it already did.
+   */
+  readonly visible: Uint8Array;
+  /** Reused per puff per frame, so the animation allocates nothing. */
   readonly pose: SpritePose;
 }
 
@@ -92,7 +110,13 @@ export interface BuiltScene {
    */
   readonly moving: readonly THREE.Mesh[];
   /** Every smoke sprite, with its emitter, for the animation pass. */
-  readonly smoke: readonly SmokeEmitterMesh[];
+  /**
+   * The batched puffs - smoke, and the impact dust that rides the same draw.
+   *
+   * `null` when the puff texture could not be loaded: a sprite with no map is a white square, so
+   * no texture means no particles rather than wrong ones.
+   */
+  readonly smoke: SmokeField | null;
   /**
    * The level's point lights, as data, plus the pool of real `PointLight`s that shows them.
    *
@@ -313,6 +337,54 @@ export interface LampSource {
 }
 
 /**
+ * How many of the pool's lights a preset actually uses.
+ *
+ * `lightScale` is "the fraction of the scene's lamps to keep lit", and six is the number a street
+ * corner needs - so a preset's lit count is that fraction of six, floored at three so a street is
+ * never pitch dark, and capped at the pool. Exported because the *selection* and the *pool size*
+ * have to be the same number: see `applyLampPool`.
+ */
+export function lampPoolFor(lightScale: number): number {
+  return Math.max(3, Math.min(LAMP_POOL, Math.round(6 * lightScale)));
+}
+
+/**
+ * Grows or shrinks the pool to `lit` usable lights, and returns the count.
+ *
+ * **A light nobody can see is a light the shader still evaluates.** three.js sizes its per-fragment
+ * light loop from the number of *visible* lights (`numPointLights: lights.point.length`) and
+ * unrolls it, so an eighth pool light that is never handed a lamp still costs every lit pixel in
+ * the frame an evaluation - on the low preset, five of the eight were idle and paid for. Hiding
+ * them is what takes the loop down to what is used.
+ *
+ * Two things make this safe. It is called only from a preset change, never per frame: three.js
+ * recompiles every material when the visible count moves, and a recompile in the middle of a frame
+ * is a stutter. And a slot that goes out of range **gives up its lamp**, because otherwise a source
+ * could stay bound to a now-hidden light and simply not be lit - the count would say six and the
+ * street would show five.
+ */
+export function applyLampPool(field: LampField, lit: number): number {
+  const live = Math.max(0, Math.min(field.pool.length, Math.round(lit)));
+
+  for (let index = 0; index < field.pool.length; index += 1) {
+    const light = field.pool[index] as THREE.PointLight;
+    const wanted = index < live;
+    if (light.visible !== wanted) light.visible = wanted;
+
+    // Hiding a slot that still holds a lamp would silently lose that lamp; releasing it lets the
+    // next `assignLamps` hand the source to a slot that is actually visible.
+    if (!wanted && (field.slotSource[index] as number) >= 0) {
+      field.slotSource[index] = -1;
+      field.slotBase[index] = 0;
+      field.slotTarget[index] = 0;
+      light.intensity = 0;
+    }
+  }
+
+  return live;
+}
+
+/**
  * The pool, and the selection that drives it.
  *
  * Three steps, deliberately separate because they cost different amounts:
@@ -356,7 +428,9 @@ export function createLampField(scene: THREE.Scene, sources: readonly LampSource
     light.name = `lamp-pool-${index}`;
     light.castShadow = false;
     // Visible from the first frame, and dark until it is given a lamp. Visibility is *not* the
-    // mechanism for turning a light off - see `LAMP_POOL` - so nothing here ever toggles it.
+    // mechanism for turning a light off - intensity is, and that is deliberate, because toggling
+    // visibility recompiles every material in the scene. It *is* the mechanism for having fewer
+    // lights at all: see `applyLampPool`, which is only ever called on a preset change.
     scene.add(light);
     pool.push(light);
   }
@@ -462,8 +536,13 @@ export function assignLamps(field: LampField): void {
 
     for (let slot = 0; slot < pool.length; slot += 1) {
       if ((slotSource[slot] as number) >= 0) continue;
-      const lamp = sources[source] as LampSource;
       const light = pool[slot] as THREE.PointLight;
+      // **A hidden slot is not a free slot.** `applyLampPool` hides the lights a preset does not
+      // use, and a lamp bound to one of those would be selected, "lit", and invisible - the count
+      // would say six and the street would show five. Hiding a populated slot releases it for the
+      // same reason.
+      if (!light.visible) continue;
+      const lamp = sources[source] as LampSource;
       light.position.set(lamp.position.x, lamp.position.y, lamp.position.z);
       light.color.copy(lamp.color);
       light.distance = lamp.distance;
@@ -502,8 +581,12 @@ export function fadeLamps(field: LampField, dt: number): void {
  * silhouettes are haze anyway, against a chunk set that has to be drawn and submitted every frame -
  * and the fog was already doing most of that work. At 320 the district still reads as a skyline and
  * the frame has fewer chunks in it.
+ *
+ * Exported because the *fog must agree with it*: a fog that reaches full opacity well past this is
+ * not hiding the cull edge, it is only tinting things the player can still see. A test holds the
+ * two together.
  */
-const DRAW_DISTANCE = 320;
+export const DRAW_DISTANCE = 320;
 
 /**
  * Draws the chunks near the player, and stops drawing the rest.
@@ -552,12 +635,18 @@ export function updateChunkVisibility(
 /**
  * How far a gate, a lift car or a pickup is drawn, in metres.
  *
- * The moving set is the one part of the scene whose draw calls the chunk merge could not absorb, so
- * it gets the cull instead: a shutter is three metres tall and at this range covers a couple of
- * pixels, which is why the number is what it is - far enough that nothing is seen to vanish, near
- * enough that the thousands of shutters a kilometre of city owns are not submitted.
+ * **The same distance the chunks get, and that is the point.** These were 240 m against the
+ * chunks' 320, which meant the two halves of the city stopped at different distances: a shutter
+ * or a lift gate winked out at 240 m while the building behind it carried on to 320. With the fog
+ * reaching full opacity at 340 there is no longer anything to see at either edge, so a single
+ * distance is both simpler and *less* wrong than two.
+ *
+ * The measuring that chose 240 in the first place was about draw calls, and it was right about the
+ * cost - the moving set is 1,648 meshes against the chunks' 626. What it could not see was that
+ * the fog was never going to hide the difference, because the fog did not reach the renderer's
+ * far plane at all. See `CityParts`' fog note.
  */
-const MOVING_DRAW_DISTANCE = 240;
+const MOVING_DRAW_DISTANCE = 320;
 
 /**
  * Draws the moving meshes near the player, and stops drawing the rest.
@@ -1099,43 +1188,44 @@ export function buildScene(
   }
 
   // ----------------------------------------------------------------- smoke
-  // Plumes are camera-facing sprites, animated from the game clock. They live in
-  // a list rather than a map because nothing looks one up: the view walks them
-  // all every frame.
-  const smoke: SmokeEmitterMesh[] = [];
+  //
+  // **One draw call, not one sprite per puff.** The plumes are a cycle: a puff's place is a pure
+  // function of the clock, so all the animation needs is an emitter list and one batched quad
+  // buffer. See `puffs.ts` for why this is a patched `MeshBasicMaterial` rather than a hand-written
+  // shader - briefly, the logarithmic depth buffer, the fog, the tone mapping and the output colour
+  // space all have to be right, and the built-in material already has them right.
   const smokeTexture = assets.smoke;
+  let smoke: SmokeField | null = null;
   if (smokeTexture) {
+    const emitters: SmokeEmitter[] = [];
     for (const plume of definition.smoke ?? []) {
       for (let puff = 0; puff < plume.count; puff += 1) {
-        // A material *per sprite*: they share the texture, but each puff fades on
-        // its own schedule, and a shared material would fade them all together.
-        const material = new THREE.SpriteMaterial({
-          map: smokeTexture,
-          transparent: true,
-          depthWrite: false,
-          opacity: 0,
-        });
-        materials.set(`smoke-${plume.id}-${puff}`, material);
-
-        const sprite = new THREE.Sprite(material);
-        sprite.name = `smoke:${plume.id}#${puff}`;
-        scene.add(sprite);
-        smoke.push({
-          sprite,
-          emitter: {
-            position: plume.position,
-            radius: plume.radius,
-            rise: plume.rise,
-            drift: plume.drift,
-            period: plume.period,
-            opacity: plume.opacity,
-            // Spread evenly through the cycle, so a plume is a plume rather than
-            // a row of puffs all rising together.
-            phase: puff / plume.count,
-          },
-          pose: emptySpritePose(),
+        emitters.push({
+          position: plume.position,
+          radius: plume.radius,
+          rise: plume.rise,
+          drift: plume.drift,
+          period: plume.period,
+          opacity: plume.opacity,
+          // Spread evenly through the cycle, so a plume is a plume rather than
+          // a row of puffs all rising together.
+          phase: puff / plume.count,
         });
       }
+    }
+
+    if (emitters.length > 0) {
+      // Sized for the whole field, not just the plumes: impact dust rides the same buffer, and a
+      // burst must never be the thing that reallocates a GPU buffer mid-frame.
+      const puffs = new InstancedPuffs(smokeTexture, MAX_PUFFS);
+      puffs.mesh.name = 'smoke';
+      scene.add(puffs.mesh);
+      smoke = {
+        puffs,
+        emitters,
+        visible: new Uint8Array(emitters.length).fill(1),
+        pose: emptySpritePose(),
+      };
     }
   }
 
@@ -1224,6 +1314,8 @@ export function buildScene(
       // The doors, cars, gates and pickups: baked buffers that live nowhere but their meshes.
       for (const geometry of movingGeometries) geometry.dispose();
       for (const material of materials.values()) material.dispose();
+      // The batched puffs own their quad buffer and their patched material.
+      smoke?.puffs.dispose();
       disposeRenderable(grid);
       if (backdrop) disposeRenderable(backdrop);
     },
@@ -1286,6 +1378,12 @@ function buildCityBackdrop(
     side: THREE.BackSide,
     transparent: true,
     depthWrite: false,
+    // **Not fogged, on purpose.** The skyline texture is already painted with atmospheric haze -
+    // three layers, paler the further they are - and it sits at a fixed radius of 780 m, well past
+    // the fog's far plane. Fogging it would double-haze it and wash the silhouettes out to the fog
+    // colour, which is exactly the "the far city has no detail" complaint. Everything the fog is
+    // *for* - the chunk cull edge at 330 m - is in front of this by four hundred metres.
+    fog: false,
   });
 
   const geometry = new THREE.CylinderGeometry(radius, radius, height, BACKDROP_SEGMENTS, 1, true);

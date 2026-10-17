@@ -107,6 +107,9 @@ export class GameUi {
   private readonly completeSplits: HTMLElement;
   private readonly crashScreen: HTMLElement;
   private readonly crosshair: HTMLElement;
+  private readonly speedVignette: HTMLElement;
+  /** The last opacity written, so a settled value does not rewrite the overlay every frame. */
+  private vignetteValue = -1;
   private readonly deathOverlay: HTMLElement;
   private readonly damageFlash: HTMLElement;
   private flashHandle: number | null = null;
@@ -304,9 +307,14 @@ export class GameUi {
     this.damageFlash = el('div', { className: 'damage-flash', attrs: { 'aria-hidden': 'true' } });
     setHidden(this.damageFlash, true);
     this.flashElement = el('div', { className: 'pickup-flash', attrs: { 'aria-hidden': 'true' } });
+    // The speed vignette: a darkening at the edges that follows how fast the player is going. It
+    // sits *under* the damage flash and the pickup flash, because those are events and this is a
+    // standing state - an impact should read through it, not behind it.
+    this.speedVignette = el('div', { className: 'speed-vignette', attrs: { 'aria-hidden': 'true' } });
 
     this.root.append(
       this.crosshair,
+      this.speedVignette,
       this.damageFlash,
       this.flashElement,
       this.deathOverlay,
@@ -643,6 +651,35 @@ export class GameUi {
 
   private setCrosshair(visible: boolean): void {
     setHidden(this.crosshair, !visible);
+    // The vignette and the crosshair are both "the player is playing right now" indicators, so they
+    // come and go together: leaving a full-screen darkening up behind a pause menu would read as
+    // the game being broken. Cleared rather than merely hidden, so returning to play starts from
+    // nothing instead of from where the last sprint left it.
+    if (!visible) this.setSpeedVignette(0);
+  }
+
+  /**
+   * Sets how dark the edges of the screen are, 0..1.
+   *
+   * Driven every frame while playing, so the write is guarded: this is an opacity on a
+   * full-screen overlay, and re-setting an identical value forces the compositor to notice it.
+   *
+   * **The guard compares numbers, not the style string.** The CSSOM normalises what it is given -
+   * `style.opacity = '0.200'` reads back as `'0.2'` - so a guard written against the serialised
+   * value would never match and would rewrite the overlay on every frame of every run.
+   *
+   * Non-finite input is ignored rather than written, because one NaN opacity makes the whole
+   * overlay vanish and would read as the effect breaking.
+   */
+  setSpeedVignette(strength: number): void {
+    if (!Number.isFinite(strength)) return;
+    // Rounded to the precision the style keeps, so a value that has *settled* compares equal and
+    // writes nothing: `easeToward` approaches asymptotically and would otherwise churn the last
+    // thousandth for ever.
+    const value = Math.round(Math.max(0, Math.min(1, strength)) * 1000) / 1000;
+    if (value === this.vignetteValue) return;
+    this.vignetteValue = value;
+    this.speedVignette.style.opacity = String(value);
   }
 
   private buildScreen(modifier: string, children: readonly HTMLElement[]): HTMLElement {

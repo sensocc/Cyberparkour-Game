@@ -204,6 +204,56 @@ describe('the camera motion setting', () => {
     expect(frame.fov).toBe(0);
     expect(frame.offsetY).toBe(0);
     expect(frame.roll).toBe(0);
+    expect(frame.vignette).toBe(0);
+  });
+});
+
+describe('the speed vignette', () => {
+  /**
+   * Frames enough to reach the target.
+   *
+   * `easeToward` is an exponential approach, so it is asymptotic: after two seconds the residual
+   * is still about 1.2% of the gap (`exp(-2.2 * 2)`). These tests are about *where it settles*, so
+   * they run long enough for the residual to be nothing rather than scoring the approach itself.
+   */
+  const ARRIVED = 900;
+
+  it('is absent at rest and at full strength at a sprint', () => {
+    const still = settle(new CameraEffects(), 120, IDLE);
+    expect(still.vignette).toBeCloseTo(0, 6);
+
+    const sprinting = settle(new CameraEffects(), ARRIVED, sample({ speedFraction: 1 }));
+    // It is scaled by the same motion setting as everything else, which is 1 here.
+    expect(sprinting.vignette).toBeCloseTo(EFFECTS.speedVignette, 4);
+  });
+
+  it('covers about half the ground at half speed', () => {
+    const half = settle(new CameraEffects(), ARRIVED, sample({ speedFraction: 0.5 }));
+    expect(half.vignette).toBeCloseTo(EFFECTS.speedVignette * 0.5, 4);
+  });
+
+  it('eases in rather than snapping on', () => {
+    // A vignette that appeared in one frame would be a flash at the edge of vision every time the
+    // player started running - the exact flicker it exists to avoid.
+    const effects = new CameraEffects();
+    const first = effects.update(STEP, sample({ speedFraction: 1 }), EFFECTS);
+    expect(first.vignette).toBeGreaterThan(0);
+    expect(first.vignette).toBeLessThan(EFFECTS.speedVignette * 0.2);
+
+    const arrived = settle(effects, ARRIVED, sample({ speedFraction: 1 }));
+    expect(arrived.vignette).toBeCloseTo(EFFECTS.speedVignette, 4);
+  });
+
+  it('fades away when the player stops, so nothing is left dark', () => {
+    const effects = new CameraEffects();
+    settle(effects, ARRIVED, sample({ speedFraction: 1 }));
+    expect(settle(effects, ARRIVED, IDLE).vignette).toBeCloseTo(0, 3);
+  });
+
+  it('is scaled by the camera motion setting like every other effect', () => {
+    const reduced = settle(new CameraEffects(), ARRIVED, sample({ speedFraction: 1 }), 0.25);
+    expect(reduced.vignette).toBeCloseTo(EFFECTS.speedVignette * 0.25, 4);
+    expect(settle(new CameraEffects(), ARRIVED, sample({ speedFraction: 1 }), 0).vignette).toBe(0);
   });
 });
 
@@ -241,6 +291,6 @@ describe('time', () => {
     effects.reset();
 
     const frame = effects.update(STEP, IDLE, EFFECTS);
-    expect(frame).toEqual({ fov: 0, roll: 0, offsetX: 0, offsetY: 0, offsetZ: 0 });
+    expect(frame).toEqual({ fov: 0, roll: 0, offsetX: 0, offsetY: 0, offsetZ: 0, vignette: 0 });
   });
 });

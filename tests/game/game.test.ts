@@ -21,7 +21,7 @@ import type { AudioCue } from '../../src/audio/director.js';
 import { CrashReporter } from '../../src/diagnostics/crashReporter.js';
 import { MemoryCrashSink } from '../../src/diagnostics/crashSinks.js';
 import { Game, type GameStatus } from '../../src/game/game.js';
-import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT, type LevelDefinition, type PropDefinition } from '../../src/game/level/levelData.js';
 import type { Orientation } from '../../src/game/look.js';
 import type { PlayerPose } from '../../src/game/pose.js';
 import { InputState } from '../../src/input/inputState.js';
@@ -50,6 +50,10 @@ class FakeView implements GameViewLike {
   readonly qualities: QualityPreset[] = [];
   /** Every resolution scale the game has asked for, in order. */
   readonly renderScales: number[] = [];
+  /** Every dust burst the game has asked for, so a landing's effect can be asserted. */
+  readonly dust: { x: number; y: number; z: number; strength: number; spread: number }[] = [];
+  /** How many times the dust has been cleared - a respawn or a restart must do it. */
+  dustCleared = 0;
   disposed = false;
 
   setSize(width: number, height: number): void {
@@ -72,8 +76,16 @@ class FakeView implements GameViewLike {
     this.pickups.push({ id, visible });
   }
 
-  animate(elapsedSeconds: number): void {
+  animate(elapsedSeconds: number, _deltaSeconds: number): void {
     this.animations.push(elapsedSeconds);
+  }
+
+  burstDust(x: number, y: number, z: number, strength: number, spread: number): void {
+    this.dust.push({ x, y, z, strength, spread });
+  }
+
+  clearDust(): void {
+    this.dustCleared += 1;
   }
 
   setFov(fov: number): void {
@@ -217,6 +229,43 @@ function createHarness(options: HarnessOptions = {}): Harness {
 
 function stepFrames(harness: Harness, count: number, deltaMs = 16): void {
   harness.scheduler.runFrames(count, deltaMs);
+}
+
+/**
+ * A two-tier level: a deck to stand on and a floor five metres below it.
+ *
+ * The shipped district is no use for a *survivable* hard landing: its roofs are six metres apart
+ * over a twelve-metre kill plane, so every drop off one is a death rather than an impact. Five
+ * metres onto a floor gives about 16 m/s, which is above the 12 m/s that hurts and well under the
+ * 26 m/s that kills - the band a landing's dust lives in.
+ */
+function dropLevel(): LevelDefinition {
+  const slab = (id: string, at: readonly [number, number], top: number, width: number, depth: number): PropDefinition => ({
+    id,
+    model: 'slab',
+    kind: 'floor',
+    position: { x: at[0], y: top - 0.5, z: at[1] },
+    size: { x: width, y: 1, z: depth },
+  });
+
+  return {
+    ...DEMO_DISTRICT,
+    id: 'drop-test',
+    name: 'Drop Test',
+    props: [slab('deck', [0, 0], 0, 10, 10), slab('ground', [34, 0], -5, 60, 40)],
+    checkpoints: [],
+    collectibles: [],
+    doors: [],
+    elevators: [],
+    lights: [],
+    smoke: [],
+    goal: undefined,
+    npc: undefined,
+    trials: undefined,
+    // Facing +X, which is the way to the edge.
+    spawn: { position: { x: 0, y: 0.2, z: 0 }, yaw: -Math.PI / 2, pitch: 0 },
+    killPlaneY: -30,
+  };
 }
 
 describe('Game construction', () => {
@@ -1083,6 +1132,59 @@ describe('Game fall detection and respawn', () => {
     expect(harness.game.currentStatus).toBe('paused');
     // Respawn is driven by the simulation, which is frozen while paused.
     expect(harness.ui.isDeathVisible).toBe(true);
+  });
+
+  it('throws dust up on a hard landing, scaled by the impact', () => {
+    // The camera already answers a landing; this is the ground doing the same, so what the eye
+    // sees and what the camera feels are one event.
+    const harness = createHarness({ level: dropLevel() });
+    harness.game.start();
+    stepFrames(harness, 10);
+
+    const view = harness.views[0];
+    const before = view?.dust.length ?? 0;
+
+    // Sprint east off the deck, then land on the floor five metres below and settle.
+    harness.input.keyDown('KeyW');
+    harness.input.keyDown('ShiftLeft');
+    stepFrames(harness, 90);
+    harness.input.keyUp('KeyW');
+    harness.input.keyUp('ShiftLeft');
+    stepFrames(harness, 240);
+
+    // It was a landing, not a death: the point of this level.
+    expect(harness.game.snapshot().player.alive).toBe(true);
+
+    const bursts = (view?.dust.length ?? 0) - before;
+    expect(bursts).toBeGreaterThan(0);
+    for (const burst of view?.dust ?? []) {
+      expect(burst.strength).toBeGreaterThan(0);
+      expect(burst.strength).toBeLessThanOrEqual(1);
+      // A spread past a couple of metres reads as an explosion rather than a footfall.
+      expect(burst.spread).toBeLessThan(5);
+    }
+  });
+
+  it('clears any dust on a respawn, so it is not carried to the spawn point', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 10);
+    const before = harness.views[0]?.dustCleared ?? 0;
+
+    harness.game.respawn();
+
+    expect((harness.views[0]?.dustCleared ?? 0) - before).toBe(1);
+  });
+
+  it('clears any dust on a restart, so a new run starts with clean air', () => {
+    const harness = createHarness();
+    harness.game.start();
+    stepFrames(harness, 10);
+    const before = harness.views[0]?.dustCleared ?? 0;
+
+    harness.game.restart();
+
+    expect((harness.views[0]?.dustCleared ?? 0) - before).toBe(1);
   });
 });
 

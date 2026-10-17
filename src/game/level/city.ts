@@ -241,14 +241,31 @@ export function buildCity(base: LevelDefinition, options: CityOptions = {}): Lev
     lights: parts.lights,
     elevators: parts.elevators,
     doors: undefined,
-    smoke: undefined,
+    smoke: parts.smoke,
     // The streets are the world's floor, so the plane sits below them and a fall to the
     // pavement is survivable while a fall from a roof is not.
     killPlaneY: DEFAULTS.groundY - 9,
     environment: {
       ...base.environment,
-      fogNear: 260,
-      fogFar: 1150,
+      // **The fog has to finish by the draw distance, or it does not do its job.**
+      //
+      // Fog exists to hide the edge of what is drawn. V0.7 set it to 260/1150 - a fog that reached
+      // full opacity 830 m *past* the last chunk the renderer submits - so at the 320 m cull the
+      // haze was 6.7%: rooftops vanished with almost nothing on them, a hard cut where a fade was
+      // meant to be. (V1.0.18 chased exactly this class of "far city" artefact from the depth
+      // buffer; this is the same seam at the other end of the frame.)
+      //
+      // These complete at the cull, so the last drawn chunk is already the fog's colour and its
+      // removal cannot be seen. The ramp is ninety metres and deliberately no shorter - a tight fog
+      // reads as a wall of haze crossing the map rather than as distance - and the near plane sits
+      // at 240 so the whole parkour range stays crisp and only the far skyline hazes. A test holds
+      // `fogFar` to `DRAW_DISTANCE`, so the two cannot drift apart again.
+      fogNear: 240,
+      fogFar: 320,
+      // The skyline is *painted* with its own haze (three layers, paler with distance), so it is
+      // deliberately **not fogged** - see `buildCityBackdrop`. With the fog finishing at 320 m, a
+      // fogged backdrop at 780 m would be a hundred percent fog colour, which is to say the skyline
+      // would vanish entirely; leaving it unfogged is what keeps it visible at all.
       backdrop: { ...base.environment.backdrop, radius: 780 },
     },
   };
@@ -288,6 +305,15 @@ export interface CityParts {
   readonly goal: GoalDefinition;
   readonly npc: NpcDefinition;
   readonly trials?: NonNullable<LevelDefinition['trials']>;
+  /**
+   * Steam rising off the city's vents.
+   *
+   * Absent from V0.7 onward, because a plume was one `Sprite` and one material per puff and there
+   * was no way to afford a kilometre of them. V1.0.22 batches every puff into a single draw, so the
+   * city can have its weather back - and it is hung on the vent stacks the generator already
+   * placed, so the steam comes out of a flue rather than out of the air.
+   */
+  readonly smoke?: NonNullable<LevelDefinition['smoke']>;
   readonly report: Record<string, number>;
 }
 
@@ -298,6 +324,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
   const props: PropDefinition[] = [];
   const lights: NonNullable<LevelDefinition['lights']>[number][] = [];
   const elevators: NonNullable<LevelDefinition['elevators']>[number][] = [];
+  /** Vent tops, collected as the generator places them - see `Context.vents`. */
+  const vents: { x: number; y: number; z: number; scale: number }[] = [];
   const report = new Map<string, number>();
   const count = (kind: string): void => {
     report.set(kind, (report.get(kind) ?? 0) + 1);
@@ -415,6 +443,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
         props,
         lights,
         elevators,
+        vents,
         random,
         config,
         count,
@@ -836,6 +865,29 @@ export function generateCity(options: CityOptions = {}): CityParts {
     // courtyard, so the return trip is a descent into it rather than a sprint to a far corner, and
     // the beam of light marks the way back for anybody who has been out collecting.
     goal: { id: 'goal', position: catAt },
+    // Steam off the vents, thin enough to be weather rather than fog.
+    //
+    // **Not every vent.** There are some two hundred of them, and a plume on each is a hundred
+    // plumes on screen at once - which is a lot of overdraw for something the player should notice
+    // and not count. Every third flue reads as a city breathing rather than as a smoke test.
+    smoke:
+      vents.length === 0
+        ? undefined
+        : vents
+            .filter((_vent, index) => index % 3 === 0)
+            .map((vent, index) => ({
+              id: `vent-steam-${index + 1}`,
+              position: { x: vent.x, y: vent.y, z: vent.z },
+              // Narrow and tall: a rising column, not a cloud bank.
+              radius: 1.1,
+              rise: 7,
+              drift: 0.9,
+              period: 8,
+              // Faint on purpose. Several dozen overlapping plumes are each other's opacity, so a
+              // plume that looks right on its own fogs the district when they pile up.
+              opacity: 0.22,
+              count: 4,
+            })),
     report: Object.fromEntries(report),
   };
 }
@@ -875,6 +927,13 @@ interface Context {
   readonly plots: Map<string, Building>;
   readonly lights: NonNullable<LevelDefinition['lights']>[number][];
   readonly elevators: NonNullable<LevelDefinition['elevators']>[number][];
+  /**
+   * The vents the steam will come out of, as the generator places them.
+   *
+   * Collected here rather than found afterwards: afterwards is thirty thousand props and no way to
+   * tell a flue from a parapet, and a plume anchored to the wrong thing is a plume in mid-air.
+   */
+  readonly vents: { x: number; y: number; z: number; scale: number }[];
   readonly random: () => number;
   readonly config: Resolved;
   readonly count: (kind: string) => void;
@@ -1113,6 +1172,8 @@ function roofKit(
         break;
       case 'vent':
         place(`roof-vent-${index}`, px, pz, top, [1.6, 5, 1.6], 'vent-stack');
+        // Top of the stack, which is 5 m of vent above the roof.
+        context.vents.push({ x: px, y: top + 5, z: pz, scale: 1 });
         break;
       case 'dish':
         place(`roof-dish-${index}`, px, pz, top, [3.4, 3.4, 3.4], 'antenna-mast');

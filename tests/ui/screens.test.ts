@@ -222,6 +222,53 @@ describe('GameUi screen switching', () => {
     expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
   });
 
+  it('clears the speed vignette whenever the crosshair goes away', () => {
+    // A full-screen darkening left up behind the pause menu would read as the game being broken,
+    // so the two "you are playing" indicators come and go together. It is *cleared* rather than
+    // merely hidden, so returning to play starts from nothing.
+    const { root, ui } = createUi();
+    ui.showGame();
+    ui.setSpeedVignette(0.2);
+    const vignette = root.querySelector('.speed-vignette') as HTMLElement;
+    expect(vignette.style.opacity).toBe('0.2');
+
+    ui.showPause();
+    expect(vignette.style.opacity).toBe('0');
+  });
+
+  it('clamps the vignette rather than letting a bad number through', () => {
+    const { root, ui } = createUi();
+    const vignette = root.querySelector('.speed-vignette') as HTMLElement;
+
+    ui.setSpeedVignette(5);
+    expect(vignette.style.opacity).toBe('1');
+    ui.setSpeedVignette(-3);
+    expect(vignette.style.opacity).toBe('0');
+
+    // A NaN opacity makes the whole overlay vanish, which reads as the effect breaking - so a
+    // non-finite value is ignored rather than written.
+    ui.setSpeedVignette(0.4);
+    ui.setSpeedVignette(Number.NaN);
+    expect(vignette.style.opacity).toBe('0.4');
+  });
+
+  it('writes the vignette only when the value actually changes', () => {
+    // It is driven every frame, and `easeToward` approaches asymptotically - so a value that has
+    // settled must stop touching the DOM, or the overlay is rewritten for ever.
+    const { root, ui } = createUi();
+    const vignette = root.querySelector('.speed-vignette') as HTMLElement;
+
+    ui.setSpeedVignette(0.25);
+    // Something else takes over the attribute, then the same value is set again.
+    vignette.style.opacity = '0.123';
+    ui.setSpeedVignette(0.25);
+    expect(vignette.style.opacity).toBe('0.123');
+
+    // A value that *has* changed is written through.
+    ui.setSpeedVignette(0.3);
+    expect(vignette.style.opacity).toBe('0.3');
+  });
+
   it('showEnded reveals the ended screen and explains the shutdown', () => {
     const { root, ui } = createUi();
     ui.showEnded();
