@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.12` |
+| Version | `1.0.13` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
@@ -158,13 +158,17 @@ Bigger chunks and a shorter draw distance now, which is the trade that version m
 re-makes: submit more triangles, submit far fewer things. Cutting the pixel ratio never helped because
 the cost was never per-pixel.
 
-**And then the real fix.** The chunk was still the *batching* key, so the count was `chunks × materials`
+**And then the fix that was tried and reverted.** The chunk was the *batching* key, so the count was `chunks × materials`
 and it moved with the size of the map. The parts are merged flat by material now - one mesh per
 material, about forty-five of them for the whole district, and 88 draw calls from a street where it
 was four hundred to a thousand. The price is honest and it is the same one V0.7.9 paid: a chunk is a
 culling unit, and using it to batch means the directional cull is gone, so the frame submits more
-triangles and far fewer things. A test that asserted the old direction cull now says in as many words
-that this is what the merge costs.
+triangles and far fewer things. It was reverted in V1.0.13. Forty-five meshes, forty-four of them with a bounding
+radius over two hundred metres, meant forty-four hit the "this mesh is the size of the map,
+never cull it" rule: the distance cull stopped doing anything and 778,000 triangles went
+out every frame against 349,000 before, for no gain. A chunk is a culling unit and it has to
+stay one. The draw calls were never the chunks anyway - they are four hundred and twenty-two
+gate groups and ninety lift parts, still unbatched, and that is the next thing to fix.
 
 One regression is also gone: a start-up warm-up that compiled every shader and uploaded every buffer
 before the first frame, added in V1.0.5 and removed here. It was the only start-up behaviour that
@@ -300,3 +304,4 @@ tests/        unit, integration, and the invariants
 | V1.0.10 | The frame measured instead of simulated |
 | V1.0.11 | Fewer, fatter chunks: the draw calls named at last |
 | V1.0.12 | Merged flat by material: 88 draw calls for a district |
+| V1.0.13 | The merge reverted: 349k triangles beats 88 draw calls |

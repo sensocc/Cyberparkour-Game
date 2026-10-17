@@ -128,7 +128,7 @@ export interface BuiltScene {
  * more triangles and fewer submissions, which on this hardware is the right way round: a million
  * triangles is cheap, a thousand draw calls is not.
  */
-const CHUNK = 480;
+const CHUNK = 334;
 
 /**
  * A growable buffer of box geometry, in one chunk's local space.
@@ -655,24 +655,29 @@ export function buildScene(
       const centreX = (entry.min.x + entry.max.x) / 2;
       const centreY = (entry.min.y + entry.max.y) / 2;
       const centreZ = (entry.min.z + entry.max.z) / 2;
+      // The chunk the part's centre is in, so a part belongs to whichever chunk it
+      // mostly occupies rather than to the one its corner touches.
+      const cx = Math.floor(centreX / CHUNK);
+      const cz = Math.floor(centreZ / CHUNK);
 
       const cast = (prop.castShadow ?? true) && entry.castShadow;
       const receive = (prop.receiveShadow ?? true) && entry.receiveShadow;
-      // **Across chunks, not per chunk.** The bucket key used to carry the chunk, which made the draw
-      // call count `chunks x materials` - and that is the number that had this game at fourteen
-      // frames a second while turning the shadows, the lights and the resolution off bought a factor
-      // of two. A chunk is a *culling* unit; using it as a *batching* unit was V0.7.9's own lesson in
-      // reverse, and this is the same trade made again: submit more triangles, submit far fewer
-      // things. Merged flat, a street view is one mesh per material and the count is nine.
-      const key = `${surfaceId}|${tint}|${cast ? 1 : 0}${receive ? 1 : 0}`;
+      // **The chunk belongs in the key.** Merging flat by material was tried in V1.0.12 and reverted
+      // here, and the reason is measurable: with one mesh per material there were forty-five of them,
+      // forty-four had a bounding radius over two hundred metres, and forty-four therefore hit the
+      // "this mesh is the size of the map, never cull it" rule. The distance cull stopped doing
+      // anything, all 778,000 triangles were submitted every frame against about 349,000 before, and
+      // the frame got no faster. A chunk is a culling unit and it has to stay one: fewer draw calls is
+      // worth nothing if it costs the cull that stood between the player and the whole city.
+      const key = `${cx}|${cz}|${surfaceId}|${tint}|${cast ? 1 : 0}${receive ? 1 : 0}`;
 
       let bucket = buckets.get(key);
       if (!bucket) {
         bucket = {
           material,
           buffer: new PartBuffer(),
-          cx: 0,
-          cz: 0,
+          cx,
+          cz,
           cast,
           receive,
         };
@@ -680,9 +685,7 @@ export function buildScene(
       }
       // Chunk-local coordinates: a metre-wide box ten kilometres from the origin
       // has no precision left in a float, and a city is a kilometre across.
-      // World space, not chunk-local: a single merged mesh has no chunk to be local to. A kilometre
-      // of city in float32 still resolves to a tenth of a millimetre.
-      bucket.buffer.add(geometry, centreX, centreY, centreZ);
+      bucket.buffer.add(geometry, centreX - (cx + 0.5) * CHUNK, centreY, centreZ - (cz + 0.5) * CHUNK);
 
       used.push(material);
       drawn += 1;
@@ -698,9 +701,7 @@ export function buildScene(
     const geometry = bucket.buffer.bake();
     const mesh = new THREE.Mesh(geometry, bucket.material);
     mesh.name = `chunk:${bucket.cx}:${bucket.cz}`;
-    // At the origin, because the parts are already baked in world coordinates - the half-chunk offset
-    // that put a chunk-local buffer back where it belonged would move a world-space one 240 metres.
-    mesh.position.set(0, 0, 0);
+    mesh.position.set((bucket.cx + 0.5) * CHUNK, 0, (bucket.cz + 0.5) * CHUNK);
     mesh.castShadow = bucket.cast;
     mesh.receiveShadow = bucket.receive;
     // Remembered as well as applied: the view switches casting off for chunks the
