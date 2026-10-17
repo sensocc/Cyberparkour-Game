@@ -229,6 +229,10 @@ export class Game {
   private perfOtherMs = 0;
   private perfText = '';
   private perfShownAt = 0;
+  private perfMarkAt = 0;
+  private perfLastAt = 0;
+  /** Smoothed milliseconds per section of the frame: everything before the render, then the render, then the HUD. */
+  private readonly perfSections = { anim: 0, render: 0, hud: 0 };
 
   /** The smoothed eye height, and how fast it catches up. */
   private eyeSpring = Number.NaN;
@@ -960,6 +964,7 @@ export class Game {
       this.updateTriggers();
     });
 
+    this.perfMark();
     this.updateEffects(simulated);
     this.effectsSeconds += simulated;
     this.updateAudio(simulated);
@@ -968,8 +973,25 @@ export class Game {
     for (const change of swing) this.view?.setDoorOpen(change.id, change.open);
     this.view?.animate(this.effectsSeconds);
     this.stats.push(delta);
+    this.perfSection('anim');
     this.renderFrame(delta);
+    this.perfSection('render');
     this.updateHud();
+    this.perfSection('hud');
+  }
+
+  /** Starts timing a section of the frame, for the `?perf` readout. */
+  private perfMark(): void {
+    this.perfMarkAt = performance.now();
+  }
+
+  /** Closes a timed section and adds it to the smoothed breakdown. */
+  private perfSection(name: 'anim' | 'render' | 'hud'): void {
+    if (!this.perfEnabled) return;
+    const now = performance.now();
+    const elapsed = now - this.perfMarkAt;
+    this.perfMarkAt = now;
+    this.perfSections[name] += (elapsed - this.perfSections[name]) * 0.15;
   }
 
   /**
@@ -1431,12 +1453,19 @@ export class Game {
     if (!this.perfEnabled) return;
     const k = 0.15;
     this.perfRenderMs += (renderMs - this.perfRenderMs) * k;
-    this.perfOtherMs += (Math.max(0, delta * 1000 - renderMs) - this.perfOtherMs) * k;
+    // **The real frame interval, not the simulation's.** `delta` is clamped by the accumulator, so
+    // subtracting from it reports the clamp once a frame runs long - which is exactly when the number
+    // matters. This is the wall clock between the end of the last frame and the end of this one.
+    const nowMs = performance.now();
+    const interval = this.perfLastAt === 0 ? delta * 1000 : nowMs - this.perfLastAt;
+    this.perfLastAt = nowMs;
+    this.perfOtherMs += (Math.max(0, interval - renderMs) - this.perfOtherMs) * k;
     const stats = this.view?.renderStats;
     this.perfText =
       `${(1000 / Math.max(0.001, this.perfRenderMs + this.perfOtherMs)).toFixed(0)} fps` +
       ` | draw ${stats?.calls ?? 0} calls, ${Math.round((stats?.triangles ?? 0) / 1000)}k tris` +
       ` | ${this.perfRenderMs.toFixed(1)} ms render + ${this.perfOtherMs.toFixed(1)} ms other` +
+      ` [sim ${this.perfSections.anim.toFixed(1)} hud ${this.perfSections.hud.toFixed(1)}]` +
       ` | ${stats?.programs ?? 0} programs | ${this.settings.quality}` +
       ` | ${import.meta.env.DEV ? 'dev build' : 'production build'}`;
     const now = performance.now();
