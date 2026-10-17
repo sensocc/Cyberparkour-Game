@@ -750,6 +750,17 @@ export function buildScene(
   };
 
   /**
+   * Baked geometries of the movable groups, for disposal.
+   *
+   * `modelGroup` hands back a group of merged meshes whose geometry exists nowhere else - it is
+   * not in `geometryCache` (that holds the source boxes) and not among the chunks - so if it is
+   * not recorded here, nothing can free it. Left unrecorded this leaked a buffer per material of
+   * every gate, lift car, door and pickup on each view teardown, which happens on quit and on a
+   * context-loss recovery.
+   */
+  const movingGeometries: THREE.BufferGeometry[] = [];
+
+  /**
    * Builds a group of meshes from a model, in the group's own local space.
    *
    * Doors, lifts and pickups all need the same thing - a model resolved into parts that move
@@ -807,7 +818,9 @@ export function buildScene(
 
     let index = 0;
     for (const { material, buffer } of buckets.values()) {
-      const mesh = new THREE.Mesh(buffer.bake(), material);
+      const geometry = buffer.bake();
+      movingGeometries.push(geometry);
+      const mesh = new THREE.Mesh(geometry, material);
       mesh.castShadow = flags.castShadow ?? true;
       mesh.receiveShadow = flags.receiveShadow ?? true;
       mesh.name = `${name}#${index}`;
@@ -1208,6 +1221,8 @@ export function buildScene(
       for (const mesh of chunks) (mesh.geometry as THREE.BufferGeometry).dispose();
       for (const geometry of geometryCache.values()) geometry.dispose();
       for (const geometry of looseGeometries) geometry.dispose();
+      // The doors, cars, gates and pickups: baked buffers that live nowhere but their meshes.
+      for (const geometry of movingGeometries) geometry.dispose();
       for (const material of materials.values()) material.dispose();
       disposeRenderable(grid);
       if (backdrop) disposeRenderable(backdrop);

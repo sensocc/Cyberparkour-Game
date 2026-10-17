@@ -20,6 +20,7 @@ import {
   SENSITIVITY_RANGE,
   SETTINGS_STORAGE_KEY,
   bindingConflicts,
+  defaultSettings,
   normaliseSettings,
   readSettings,
   rebind,
@@ -223,6 +224,28 @@ describe('reading and writing', () => {
       [SETTINGS_STORAGE_KEY]: JSON.stringify({ fov: 100, somethingElse: true }),
     });
     expect(readSettings(store).fov).toBe(100);
+  });
+
+  it('honours the system motion preference when nothing has been saved', () => {
+    // The CSS media query already stops transitions; the camera is the part it cannot reach, so
+    // the fallback setting has to carry the preference instead.
+    expect(defaultSettings(true).motion).toBe('reduced');
+    expect(defaultSettings(false)).toBe(DEFAULT_SETTINGS);
+    expect(readSettings(memoryStore(), true).motion).toBe('reduced');
+  });
+
+  it('never lets the system preference override a saved choice', () => {
+    // An explicit choice always wins: a player who turned motion back on must not have it
+    // silently turned off again by the operating system's preference.
+    const store = memoryStore({
+      [SETTINGS_STORAGE_KEY]: JSON.stringify({ ...DEFAULT_SETTINGS, motion: 'full' }),
+    });
+    expect(readSettings(store, true).motion).toBe('full');
+
+    const off = memoryStore({
+      [SETTINGS_STORAGE_KEY]: JSON.stringify({ ...DEFAULT_SETTINGS, motion: 'off' }),
+    });
+    expect(readSettings(off, false).motion).toBe('off');
   });
 
   it('survives a store that throws', () => {

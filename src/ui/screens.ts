@@ -43,7 +43,13 @@ export interface UiCallbacks {
 export interface GameUiOptions {
   readonly root: HTMLElement;
   readonly version: string;
-  readonly levelName: string;
+  /**
+   * The level's name, shown on the title and About screens.
+   *
+   * Optional because the level is built *after* the UI in `main.ts` - the crash reporter has to
+   * exist first, or a generator bug is a blank page with no report. `setLevelName` fills it in.
+   */
+  readonly levelName?: string;
   /** The settings in force, drawn on the settings screen. */
   readonly settings: GameSettings;
   readonly callbacks: UiCallbacks;
@@ -114,6 +120,10 @@ export class GameUi {
   private readonly flashElement: HTMLElement;
   /** The one screen with inputs; it owns its own DOM and reports patches upward. */
   private readonly settingsPanel: SettingsPanel;
+  /** The title lines that name the level; rewritten when the level is known. */
+  private readonly versionLabels: HTMLElement[] = [];
+  private readonly version: string;
+  private levelName: string;
   private currentReport: CrashReport | null = null;
   /** True while the presentation is "playing", so the crosshair can come back. */
   private playMode = false;
@@ -121,6 +131,8 @@ export class GameUi {
   constructor(options: GameUiOptions) {
     this.callbacks = options.callbacks;
     this.root = options.root;
+    this.version = options.version;
+    this.levelName = options.levelName ?? '\u2026';
     this.root.classList.add('ui');
 
     this.settingsPanel = new SettingsPanel({
@@ -139,7 +151,7 @@ export class GameUi {
     this.startScreen = this.buildScreen('screen--start', [
       el('p', { className: 'title__eyebrow', text: 'CYBERPARKOUR' }),
       el('h1', { className: 'title__heading', text: 'Technical Demo' }),
-      el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
+      this.versionLabel(),
       el('p', {
         className: 'title__blurb',
         text: 'A first-person parkour run across a kilometre of generated cyberpunk city: a courtyard cat with ten shards to find, five checkpoints to run, three time trials, ninety lifts, and a street thirty-five metres below the rooftops. Mantle, vault, wall run and climb your way back up.',
@@ -192,7 +204,7 @@ export class GameUi {
     this.aboutScreen = this.buildScreen('screen--about', [
       el('h2', { className: 'screen__heading', text: 'ABOUT' }),
       ...ABOUT_LINES.map((line) => el('p', { className: 'screen__sub', text: line })),
-      el('p', { className: 'title__version', text: `v${options.version} \u00b7 ${options.levelName}` }),
+      this.versionLabel(),
       button('Back', { className: 'btn btn--primary', onClick: () => this.goBack() }),
     ]);
 
@@ -345,6 +357,30 @@ export class GameUi {
   /** Redraws the settings screen from the settings now in force. */
   setSettings(settings: GameSettings): void {
     this.settingsPanel.update(settings);
+  }
+
+  /**
+   * A `v1.0.21 · Neon Grid` line, tracked so it can be relabelled later.
+   *
+   * The level is built *after* the shell, so the title cannot know its name at construction - and
+   * a title card that names the wrong level is exactly the kind of copy bug this project keeps
+   * finding. One helper, one list, so both title lines move together.
+   */
+  private versionLabel(): HTMLElement {
+    const label = el('p', { className: 'title__version', text: this.titleVersion() });
+    this.versionLabels.push(label);
+    return label;
+  }
+
+  private titleVersion(): string {
+    return `v${this.version} \u00b7 ${this.levelName}`;
+  }
+
+  /** Names the level on the title and About screens, once it has been built. */
+  setLevelName(name: string): void {
+    this.levelName = name;
+    const text = this.titleVersion();
+    for (const label of this.versionLabels) label.textContent = text;
   }
 
   /** What this build is, reachable from the title screen. */

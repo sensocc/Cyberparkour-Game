@@ -569,10 +569,17 @@ export class GameView implements GameViewLike {
     }
   }
 
-  /** Sets the vertical field of view. */
+  /**
+   * Sets the vertical field of view.
+   *
+   * Idempotent for a value it already has, which is what the render path relies on: the game
+   * passes the setting *plus* whatever the speed and crouch effects are doing with it every frame,
+   * and a frame in which neither changed must not rebuild the projection matrix.
+   */
   setFov(fov: number): void {
     if (this.disposed) return;
     if (!Number.isFinite(fov) || fov <= 0) return;
+    if (this.camera.fov === fov) return;
     this.camera.fov = fov;
     this.camera.updateProjectionMatrix();
   }

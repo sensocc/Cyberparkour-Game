@@ -6,9 +6,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.20` |
+| Version | `1.0.21` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1164 in 42 files |
+| Tests | 1171 in 42 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -73,7 +73,7 @@ The four things that do most of the work: merged geometry (one buffer per chunk 
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1164 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1171 tests with coverage, production build. Green on Node 22, 24 and 26.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - The physics is compared against itself: the collision grid is held to the linear scan it replaced, over the whole city.
 

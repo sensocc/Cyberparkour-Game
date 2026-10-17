@@ -117,17 +117,42 @@ export function equalsVec3(a: ReadonlyVec3, b: ReadonlyVec3, epsilon = 1e-6): bo
   );
 }
 
+/** The forward/right basis pair, so a caller can hand its own storage to `intoYawBasis`. */
+export interface YawBasis {
+  readonly forward: Vec3;
+  readonly right: Vec3;
+}
+
+/** Fresh storage for a basis, for a caller that will reuse it. */
+export function createYawBasis(): YawBasis {
+  return { forward: vec3(), right: vec3() };
+}
+
+/**
+ * Builds the unit forward/right basis for a yaw-only (FPS) orientation, into `out`.
+ *
+ * Matches three.js conventions: at yaw 0 the camera looks down `-Z`, and `+X` is to its right.
+ *
+ * Written into a caller-owned pair rather than allocated: this is read several times per
+ * simulation step, and a step is the one place in the game that is meant to allocate nothing.
+ */
+export function intoYawBasis(yaw: number, out: YawBasis): YawBasis {
+  const sin = Math.sin(yaw);
+  const cos = Math.cos(yaw);
+  setVec3(out.forward, -sin, 0, -cos);
+  setVec3(out.right, cos, 0, -sin);
+  return out;
+}
+
 /**
  * Builds the unit forward/right basis for a yaw-only (FPS) orientation.
  *
  * Matches three.js conventions: at yaw 0 the camera looks down `-Z`, and `+X`
  * is to its right.
+ *
+ * Allocating form, for one-off callers; a hot path should use `intoYawBasis` with storage it
+ * keeps.
  */
-export function yawBasis(yaw: number): { forward: Vec3; right: Vec3 } {
-  const sin = Math.sin(yaw);
-  const cos = Math.cos(yaw);
-  return {
-    forward: { x: -sin, y: 0, z: -cos },
-    right: { x: cos, y: 0, z: -sin },
-  };
+export function yawBasis(yaw: number): YawBasis {
+  return intoYawBasis(yaw, createYawBasis());
 }

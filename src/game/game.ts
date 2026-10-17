@@ -327,8 +327,11 @@ export class Game {
     );
     this.stats = new FrameStats(this.config.debug.fpsSampleCount);
 
-    // Built twice on purpose: the constructor validates the level immediately,
-    // so an authoring mistake surfaces at boot rather than on first frame.
+    // **Validated once, and kept.** An authoring mistake must surface at boot rather than on the
+    // first frame, so the level is built (and so validated) here - and then *reused* for every
+    // run rather than rebuilt. The colliders and the collision world are immutable, so a restart
+    // only has to return the movable systems to their starting state; rebuilding them was ~105 ms
+    // of duplicate work per `Game`, and the constructor is on the boot path.
     this.level = buildLevel(this.definition, {
       maxSubStep: this.config.world.maxCollisionSubStep,
       player: standingSize(this.config.player),
@@ -823,18 +826,14 @@ export class Game {
   }
 
   private resetSimulation(): void {
-    this.level = buildLevel(this.definition, {
-      maxSubStep: this.config.world.maxCollisionSubStep,
-      player: standingSize(this.config.player),
-    });
-    this.climbables = collectClimbableIds(this.level.colliders);
-    this.pipes = collectPipeIds(this.level.colliders);
-    this.doors = new DoorSystem(this.definition.doors ?? [], this.level.world);
-    this.elevators = new ElevatorSystem(this.definition.elevators ?? [], this.level.world, {
-      speed: this.config.elevator.speed,
-      doorSeconds: this.config.elevator.doorSeconds,
-    });
-    // The level the options point at has just been replaced.
+    // **The level is not rebuilt.** It is built once in the constructor and kept: the colliders
+    // and the collision world never change, so a new run only needs the *movable* state put back
+    // where it started - which door is open, where each lift is, which pickups are gone. This
+    // used to rebuild the level and both systems, which was ~105 ms per call on a 12,000-prop
+    // city and pure waste, because `DoorSystem.reset` and `ElevatorSystem.reset` restore exactly
+    // that state without touching the immutable half.
+    this.doors.reset();
+    this.elevators.reset();
     this.stepOptionsCache = null;
     this.run.begin();
     this.effectsSeconds = 0;
@@ -1046,7 +1045,7 @@ export class Game {
       this.updateTriggers();
     });
 
-    this.perfMark();
+    if (this.perfEnabled) this.perfMark();
     this.updateEffects(simulated);
     this.effectsSeconds += simulated;
     this.updateAudio(simulated);
@@ -1058,11 +1057,11 @@ export class Game {
     // After the statistics, not after the HUD: this is decided by the frame, not by the overlay
     // that reports it.
     this.adaptResolution();
-    this.perfSection('anim');
+    if (this.perfEnabled) this.perfSection('anim');
     this.renderFrame(delta);
-    this.perfSection('render');
+    if (this.perfEnabled) this.perfSection('render');
     this.updateHud();
-    this.perfSection('hud');
+    if (this.perfEnabled) this.perfSection('hud');
 
     // Everything this frame cost this thread, from the first line of it to the last - which is the
     // number that says whether the frame is missing on the CPU or on the GPU. See `measureFrame`.
@@ -1072,7 +1071,13 @@ export class Game {
     }
   }
 
-  /** Starts timing a section of the frame, for the `?perf` readout. */
+  /**
+   * Starts timing a section of the frame, for the `?perf` readout.
+   *
+   * The call sites guard on `perfEnabled` rather than this getting called to do nothing: the
+   * readout is off for every player who has not asked for it, and it must not cost them a clock
+   * read per section per frame for a number nobody will read.
+   */
   private perfMark(): void {
     this.perfMarkAt = performance.now();
   }
@@ -1537,9 +1542,9 @@ export class Game {
       dt,
     );
 
-    const renderStarted = performance.now();
+    const renderStarted = this.perfEnabled ? performance.now() : 0;
     this.view.render(this.scratchEye, this.scratchOrientation);
-    this.measureFrame(performance.now() - renderStarted, dt);
+    if (this.perfEnabled) this.measureFrame(performance.now() - renderStarted, dt);
   }
 
   /**

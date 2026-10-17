@@ -56,12 +56,26 @@ export interface ElevatorOptions {
 const DEFAULT_DOORS = 0.55;
 const DEFAULT_SPEED = 2.6;
 
+/** Reported for a zero-length step, so the common paused case allocates nothing. */
+const EMPTY_UPDATES: readonly ElevatorUpdate[] = Object.freeze([]);
+
+/** `ElevatorUpdate` with its `readonly` lifted, for the records `update` reuses in place. */
+type MutableUpdate = { -readonly [K in keyof ElevatorUpdate]: ElevatorUpdate[K] };
+
 interface Car {
   readonly definition: ElevatorDefinition;
   /** The car's own collider box, rewritten as it travels. */
   readonly box: AABB;
   /** The gate colliders, one *group* per floor: a floor may open on two sides. */
   readonly gates: readonly (readonly AABB[])[];
+  /**
+   * The record `update` reports for this car, kept and rewritten.
+   *
+   * One per car rather than one per car per step: `update` runs inside the fixed simulation step,
+   * which is the one place in the game that is supposed to allocate nothing, and it used to build
+   * two objects per car per step - the `describe` result and the spread that added `deltaY`.
+   */
+  readonly update: MutableUpdate;
   topY: number;
   /** Index into `definition.floors` the car is at, or heading for. */
   floor: number;
@@ -83,6 +97,15 @@ export interface ElevatorApproach {
 
 export class ElevatorSystem {
   private readonly cars: Car[] = [];
+  /**
+   * The records `update` reports, one per car, held for the life of the system.
+   *
+   * `update` runs inside the fixed simulation step, and a step is not a place to allocate: this
+   * used to build a fresh array of ninety fresh records sixty times a second, most of them for
+   * cars that were standing still. The *array* is stable because the car set is; only its
+   * elements' fields move, so the same buffer is rewritten and handed back every tick.
+   */
+  private readonly updates_: ElevatorUpdate[] = [];
   private readonly doorSeconds: number;
   private readonly speed: number;
 
@@ -117,6 +140,16 @@ export class ElevatorSystem {
         definition,
         box: car.box,
         gates,
+        update: {
+          id: definition.id,
+          at: definition.at,
+          size: definition.size,
+          deltaY: 0,
+          topY,
+          state: 'idle',
+          floor,
+          doorsOpen: 1,
+        },
         topY,
         floor,
         state: 'idle',
@@ -132,7 +165,12 @@ export class ElevatorSystem {
     return this.cars.map((car) => car.definition.id);
   }
 
-  /** Where every car is right now, for handing to a freshly created view. */
+  /**
+   * Where every car is right now, for handing to a freshly created view.
+   *
+   * Snapshots, unlike `update`: this is called once when a view is built, so a fresh array of
+   * fresh records is the *point* - the caller keeps it while the cars move on.
+   */
   snapshot(): ElevatorUpdate[] {
     return this.cars.map((car) => this.describe(car));
   }
@@ -249,19 +287,26 @@ export class ElevatorSystem {
    * Advances every car, moving its collider and its gates with it.
    *
    * @returns one entry per car per tick, so a caller only has to carry a rider when
-   * there is a car to carry them.
+   * there is a car to carry them. **The entries are reused** - the same record for a given car
+   * every tick, rewritten in place - because this runs inside the fixed simulation step, which is
+   * the one place in the game that allocates nothing on purpose. A caller that needs to keep one
+   * should copy it, or use `snapshot`.
    */
-  update(dt: number): ElevatorUpdate[] {
-    const updates: ElevatorUpdate[] = [];
+  update(dt: number): readonly ElevatorUpdate[] {
     const step = Math.max(0, dt);
-    if (step <= 0) return updates;
+    if (step <= 0) return EMPTY_UPDATES;
 
-    for (const car of this.cars) {
+    for (let index = 0; index < this.cars.length; index += 1) {
+      const car = this.cars[index] as Car;
       const before = car.topY;
       this.advance(car, step);
-      updates.push({ ...this.describe(car), deltaY: car.topY - before });
+      // Refresh the car's own record rather than build a new one: `topY` and the state machine
+      // have both moved, and `deltaY` is what this tick carried.
+      this.write(car);
+      car.update.deltaY = car.topY - before;
+      this.updates_[index] = car.update;
     }
-    return updates;
+    return this.updates_;
   }
 
   // ------------------------------------------------------------------ private
@@ -339,6 +384,20 @@ export class ElevatorSystem {
       floor: car.floor,
       doorsOpen: this.doorFraction(car),
     };
+  }
+
+  /**
+   * Refreshes a car's reused record from its live state.
+   *
+   * The twin of `describe`, writing into the record the car already owns rather than building a
+   * new one. `deltaY` is left to the caller, because only `update` knows how far this tick moved.
+   */
+  private write(car: Car): void {
+    const record = car.update;
+    record.topY = car.topY;
+    record.state = car.state;
+    record.floor = car.floor;
+    record.doorsOpen = this.doorFraction(car);
   }
 
   /** Writes the car's footprint and height into its collider box. */

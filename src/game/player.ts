@@ -47,10 +47,11 @@ import {
 } from './physics/ledges.js';
 import {
   copyVec3,
+  intoYawBasis,
   lerpVec3,
   lengthXZ,
   vec3,
-  yawBasis,
+  createYawBasis,
   type ReadonlyVec3,
   type Vec3,
 } from '../core/vec3.js';
@@ -698,6 +699,19 @@ const CLIMB_NEIGHBOURHOOD = 0.7;
 const climbScratch: Collider[] = [];
 
 /**
+ * Two yaw bases, kept and rewritten - see `intoYawBasis`.
+ *
+ * Several places in a step want a player's forward/right pair, and a step is the one place in the
+ * game that is meant to allocate nothing, so they share these rather than each building a pair of
+ * vectors. **Why two, and not one:** `basisScratch` is for reads that happen immediately, but the
+ * climb paths hold `forward` across a `findClimbable` call, and one of *those* paths' helpers
+ * could otherwise be reached by a nested wish-direction lookup that would overwrite the vector
+ * still in use. Two pairs makes that impossible rather than merely currently-unlikely.
+ */
+const basisScratch = createYawBasis();
+const climbBasisScratch = createYawBasis();
+
+/**
  * Whether another climbable stands directly on top of this one.
  *
  * A ladder is a stack of sections, so the top of a section is a *step in a ladder* rather than the
@@ -761,7 +775,7 @@ function stepClimbing(
   copyVec3(state.previousPosition, state.position);
 
   const body = playerBox(state.position, config.radius, playerHeight(state, config));
-  const facing = yawBasis(state.yaw).forward;
+  const facing = intoYawBasis(state.yaw, climbBasisScratch).forward;
   const surface = findClimbable({
     world,
     box: body,
@@ -1076,7 +1090,7 @@ function stepLocomotion(
   let started: ManeuverKind | null = slideEvent.started ?? wallEvent.started;
   let ended: ManeuverKind | null = slideEvent.ended ?? wallEvent.ended;
 
-  const basis = yawBasis(state.yaw);
+  const basis = intoYawBasis(state.yaw, basisScratch);
   let wishX = basis.forward.x * input.forward + basis.right.x * input.right;
   let wishZ = basis.forward.z * input.forward + basis.right.z * input.right;
   const wishLength = Math.hypot(wishX, wishZ);
@@ -1305,7 +1319,7 @@ function applySteering(
   if (speed <= 1e-6) return;
 
   if (input.right !== 0) {
-    const basis = yawBasis(state.yaw);
+    const basis = intoYawBasis(state.yaw, basisScratch);
     state.velocity.x += basis.right.x * options.game.maneuver.slide.steerAcceleration * input.right * dt;
     state.velocity.z += basis.right.z * options.game.maneuver.slide.steerAcceleration * input.right * dt;
   }
@@ -1605,7 +1619,7 @@ function tryWallJump(state: PlayerState, input: MoveInput, options: PlayerStepOp
  * pattern or a stick drifting) does not count as intent.
  */
 function wishDirection(state: PlayerState, input: MoveInput): Vec3 | null {
-  const basis = yawBasis(state.yaw);
+  const basis = intoYawBasis(state.yaw, basisScratch);
   const x = basis.forward.x * input.forward + basis.right.x * input.right;
   const z = basis.forward.z * input.forward + basis.right.z * input.right;
   const length = Math.hypot(x, z);
@@ -1734,7 +1748,7 @@ function tryClimb(state: PlayerState, input: MoveInput, options: PlayerStepOptio
   const { config, world } = options;
   const climb = options.game.maneuver.climb;
   const box = playerBox(state.position, config.radius, playerHeight(state, config));
-  const facing = yawBasis(state.yaw).forward;
+  const facing = intoYawBasis(state.yaw, climbBasisScratch).forward;
 
   const surface = findClimbable({
     world,
@@ -1911,7 +1925,7 @@ export function headBobOffset(
 ): Vec3 {
   const bob = config.headBob;
   const amount = state.bobAmount * headBobAmplitudeScale(state, config);
-  const basis = yawBasis(state.yaw);
+  const basis = intoYawBasis(state.yaw, basisScratch);
   const lateral = Math.sin(gaitPhase) * bob.lateralAmplitude * amount;
 
   out.x = basis.right.x * lateral;

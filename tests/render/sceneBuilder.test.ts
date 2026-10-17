@@ -976,4 +976,29 @@ describe('buildScene disposal', () => {
     expect(geometryDisposed).toBe(true);
     expect(materialDisposed).toBe(true);
   });
+
+  it('frees the baked geometry inside the doors, cars, gates and pickups', () => {
+    // `modelGroup` hands back merged meshes whose geometry exists nowhere but their own meshes -
+    // not in the box cache, not among the chunks. Left unrecorded it leaked a buffer per material
+    // of every movable group on teardown, and a teardown happens on quit and on a context-loss
+    // recovery. Every `moving` mesh must have had its geometry disposed by `dispose()`.
+    const built = buildScene(DEMO_DISTRICT, assetTextures());
+    expect(built.moving.length).toBeGreaterThan(0);
+
+    const disposed = new Set<THREE.BufferGeometry>();
+    for (const mesh of built.moving) {
+      const geometry = mesh.geometry;
+      const original = geometry.dispose.bind(geometry);
+      geometry.dispose = () => {
+        disposed.add(geometry);
+        original();
+      };
+    }
+
+    built.dispose();
+
+    for (const mesh of built.moving) {
+      expect(disposed.has(mesh.geometry), mesh.name).toBe(true);
+    }
+  });
 });

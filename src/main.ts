@@ -15,7 +15,7 @@ import './style.css';
 
 import { DEFAULT_CONFIG } from './core/config.js';
 import { buildCity } from './game/level/city.js';
-import { DEFAULT_SETTINGS, normaliseSettings, readSettings, type GameSettings } from './core/settings.js';
+import { DEFAULT_SETTINGS, normaliseSettings, prefersReducedMotion, readSettings, type GameSettings } from './core/settings.js';
 import { logger, type LogBuffer } from './core/log.js';
 import { APP_VERSION, DEMO_LABEL } from './core/version.js';
 import {
@@ -86,24 +86,17 @@ function createAudioBackend(): AudioOutput {
 }
 
 /**
- * The level: the hand-authored district, with the city built around it.
+ * The level, built once the crash reporter exists.
  *
- * Built once at module load rather than per game, because it is deterministic: the same
- * seed is the same city, and the only reason to build it twice would be to waste the
- * forty milliseconds.
- *
- * **And it can fail**, which is why it is wrapped. A module that throws before the shell exists
- * never reaches the try/catch at the bottom of this file, so a generator bug would have been a
- * blank page with a stack trace in the console - the one failure mode the reporter installed
- * three lines later exists to prevent.
+ * The city is deterministic - the same seed is the same city - so it is built once and reused for
+ * the life of the page. It used to be built at *module load*, before the shell: a generator bug
+ * then threw before the reporter was installed, which is a blank page with a stack trace in the
+ * console - the one failure mode the reporter exists to prevent. Building it here, after
+ * `createShell`, lets a failure reach `reporter.capture` and show a downloadable report; and the
+ * wait is behind a title screen rather than a blank page.
  */
-let CITY: LevelDefinition;
-try {
-  CITY = buildCity(DEMO_DISTRICT);
-} catch (error) {
-  logger.error('app', 'the city could not be built', { error: String(error) });
-  renderBootFailure(error);
-  throw error;
+function buildWorld(): LevelDefinition {
+  return buildCity(DEMO_DISTRICT);
 }
 
 function createShell(): Shell {
@@ -113,8 +106,9 @@ function createShell(): Shell {
 
   const store = resolveStore();
   // Read once, before anything that needs them: the input layer, the camera and the
-  // mixer are all constructed from what the player chose last time.
-  const settings = readSettings(store);
+  // mixer are all constructed from what the player chose last time. The operating
+  // system's motion preference is the fallback for a player who has never chosen.
+  const settings = readSettings(store, prefersReducedMotion());
 
   const input = new InputState(settings.bindings);
   const audio = createAudioBackend();
@@ -136,7 +130,6 @@ function createShell(): Shell {
   const ui = new GameUi({
     root: uiRoot,
     version: APP_VERSION,
-    levelName: CITY.name,
     settings,
     callbacks: {
       onStart: () => holder.game?.start(),
@@ -248,7 +241,7 @@ async function loadAssets(): Promise<SceneAssets> {
   }
 }
 
-function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
+function createGame(shell: Shell, level: LevelDefinition, assets: SceneAssets): CyberparkourHandle {
   // From here on, anything thrown is captured and shown rather than lost.
   const game = new Game({
     host: shell.canvasHost,
@@ -260,7 +253,7 @@ function createGame(shell: Shell, assets: SceneAssets): CyberparkourHandle {
     crashReporter: shell.reporter,
     logBuffer: logger,
     config: DEFAULT_CONFIG,
-    level: CITY,
+    level,
     store: shell.store,
     settings: shell.settings,
     onSettingsChange: (next) => shell.ui.setSettings(next),
@@ -311,8 +304,11 @@ let shell: Shell | null = null;
 
 try {
   shell = createShell();
+  // The reporter is installed, so a failure here produces a report rather than a blank page.
+  const level = buildWorld();
+  shell.ui.setLevelName(level.name);
   const assets = await loadAssets();
-  const handle = createGame(shell, assets);
+  const handle = createGame(shell, level, assets);
 
   // Handy in the devtools console: `cyberparkour.game.snapshot()`.
   (globalThis as { cyberparkour?: CyberparkourHandle }).cyberparkour = handle;

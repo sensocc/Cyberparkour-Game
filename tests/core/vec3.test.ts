@@ -5,8 +5,10 @@ import {
   addVec3,
   cloneVec3,
   copyVec3,
+  createYawBasis,
   dotVec3,
   equalsVec3,
+  intoYawBasis,
   lengthSqVec3,
   lengthVec3,
   lengthXZ,
@@ -162,6 +164,22 @@ describe('yawBasis', () => {
       // right = forward x up, i.e. the familiar right-handed FPS basis.
       expect(right.x).toBeCloseTo(-forward.z, 12);
       expect(right.z).toBeCloseTo(forward.x, 12);
+    }
+  });
+
+  it('writes into a caller-owned pair, so a hot path allocates nothing', () => {
+    // A step reads the basis several times, and a step is meant to allocate nothing. The
+    // reused form must agree with the allocating one exactly, and must not allocate.
+    const reused = createYawBasis();
+    for (const yaw of [0, 0.7, Math.PI / 3, -2.4, 5.9]) {
+      const fresh = yawBasis(yaw);
+      const result = intoYawBasis(yaw, reused);
+
+      expect(result).toBe(reused);
+      expect(result.forward).toBe(reused.forward);
+      expect(result.right).toBe(reused.right);
+      expect(equalsVec3(reused.forward, fresh.forward, 1e-12)).toBe(true);
+      expect(equalsVec3(reused.right, fresh.right, 1e-12)).toBe(true);
     }
   });
 });

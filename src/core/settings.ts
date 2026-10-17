@@ -219,23 +219,56 @@ function normaliseBindings(raw: unknown): Bindings {
   return result as Bindings;
 }
 
-/** Reads settings from storage, falling back to the defaults on anything unusable. */
-export function readSettings(store?: SettingsStore): GameSettings {
-  if (!store) return DEFAULT_SETTINGS;
+/**
+ * Whether the operating system asks for reduced motion.
+ *
+ * Read defensively: `matchMedia` is absent in some embedded browsers, and a preference that
+ * cannot be read must leave the setting alone rather than throw at boot.
+ */
+export function prefersReducedMotion(): boolean {
+  try {
+    return globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The settings a player starts from who has never opened the settings screen.
+ *
+ * The operating system's motion preference is honoured here rather than in the CSS alone: the
+ * stylesheet already stops transitions, but the *camera* is the thing a motion-sensitive player
+ * is reacting to, and a head bob that ignores the system setting is the bug the CSS half leaves
+ * open. An explicit choice always wins, because this is only ever the fallback - see `readSettings`.
+ */
+export function defaultSettings(prefersReduced: boolean): GameSettings {
+  if (!prefersReduced) return DEFAULT_SETTINGS;
+  return { ...DEFAULT_SETTINGS, motion: 'reduced' };
+}
+
+/**
+ * Reads settings from storage, falling back to the defaults on anything unusable.
+ *
+ * `prefersReduced` is the operating system's motion preference, used only when there is nothing
+ * stored - so once a player has chosen, their answer is the one that counts.
+ */
+export function readSettings(store?: SettingsStore, prefersReduced = false): GameSettings {
+  const fallback = defaultSettings(prefersReduced);
+  if (!store) return fallback;
   let text: string | null = null;
   try {
     text = store.getItem(SETTINGS_STORAGE_KEY);
   } catch {
     // A store that throws (private mode, a quota in the middle of a write) is the
     // same as one that is empty.
-    return DEFAULT_SETTINGS;
+    return fallback;
   }
-  if (!text) return DEFAULT_SETTINGS;
+  if (!text) return fallback;
 
   try {
     return normaliseSettings(JSON.parse(text));
   } catch {
-    return DEFAULT_SETTINGS;
+    return fallback;
   }
 }
 

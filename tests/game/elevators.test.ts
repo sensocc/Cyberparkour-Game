@@ -228,6 +228,27 @@ describe('resetting', () => {
   });
 });
 
+describe('what a step costs', () => {
+  it('reports the same record every tick rather than allocating one', () => {
+    // `update` runs inside the fixed simulation step, where the game is meant to allocate
+    // nothing. It used to build a fresh array of fresh records sixty times a second, most of them
+    // for cars that were standing still; the records are now rewritten in place.
+    const lift = system();
+    const first = lift.update(STEP);
+    const second = lift.update(STEP);
+
+    expect(second).toBe(first);
+    expect(second[0]).toBe(first[0]);
+  });
+
+  it('a zero-length step hands back nothing, and never grows the buffer', () => {
+    const lift = system();
+    expect(lift.update(0)).toHaveLength(0);
+    expect(lift.update(-1)).toHaveLength(0);
+    expect(lift.update(STEP)).toHaveLength(1);
+  });
+});
+
 describe('time', () => {
   it('ignores a zero or backwards step', () => {
     const lift = system();

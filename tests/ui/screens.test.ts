@@ -29,7 +29,7 @@ interface Harness {
   readonly lastReport: () => CrashReport | null;
 }
 
-function createUi(version = '0.0.0'): Harness {
+function createUi(version = '0.0.0', levelName = 'Rooftop — Technical Demo'): Harness {
   document.body.innerHTML = '';
   const root = document.createElement('div');
   document.body.append(root);
@@ -56,7 +56,7 @@ function createUi(version = '0.0.0'): Harness {
   const ui = new GameUi({
     root,
     version,
-    levelName: 'Rooftop — Technical Demo',
+    levelName,
     settings: DEFAULT_SETTINGS,
     callbacks: calls,
   });
@@ -93,6 +93,23 @@ describe('GameUi construction', () => {
     const { root } = createUi('1.2.3');
     expect(root.querySelector('.title__version')?.textContent).toContain('v1.2.3');
     expect(root.querySelector('.title__version')?.textContent).toContain('Rooftop');
+  });
+
+  it('names the level later, once it has been built', () => {
+    // The level is built after the shell (so a generator bug produces a crash report rather than
+    // a blank page), so the title card learns the level's name after construction. Both title
+    // lines - the start screen's and the About screen's - have to move together.
+    const { root, ui } = createUi('1.2.3', '…');
+    expect(root.querySelectorAll('.title__version')[0]?.textContent).toContain('…');
+
+    ui.setLevelName('Neon Grid');
+
+    const labels = [...root.querySelectorAll('.title__version')];
+    expect(labels.length).toBeGreaterThan(1);
+    for (const label of labels) {
+      expect(label.textContent).toContain('v1.2.3');
+      expect(label.textContent).toContain('Neon Grid');
+    }
   });
 
   it('lists the controls on their own screen', () => {
