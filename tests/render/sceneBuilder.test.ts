@@ -148,12 +148,15 @@ describe('buildScene geometry', () => {
       };
       const { min, max } = boundsOf(built);
 
-      expect(min.x).toBeCloseTo(expected.min.x, 5);
-      expect(min.y).toBeCloseTo(expected.min.y, 5);
-      expect(min.z).toBeCloseTo(expected.min.z, 5);
-      expect(max.x).toBeCloseTo(expected.max.x, 5);
-      expect(max.y).toBeCloseTo(expected.max.y, 5);
-      expect(max.z).toBeCloseTo(expected.max.z, 5);
+      // Millimetres, not hundredths of a millimetre: the parts are baked in world coordinates now
+      // that a merged mesh is no longer local to a chunk, and float32 keeps about that much at the
+      // far end of a kilometre. A millimetre is not a visual quantity.
+      for (const [actual, wanted] of [
+        [min.x, expected.min.x], [min.y, expected.min.y], [min.z, expected.min.z],
+        [max.x, expected.max.x], [max.y, expected.max.y], [max.z, expected.max.z],
+      ] as const) {
+        expect(Math.abs(actual - wanted)).toBeLessThan(0.001);
+      }
     } finally {
       built.dispose();
     }
@@ -168,7 +171,9 @@ describe('buildScene geometry', () => {
     try {
       const parts = mergedParts(built);
       expect(parts).toBeGreaterThan(30_000);
-      expect(built.chunks.length).toBeLessThan(parts / 20);
+      // One mesh per material now, so the ratio is far better than the twenty-to-one this used to
+      // assert: thirty thousand parts into about forty-five buffers.
+      expect(built.chunks.length).toBeLessThan(parts / 100);
 
       // Nothing was dropped on the way in: every part of every prop that is not a
       // gate is in a buffer. (Gates are groups that slide.)

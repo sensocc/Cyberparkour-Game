@@ -77,7 +77,12 @@ describe('the cost of a frame', () => {
       // 626 at 334 m. The range has been to 128, 500 and 250: the last of those bought culling
       // resolution and paid for it in draw calls, which is the wrong way round - 653 chunk meshes
       // came to 485 of them in a street view, against 165 at this size for the same geometry.
-      expect(built.chunks.length).toBeGreaterThan(150);
+      // **One mesh per material, not per chunk.** The chunk used to be the batching key, which made
+      // the draw-call count `chunks x materials` and is what had this game at fourteen frames a
+      // second. Merged flat there are about forty-five - one per material per shadow flag - and the
+      // count no longer moves with the size of the map.
+      expect(built.chunks.length).toBeGreaterThan(8);
+      expect(built.chunks.length).toBeLessThan(60);
       expect(built.chunks.length).toBeLessThan(900);
 
       const parts = city.props.length;
@@ -111,11 +116,16 @@ describe('the cost of a frame', () => {
       expect(overlooking).toBeLessThan(1300);
       expect(overlooking).toBeGreaterThan(0);
 
-      // Behind the camera is not drawn at all, which is the property that merging
-      // by chunk rather than by material had to preserve.
+      // **The directional cull is what the flat merge costs.** Merged by chunk, a mesh behind the
+      // camera was not drawn at all, and this used to assert that half of them went away when the
+      // camera turned round. There are forty-five meshes now and each is the size of the map, so
+      // every one of them is in front of you whichever way you face: the frame pays in triangles
+      // instead - which is the trade the whole change is, and it is asserted below rather than
+      // hidden here.
       const half = visible(built.chunks, { x: 40, y: -32, z: 40 }, 0);
       const other = visible(built.chunks, { x: 40, y: -32, z: 40 }, Math.PI);
-      expect(half + other).toBeLessThan(built.chunks.length * 1.6);
+      expect(half).toBeGreaterThan(0);
+      expect(half + other).toBeLessThanOrEqual(built.chunks.length * 2);
     } finally {
       built.dispose();
     }
@@ -183,7 +193,10 @@ describe('the cost of a frame', () => {
       // where you stand, so what is asserted is that it is a *subset*: the invariant that matters
       // is the per-chunk one above, that a chunk the volume cannot reach is not in the pass.
       expect(casting).toBeGreaterThan(0);
-      expect(casting).toBeLessThan(built.chunks.length);
+      // **The per-chunk caster cull has nothing left to cull.** With the parts merged by material
+      // there are about forty-five meshes, each of them the size of the map, so every one of them is
+      // inside the shadow volume by definition. The triangles are paid for and the draw calls are not.
+      expect(casting).toBeLessThanOrEqual(built.chunks.length);
 
       // Asked of the chunk's own extent, not its centre: the shadow camera covers `reach` metres
       // around the player and clips the rest, so a chunk it does not touch casts nothing worth

@@ -7,7 +7,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.11` |
+| Version | `1.0.12` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1148 in 42 files |
 | Coverage | ~91% of statements |
@@ -148,7 +148,7 @@ whether this is a development build or a production one. The split is the point:
 renderer is what a graphics setting can move, and everything else is the simulation, the pose and the
 DOM, which no setting can.
 
-**The measurement finally named it, and it was the draw calls.** A reading from the machine that
+**The measurement finally named it, and it was the draw calls, twice over.** A reading from the machine that
 had the problem: simulation 0.0–0.2 ms, HUD 0.4–0.7 ms, render 9.9–44 ms, and **400 to 1,000 draw
 calls** with 400k–700k triangles for eight to fourteen frames a second. Both halves of the frame — the
 submission and the GPU work behind it — scale with what is drawn, and the thing that is drawn too many
@@ -157,6 +157,14 @@ chunk has been shrunk twice since (once for culling, once by accident), and the 
 Bigger chunks and a shorter draw distance now, which is the trade that version made and this one
 re-makes: submit more triangles, submit far fewer things. Cutting the pixel ratio never helped because
 the cost was never per-pixel.
+
+**And then the real fix.** The chunk was still the *batching* key, so the count was `chunks × materials`
+and it moved with the size of the map. The parts are merged flat by material now - one mesh per
+material, about forty-five of them for the whole district, and 88 draw calls from a street where it
+was four hundred to a thousand. The price is honest and it is the same one V0.7.9 paid: a chunk is a
+culling unit, and using it to batch means the directional cull is gone, so the frame submits more
+triangles and far fewer things. A test that asserted the old direction cull now says in as many words
+that this is what the merge costs.
 
 One regression is also gone: a start-up warm-up that compiled every shader and uploaded every buffer
 before the first frame, added in V1.0.5 and removed here. It was the only start-up behaviour that
@@ -291,3 +299,4 @@ tests/        unit, integration, and the invariants
 | V1.0.9 | The warm-up out, the measurements in |
 | V1.0.10 | The frame measured instead of simulated |
 | V1.0.11 | Fewer, fatter chunks: the draw calls named at last |
+| V1.0.12 | Merged flat by material: 88 draw calls for a district |

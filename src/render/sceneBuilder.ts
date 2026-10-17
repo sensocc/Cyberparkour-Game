@@ -656,21 +656,23 @@ export function buildScene(
       const centreY = (entry.min.y + entry.max.y) / 2;
       const centreZ = (entry.min.z + entry.max.z) / 2;
 
-      // The chunk the part's *centre* is in, so a part belongs to whichever chunk
-      // it mostly occupies rather than to the one its corner touches.
-      const cx = Math.floor(centreX / CHUNK);
-      const cz = Math.floor(centreZ / CHUNK);
       const cast = (prop.castShadow ?? true) && entry.castShadow;
       const receive = (prop.receiveShadow ?? true) && entry.receiveShadow;
-      const key = `${cx}|${cz}|${surfaceId}|${tint}|${cast ? 1 : 0}${receive ? 1 : 0}`;
+      // **Across chunks, not per chunk.** The bucket key used to carry the chunk, which made the draw
+      // call count `chunks x materials` - and that is the number that had this game at fourteen
+      // frames a second while turning the shadows, the lights and the resolution off bought a factor
+      // of two. A chunk is a *culling* unit; using it as a *batching* unit was V0.7.9's own lesson in
+      // reverse, and this is the same trade made again: submit more triangles, submit far fewer
+      // things. Merged flat, a street view is one mesh per material and the count is nine.
+      const key = `${surfaceId}|${tint}|${cast ? 1 : 0}${receive ? 1 : 0}`;
 
       let bucket = buckets.get(key);
       if (!bucket) {
         bucket = {
           material,
           buffer: new PartBuffer(),
-          cx,
-          cz,
+          cx: 0,
+          cz: 0,
           cast,
           receive,
         };
@@ -678,7 +680,9 @@ export function buildScene(
       }
       // Chunk-local coordinates: a metre-wide box ten kilometres from the origin
       // has no precision left in a float, and a city is a kilometre across.
-      bucket.buffer.add(geometry, centreX - (cx + 0.5) * CHUNK, centreY, centreZ - (cz + 0.5) * CHUNK);
+      // World space, not chunk-local: a single merged mesh has no chunk to be local to. A kilometre
+      // of city in float32 still resolves to a tenth of a millimetre.
+      bucket.buffer.add(geometry, centreX, centreY, centreZ);
 
       used.push(material);
       drawn += 1;
@@ -694,7 +698,9 @@ export function buildScene(
     const geometry = bucket.buffer.bake();
     const mesh = new THREE.Mesh(geometry, bucket.material);
     mesh.name = `chunk:${bucket.cx}:${bucket.cz}`;
-    mesh.position.set((bucket.cx + 0.5) * CHUNK, 0, (bucket.cz + 0.5) * CHUNK);
+    // At the origin, because the parts are already baked in world coordinates - the half-chunk offset
+    // that put a chunk-local buffer back where it belonged would move a world-space one 240 metres.
+    mesh.position.set(0, 0, 0);
     mesh.castShadow = bucket.cast;
     mesh.receiveShadow = bucket.receive;
     // Remembered as well as applied: the view switches casting off for chunks the
