@@ -300,11 +300,29 @@ function renderBootFailure(error: unknown): void {
   root.append(panel);
 }
 
+/**
+ * Lets the browser paint the title screen before the synchronous city build blocks the thread.
+ *
+ * Two animation frames, not one: a `requestAnimationFrame` callback runs *before* its frame's
+ * paint, so a single frame would still build the city ahead of the first paint. Scheduling the
+ * second frame from inside the first guarantees a paint in between - the title appears, and the
+ * city then builds behind it.
+ */
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 let shell: Shell | null = null;
 
 try {
   shell = createShell();
-  // The reporter is installed, so a failure here produces a report rather than a blank page.
+  // The reporter is installed, so a failure here produces a report rather than a blank page. The
+  // yield before the build is the title screen's chance to paint: the city generation is a
+  // synchronous half-second, and without it the player would stare at a blank page for the whole
+  // of it.
+  await yieldToBrowser();
   const level = buildWorld();
   shell.ui.setLevelName(level.name);
   const assets = await loadAssets();

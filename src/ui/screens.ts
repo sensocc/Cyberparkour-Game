@@ -91,8 +91,30 @@ function completeRow(label: string, value: string): HTMLElement {
   return row;
 }
 
-export class GameUi {
-  readonly root: HTMLElement;
+/**
+ * What the loading screen says while the first view is built.
+ *
+ * Chosen to read as the city coming alive rather than as a progress bar: a progress bar promises a
+ * measurement, and there is nothing to measure yet - the scene is one synchronous half-second.
+ * Cycled with JS rather than a CSS animation, so a reduced-motion player gets a single static line
+ * (see `showLoading`).
+ */
+const LOADING_PHRASES: readonly string[] = ['LINKING CITY\u2026', 'RAISING BUILDINGS\u2026', 'WIRING NEON\u2026'];
+/** How long one loading phrase stays up before the next, in milliseconds. */
+const LOADING_PHRASE_MS = 650;
+
+/**
+ * The loading glyph: the favicon's triangle, drawn larger and unboxed.
+ *
+ * Inlined as an SVG string rather than a node, so the spinner is one element with nothing to
+ * allocate and nothing to reach into. The stroke uses `currentColor`, which the CSS sets to the
+ * neon accent - one colour, one source.
+ */
+const LOADING_GLYPH_SVG =
+  '<svg viewBox="0 0 32 32" width="54" height="54" aria-hidden="true">' +
+  '<path d="M6 23 L16 7 L26 23" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linejoin="round"/></svg>';
+
+export class GameUi {  readonly root: HTMLElement;
   private readonly callbacks: UiCallbacks;
   private readonly startScreen: HTMLElement;
   private readonly menuScreen: HTMLElement;
@@ -108,6 +130,15 @@ export class GameUi {
   private readonly crashScreen: HTMLElement;
   private readonly crosshair: HTMLElement;
   private readonly speedVignette: HTMLElement;
+  /** The loading screen's cycling copy line, rewritten while it is up. */
+  private readonly loadingText: HTMLElement;
+  /** The glyph to stop spinning for a reduced-motion player. */
+  private readonly loadingGlyph: HTMLElement;
+  private readonly loadingScreen: HTMLElement;
+  private loadingTimer: number | null = null;
+  private loadingPhrase = 0;
+  /** Whether the player asked for less motion, which also stills the loading screen. */
+  private reducedMotion = false;
   /** The last opacity written, so a settled value does not rewrite the overlay every frame. */
   private vignetteValue = -1;
   private readonly deathOverlay: HTMLElement;
@@ -136,6 +167,7 @@ export class GameUi {
     this.root = options.root;
     this.version = options.version;
     this.levelName = options.levelName ?? '\u2026';
+    this.reducedMotion = options.settings.motion !== 'full';
     this.root.classList.add('ui');
 
     this.settingsPanel = new SettingsPanel({
@@ -283,6 +315,19 @@ export class GameUi {
     this.noticeBox = el('div', { className: 'notice notice--toast' });
     setHidden(this.noticeBox, true);
 
+    // ------------------------------------------------------------------ loading
+    // Not a panel: a bare, centred column, because there is nothing to read yet and a card would
+    // promise text. Built up front and hidden, so showing it later is a class flip rather than a
+    // DOM write in the middle of a frame.
+    this.loadingText = el('p', { className: 'loading__text', text: LOADING_PHRASES[0] });
+    this.loadingGlyph = el('div', { className: 'loading__glyph', attrs: { 'aria-hidden': 'true' }, html: LOADING_GLYPH_SVG });
+    this.loadingScreen = el('div', { className: 'screen screen--loading' });
+    const loadingInner = el('div', { className: 'loading' });
+    const loadingScan = el('div', { className: 'loading__scan' });
+    loadingInner.append(this.loadingGlyph, this.loadingText, loadingScan);
+    this.loadingScreen.append(loadingInner);
+    setHidden(this.loadingScreen, true);
+
     this.crosshair = el('div', { className: 'crosshair', attrs: { 'aria-hidden': 'true' } });
     setHidden(this.crosshair, true);
 
@@ -325,6 +370,7 @@ export class GameUi {
       this.endedScreen,
       this.completeScreen,
       this.crashScreen,
+      this.loadingScreen,
       this.noticeBox,
     );
 
@@ -364,6 +410,7 @@ export class GameUi {
 
   /** Redraws the settings screen from the settings now in force. */
   setSettings(settings: GameSettings): void {
+    this.reducedMotion = settings.motion !== 'full';
     this.settingsPanel.update(settings);
   }
 
@@ -463,6 +510,43 @@ export class GameUi {
     this.setActive(null);
     this.setCrosshair(true);
     this.hideDeath();
+  }
+
+  /**
+   * Shows the loading screen while the first view is built.
+   *
+   * The scene build is a synchronous half-second, so the only way the player sees a spinner rather
+   * than a frozen title is for the game to paint this *before* the build and hide it after the
+   * first frame. This method is the "paint me" half: it swaps the screen and starts the copy
+   * cycling. For a reduced-motion player it swaps the screen and leaves one static line.
+   */
+  showLoading(): void {
+    this.playMode = false;
+    this.setActive(this.loadingScreen);
+    this.setCrosshair(false);
+    this.hideDeath();
+
+    this.loadingPhrase = 0;
+    this.loadingText.textContent = LOADING_PHRASES[0] as string;
+    this.loadingGlyph.classList.toggle('loading__glyph--still', this.reducedMotion);
+    if (this.reducedMotion) return;
+
+    // Cycling is the only motion that is *not* a CSS transform, so it must be driven by a timer -
+    // and a timer armed before the synchronous build first fires on the other side of it, which is
+    // exactly the point: the phrases keep moving through the half-second the main thread is busy.
+    this.loadingTimer = window.setInterval(() => {
+      this.loadingPhrase = (this.loadingPhrase + 1) % LOADING_PHRASES.length;
+      this.loadingText.textContent = LOADING_PHRASES[this.loadingPhrase] as string;
+    }, LOADING_PHRASE_MS);
+  }
+
+  /** Hides the loading screen once the first frame is on screen. */
+  hideLoading(): void {
+    if (this.loadingTimer !== null) {
+      window.clearInterval(this.loadingTimer);
+      this.loadingTimer = null;
+    }
+    this.showGame();
   }
 
   /** Shows the "you died" overlay while the respawn timer runs. */
@@ -635,6 +719,7 @@ export class GameUi {
       this.endedScreen,
       this.completeScreen,
       this.crashScreen,
+      this.loadingScreen,
       this.settingsPanel.element,
     ]) {
       setHidden(candidate, candidate !== screen);

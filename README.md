@@ -4,11 +4,13 @@ A first-person parkour game in a procedurally generated cyberpunk city: a kilome
 
 TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser with WebGL 2 and Web Audio.
 
+▶ **Play the deployed build:** [sensocc.github.io/Cyberparkour-Game](https://sensocc.github.io/Cyberparkour-Game/)
+
 | | |
 | --- | --- |
-| Version | `1.0.23` |
+| Version | `1.0.24` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1208 in 44 files |
+| Tests | 1215 in 44 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -85,7 +87,8 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1208 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1215 tests with coverage, production build. Green on Node 22, 24 and 26.
+- Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - The physics is compared against itself: the collision grid is held to the linear scan it replaced, over the whole city.
 

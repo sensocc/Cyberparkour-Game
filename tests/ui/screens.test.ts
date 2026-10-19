@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { button, el, setHidden } from '../../src/ui/dom.js';
 import { buildCrashReport, emptyEnvironment, emptyGameState, type CrashReport } from '../../src/diagnostics/crashReport.js';
-import { DEFAULT_SETTINGS } from '../../src/core/settings.js';
+import { DEFAULT_SETTINGS, type GameSettings } from '../../src/core/settings.js';
 import { GameUi, type UiCallbacks } from '../../src/ui/screens.js';
 
 function createReport(overrides: Partial<Parameters<typeof buildCrashReport>[0]> = {}): CrashReport {
@@ -29,7 +29,7 @@ interface Harness {
   readonly lastReport: () => CrashReport | null;
 }
 
-function createUi(version = '0.0.0', levelName = 'Rooftop — Technical Demo'): Harness {
+function createUi(version = '0.0.0', levelName = 'Rooftop — Technical Demo', settings: GameSettings = DEFAULT_SETTINGS): Harness {
   document.body.innerHTML = '';
   const root = document.createElement('div');
   document.body.append(root);
@@ -57,7 +57,7 @@ function createUi(version = '0.0.0', levelName = 'Rooftop — Technical Demo'): 
     root,
     version,
     levelName,
-    settings: DEFAULT_SETTINGS,
+    settings,
     callbacks: calls,
   });
 
@@ -279,7 +279,7 @@ describe('GameUi screen switching', () => {
 
   it('every transition leaves exactly one screen visible', () => {
     const { root, ui } = createUi();
-    const screens = ['.screen--start', '.screen--pause', '.screen--ended', '.screen--crash'];
+    const screens = ['.screen--start', '.screen--pause', '.screen--ended', '.screen--crash', '.screen--loading'];
 
     for (const transition of [
       () => ui.showPause(),
@@ -287,7 +287,8 @@ describe('GameUi screen switching', () => {
       () => ui.showEnded(),
       () => ui.showStart(),
       () => ui.showCrash(createReport()),
-      () => ui.showGame(),
+      () => ui.showLoading(),
+      () => ui.hideLoading(),
     ]) {
       transition();
       const visible = screens.filter((selector) => !root.querySelector(selector)?.hasAttribute('hidden'));
@@ -319,6 +320,61 @@ describe('GameUi screen switching', () => {
     click(root.querySelector('.screen--about') as HTMLElement, /^back$/i);
     expect(root.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(false);
     expect(root.querySelector('.screen--about')?.hasAttribute('hidden')).toBe(true);
+  });
+});
+
+describe('GameUi loading screen', () => {
+  it('showLoading hides the title and shows the loading screen, with the crosshair off', () => {
+    const { root, ui } = createUi();
+    ui.showLoading();
+
+    expect(root.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(false);
+    expect(root.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(true);
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('hideLoading takes the loading screen down and shows the crosshair', () => {
+    const { root, ui } = createUi();
+    ui.showLoading();
+    ui.hideLoading();
+
+    expect(root.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(true);
+    expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('stills the glyph for a reduced-motion player, and does not cycle the copy', () => {
+    vi.useFakeTimers();
+    try {
+      const { root, ui } = createUi('0.0.0', 'Rooftop — Technical Demo', { ...DEFAULT_SETTINGS, motion: 'reduced' });
+      ui.showLoading();
+
+      expect(root.querySelector('.loading__glyph')?.classList.contains('loading__glyph--still')).toBe(true);
+      const first = root.querySelector('.loading__text')?.textContent;
+      vi.advanceTimersByTime(10_000);
+      expect(root.querySelector('.loading__text')?.textContent).toBe(first);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cycles the copy for a full-motion player', () => {
+    vi.useFakeTimers();
+    try {
+      const { root, ui } = createUi();
+      ui.showLoading();
+
+      const first = root.querySelector('.loading__text')?.textContent;
+      vi.advanceTimersByTime(700);
+      expect(root.querySelector('.loading__text')?.textContent).not.toBe(first);
+
+      // Hiding stops the cycle, so a paused game is not cycling copy in the background.
+      ui.hideLoading();
+      const atHide = root.querySelector('.loading__text')?.textContent;
+      vi.advanceTimersByTime(10_000);
+      expect(root.querySelector('.loading__text')?.textContent).toBe(atHide);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

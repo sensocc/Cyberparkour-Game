@@ -183,6 +183,81 @@ body {
   display: none;
 }
 
+/* ------------------------------------------------------------ loading --- */
+
+/* A bare, centred column: no panel, because a card promises text and there is nothing to read
+   yet. The glyph and the scanline animate with `transform` only, so they keep moving on the
+   compositor even while the main thread is busy building the scene - the whole reason this screen
+   exists. The copy is cycled by JS for the same reason (see `showLoading`). */
+.loading {
+  display: grid;
+  gap: 18px;
+  justify-items: center;
+  text-align: center;
+}
+
+.loading__glyph {
+  width: 54px;
+  height: 54px;
+  color: var(--accent);
+  filter: drop-shadow(0 0 8px rgba(88, 222, 255, 0.55));
+  animation: loading-spin 2.4s linear infinite;
+}
+
+.loading__glyph svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Reduced motion: the triangle stands, traced once and still. */
+.loading__glyph--still {
+  animation: none;
+}
+
+.loading__text {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.34em;
+  text-indent: 0.34em;
+  color: var(--muted);
+  min-height: 1.4em;
+}
+
+.loading__scan {
+  position: relative;
+  width: 180px;
+  height: 2px;
+  background: var(--border);
+  overflow: hidden;
+  border-radius: 1px;
+}
+
+/* A sliver of light sweeping the scanline; translate-only so the compositor owns it. */
+.loading__scan::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 42%;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: loading-sweep 1.5s ease-in-out infinite;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(340%);
+  }
+}
+
 .panel {
   width: min(560px, 100%);
   max-height: 100%;

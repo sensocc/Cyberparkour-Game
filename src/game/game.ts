@@ -31,7 +31,7 @@ import { FixedStepAccumulator } from '../core/delta.js';
 import { logger, type LogBuffer } from '../core/log.js';
 import { AudioDirector, type AudioCue } from '../audio/director.js';
 import { SilentAudio, type AudioOutput } from '../audio/engine.js';
-import { GameLoop, type FrameScheduler } from '../core/loop.js';
+import { GameLoop, createAnimationFrameScheduler, type FrameScheduler } from '../core/loop.js';
 import { vec3, type Vec3 } from '../core/vec3.js';
 import type { CrashReporter } from '../diagnostics/crashReporter.js';
 import { FrameStats, type StatsSnapshot } from '../diagnostics/stats.js';
@@ -161,6 +161,12 @@ export class Game {
   private readonly definition: LevelDefinition;
   private readonly log: LogBuffer | undefined;
   private readonly loop: GameLoop;
+  /** The frame source, shared with the loop so a start's paint-yield is testable. */
+  private readonly scheduler: FrameScheduler;
+  /** True between `start()` and the deferred build finishing, so a double click cannot double-build. */
+  private starting = false;
+  /** True once play has begun and the loading screen should come down on the first rendered frame. */
+  private hideLoadingOnFirstFrame = false;
   private readonly accumulator: FixedStepAccumulator;
   private readonly stats: FrameStats;
   private readonly domInput: DomInput;
@@ -370,13 +376,16 @@ export class Game {
     this.domInput.setBindings(this.settings.bindings);
     this.audioOutput.setVolumes(this.settings.volumes);
 
+    // One scheduler for both the loop and the start-up yield, so a test that drives the loop also
+    // drives the loading screen's paint frames - and a double-PLAY cannot double-request them.
+    this.scheduler = options.scheduler ?? createAnimationFrameScheduler();
+
     this.loop = new GameLoop({
       onFrame: (delta) => this.handleFrame(delta),
       onError: (error) => this.handleFrameError(error),
       maxDelta: this.config.world.maxFrameDelta,
-      ...(options.scheduler ? { scheduler: options.scheduler } : {}),
+      scheduler: this.scheduler,
     });
-
     this.log?.info('game', 'constructed', {
       level: this.definition.id,
       props: this.level.colliders.length,
@@ -412,24 +421,84 @@ export class Game {
 
   /** Starts or resumes play. Safe to call at any time. */
   start(): void {
-    if (this.status === 'playing') return;
+    if (this.status === 'playing' || this.starting) return;
+    this.starting = true;
 
-    try {
-      this.ensureView();
-    } catch (error) {
-      this.reportFatal(error, 'startup');
-      return;
-    }
-
+    // Pointer lock and audio both need the click's user gesture, so they - and the cheap state
+    // transition around them - happen synchronously, now, before the first await: a request made
+    // after the build would be refused by the browser.
     this.resetSimulation();
     this.setStatus('playing');
     this.domInput.attach();
-    this.loop.start();
-    this.options.ui.showGame();
     this.domInput.requestPointerLock();
     this.warnIfNoMouseLook();
     this.audioOutput.resume();
     this.audioOutput.setMusic(true);
+
+    if (this.view) {
+      // A return to the title kept the view, so there is nothing to build and nothing to wait for.
+      this.loop.start();
+      this.options.ui.showGame();
+      this.starting = false;
+      this.log?.info('game', 'started');
+      return;
+    }
+
+    // The first Play builds the whole scene - a synchronous half-second. Show the loading screen,
+    // give it two frames to paint (and its compositor animation to start) before the build blocks
+    // the main thread, then build. The screen comes down on the first rendered frame, so the
+    // first frame's shader compilation is absorbed by it too.
+    this.options.ui.showLoading();
+    void this.buildViewThenStart();
+  }
+
+  /**
+   * The heavy half of a first `start`: two paint frames, then the scene build and the loop.
+   *
+   * A callback chain rather than `async`/`await` on purpose: each scheduler frame *synchronously*
+   * requests the next one, exactly how `GameLoop` drives its own frames. An `await` would resume
+   * on the microtask queue, which a deterministic test scheduler never flushes between frames - so
+   * the second frame would never be requested and the build would hang.
+   */
+  private buildViewThenStart(): void {
+    let frames = 0;
+    const tick = (): void => {
+      frames += 1;
+      if (frames < 2) {
+        this.scheduler.request(tick);
+        return;
+      }
+      this.finishStart();
+    };
+    this.scheduler.request(tick);
+  }
+
+  /** The view now has two paint frames behind it; build it, start the loop, and hand off. */
+  private finishStart(): void {
+    // The page may have hidden, or the session ended, while the paint frames were in flight.
+    if (this.status === 'ended' || this.status === 'crashed') {
+      this.starting = false;
+      this.options.ui.hideLoading();
+      return;
+    }
+
+    try {
+      this.ensureView();
+    } catch (error) {
+      this.starting = false;
+      this.options.ui.hideLoading();
+      this.reportFatal(error, 'startup');
+      return;
+    }
+
+    // `resetSimulation` ran before the view existed, so the world state it would have pushed into
+    // the view was skipped - push it now that the view is here.
+    this.applyWorldState();
+    this.loop.start();
+    // `showGame()` is deferred: the loading screen stays until the first frame has actually
+    // rendered, and `renderFrame` calls `hideLoading()` (which does the `showGame` transition).
+    this.hideLoadingOnFirstFrame = true;
+    this.starting = false;
     this.log?.info('game', 'started');
   }
 
@@ -1567,6 +1636,14 @@ export class Game {
     const renderStarted = this.perfEnabled ? performance.now() : 0;
     this.view.render(this.scratchEye, this.scratchOrientation);
     if (this.perfEnabled) this.measureFrame(performance.now() - renderStarted, dt);
+
+    // The loading screen is taken down by the first frame that actually renders, not by `start`:
+    // a frame is the first moment the scene exists to be looked at, and the first frame's shader
+    // compilation is part of it - hiding earlier would swap the spinner for another freeze.
+    if (this.hideLoadingOnFirstFrame) {
+      this.hideLoadingOnFirstFrame = false;
+      this.options.ui.hideLoading();
+    }
   }
 
   /**

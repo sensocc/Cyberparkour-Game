@@ -232,6 +232,19 @@ function stepFrames(harness: Harness, count: number, deltaMs = 16): void {
 }
 
 /**
+ * Starts the game and flushes the two paint frames that defer the scene build.
+ *
+ * `start()` now shows the loading screen and lets it paint before the synchronous build, so the
+ * view is not built until two scheduler frames have passed. Every test that used to call `start()`
+ * and then assert on the view, the canvas or the loop calls this instead; the two paint frames are
+ * *not* loop frames, so frame counts keep their old meaning.
+ */
+function startGame(harness: Harness): void {
+  harness.game.start();
+  harness.scheduler.runFrames(2);
+}
+
+/**
  * A two-tier level: a deck to stand on and a floor five metres below it.
  *
  * The shipped district is no use for a *survivable* hard landing: its roofs are six metres apart
@@ -291,7 +304,7 @@ describe('Game construction', () => {
 describe('Game.start', () => {
   it('creates one canvas, a view, and begins playing', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
 
     expect(harness.game.currentStatus).toBe('playing');
     expect(harness.canvases()).toHaveLength(1);
@@ -302,17 +315,22 @@ describe('Game.start', () => {
 
   it('sizes the view to the host', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     // jsdom reports a zero-sized rect, so the viewport fallback is used.
     expect(harness.views[0]?.sizes[0]?.width).toBeGreaterThan(0);
     expect(harness.views[0]?.sizes[0]?.height).toBeGreaterThan(0);
   });
 
-  it('hides the title screen and shows the crosshair', () => {
+  it('hides the title screen and shows the crosshair once the first frame renders', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
 
+    // The loading screen takes the title's place while the scene builds; the crosshair belongs to
+    // play, so it appears with the first rendered frame rather than with the loading screen.
     expect(document.querySelector('.screen--start')?.hasAttribute('hidden')).toBe(true);
+    expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+
+    stepFrames(harness, 1);
     expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
   });
 
@@ -350,7 +368,7 @@ describe('Game.start', () => {
 
   it('is idempotent', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     harness.game.start();
     harness.game.start();
 
@@ -395,6 +413,56 @@ describe('Game.start', () => {
 
     stepFrames(harness, 1);
     expect(harness.game.snapshot().player.yaw).toBeCloseTo(afterFirst, 12);
+  });
+});
+
+describe('the loading screen', () => {
+  it('is shown while the first view builds, and taken down by the first rendered frame', () => {
+    const harness = createHarness();
+    harness.game.start();
+
+    // The scene build is deferred, so right after `start` the view does not exist and the loading
+    // screen is up in the title's place.
+    expect(harness.views).toHaveLength(0);
+    expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(false);
+
+    // Two paint frames build the view; the loading screen survives them, because the scene has not
+    // rendered yet - shader compilation is part of the first frame, and a spinner swapped out
+    // before it would be a second freeze.
+    stepFrames(harness, 2);
+    expect(harness.views).toHaveLength(1);
+    expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(false);
+
+    // The first rendered frame takes the loading screen down and shows the crosshair.
+    stepFrames(harness, 1);
+    expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(true);
+    expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('does not appear on a later start, when the view is already built', () => {
+    const harness = createHarness();
+    startGame(harness);
+    harness.game.toMainMenu();
+    harness.game.start();
+
+    // No deferral: the view exists, so `start` builds nothing and the loading screen never comes up.
+    expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(true);
+    expect(document.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('is hidden if the first view cannot be built', () => {
+    const harness = createHarness({
+      createView: () => {
+        throw new GraphicsUnavailableError('WebGL is not available.');
+      },
+    });
+
+    harness.game.start();
+    expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(false);
+
+    stepFrames(harness, 2);
+    expect(harness.game.currentStatus).toBe('crashed');
+    expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(true);
   });
 });
 
@@ -498,7 +566,7 @@ describe('Game.restart', () => {
     // texture and a fresh compile of every shader, to arrive back at the same picture. The
     // canvas, the scene and the context are the same objects they were a frame ago.
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const view = harness.views[0];
 
     harness.game.restart();
@@ -510,7 +578,7 @@ describe('Game.restart', () => {
 
   it('builds a new view when the old one is gone, as after a crash', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const first = harness.views[0];
 
     // A lost context, a fatal frame error: either way the view is disposed and there is nothing
@@ -555,7 +623,7 @@ describe('Game.restart', () => {
 
   it('works from the crashed state', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     // Force a crash from inside a frame.
     harness.scheduler.runFrame(16);
     vi.spyOn(harness.views[0] as FakeView, 'render').mockImplementation(() => {
@@ -593,7 +661,7 @@ describe('dynamic resolution', () => {
     // fifty - the difference between playable and not.
     withClock((advance) => {
       const harness = createHarness();
-      harness.game.start();
+      startGame(harness);
       const view = harness.views[0] as FakeView;
 
       // A hundred and twenty frames at 40 ms: a frame time a 60 Hz display cannot show.
@@ -608,7 +676,7 @@ describe('dynamic resolution', () => {
   it('leaves the resolution alone when the frames fit', () => {
     withClock((advance) => {
       const harness = createHarness();
-      harness.game.start();
+      startGame(harness);
       const view = harness.views[0] as FakeView;
 
       stepFrames(harness, 240, 16.7);
@@ -621,7 +689,7 @@ describe('dynamic resolution', () => {
   it('walks all the way down to the floor and stops there', () => {
     withClock((advance) => {
       const harness = createHarness();
-      harness.game.start();
+      startGame(harness);
       const view = harness.views[0] as FakeView;
 
       // Hopeless frames, and enough simulated time for every rate-limited step to happen.
@@ -642,7 +710,7 @@ describe('dynamic resolution', () => {
   it('starts a fresh view at its preset resolution', () => {
     withClock((advance) => {
       const harness = createHarness();
-      harness.game.start();
+      startGame(harness);
       stepFrames(harness, 120, 40);
       advance(2_000);
       expect((harness.views[0] as FakeView).renderScales.length).toBe(1);
@@ -664,7 +732,7 @@ describe('dynamic resolution', () => {
 describe('Game.quit', () => {
   it('releases the view, the canvas and the frame loop', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const view = harness.views[0];
 
     harness.game.quit();
@@ -696,7 +764,7 @@ describe('Game.quit', () => {
 describe('Game.dispose', () => {
   it('tears everything down and stops the loop', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const view = harness.views[0];
 
     harness.game.dispose();
@@ -713,7 +781,7 @@ describe('Game debug HUD toggle', () => {
     // V0.6's UI pass: the debug overlay is off by default, so a technical demo does
     // not look like a development build.
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     expect(harness.hud.isVisible).toBe(false);
 
     harness.input.keyDown('F3');
@@ -741,7 +809,7 @@ describe('Game debug HUD toggle', () => {
 
   it('Esc pauses when pointer lock was never acquired', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     harness.input.keyDown('Escape');
     stepFrames(harness, 1);
     expect(harness.game.currentStatus).toBe('paused');
@@ -751,7 +819,7 @@ describe('Game debug HUD toggle', () => {
 describe('Game crash handling', () => {
   it('captures an error thrown inside a frame and stops the loop', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     harness.scheduler.runFrame(16);
 
     vi.spyOn(harness.views[0] as FakeView, 'render').mockImplementation(() => {
@@ -769,7 +837,7 @@ describe('Game crash handling', () => {
 
   it('releases the GPU when the renderer dies', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const view = harness.views[0];
 
     vi.spyOn(view as FakeView, 'render').mockImplementation(() => {
@@ -784,7 +852,7 @@ describe('Game crash handling', () => {
 
   it('captures a lost WebGL context', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const canvas = harness.canvases()[0] as HTMLCanvasElement;
 
     canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true }));
@@ -800,7 +868,7 @@ describe('Game crash handling', () => {
       },
     });
 
-    harness.game.start();
+    startGame(harness);
 
     expect(harness.game.currentStatus).toBe('crashed');
     expect(harness.reporter.lastReport?.source).toBe('startup');
@@ -815,7 +883,7 @@ describe('Game crash handling', () => {
       },
     });
 
-    harness.game.start();
+    startGame(harness);
 
     expect(harness.game.currentStatus).toBe('crashed');
     expect(harness.reporter.lastReport?.error.name).toBe('GraphicsUnavailableError');
@@ -827,13 +895,13 @@ describe('Game crash handling', () => {
         throw new GraphicsUnavailableError('nope');
       },
     });
-    harness.game.start();
+    startGame(harness);
     expect(harness.canvases()).toHaveLength(0);
   });
 
   it('keeps the simulation alive after a crash until restart', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     vi.spyOn(harness.views[0] as FakeView, 'render').mockImplementation(() => {
       throw new Error('frame blew up');
     });
@@ -886,7 +954,7 @@ describe('Game pause triggers', () => {
 
   it('pauses when the tab is hidden', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
 
     const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
     document.dispatchEvent(new Event('visibilitychange'));
@@ -910,7 +978,7 @@ describe('Game pause triggers', () => {
 describe('Game snapshot', () => {
   it('describes the world, the player and the timing', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     stepFrames(harness, 30);
 
     const snapshot = harness.game.snapshot();
@@ -938,7 +1006,7 @@ describe('Game snapshot', () => {
 describe('Game resize handling', () => {
   it('resizes the view when the window resizes', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     const before = harness.views[0]?.sizes.length ?? 0;
 
     window.dispatchEvent(new Event('resize'));
@@ -1429,7 +1497,7 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
 
   it('takes a pickup the player walks into, and hides it', () => {
     const harness = createHarness({ level: PICKUP_LEVEL });
-    harness.game.start();
+    startGame(harness);
     stepFrames(harness, 2);
 
     expect(harness.game.runSnapshot.collected).toBe(1);
@@ -1488,7 +1556,7 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     // tested is the flow - through the gate, the clock runs, reaching the other gate scores - rather
     // than a route, which `city.test.ts` covers by laying three of them across the map.
     const harness = createHarness({ level: TRIAL_LEVEL });
-    harness.game.start();
+    startGame(harness);
     stepFrames(harness, 3);
 
     const trial = harness.game.currentTrial;
@@ -1501,7 +1569,7 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     // The one scripted moment in the game: the arm comes up, somebody answers, and then the
     // announcement. It is checked end to end because a secret that does not fire is not a secret.
     const harness = createHarness({ level: PHONE_LEVEL });
-    harness.game.start();
+    startGame(harness);
     stepFrames(harness, 2);
 
     expect(harness.game.runSnapshot.collected, 'not one of the eight').toBe(0);
@@ -1516,7 +1584,7 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     // The cat used to say "the eight shards" over a level with ten in it, which is the kind of thing
     // a player notices in the first minute and no test does unless it is written down.
     const harness = createHarness({ level: QUEST_LEVEL });
-    harness.game.start();
+    startGame(harness);
     harness.input.keyDown('KeyE');
     stepFrames(harness, 1);
     harness.input.keyUp('KeyE');
@@ -1530,7 +1598,7 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     // A phone you are guided to is not hidden, and the guide is the one thing in the game that knows
     // where everything is.
     const harness = createHarness({ level: PHONE_LEVEL });
-    harness.game.start();
+    startGame(harness);
     stepFrames(harness, 2);
     // The only collectible on this level is the phone, so a guide that pointed at collectibles would
     // point at it - and there is nothing else it could be pointing at, which is why the hint is null.
@@ -1689,7 +1757,7 @@ describe('the V0.5.1 fixes', () => {
 
   it('keeps the play HUD clock in step with the run, every frame', () => {
     const harness = createHarness();
-    harness.game.start();
+    startGame(harness);
     harness.input.keyDown('KeyW');
     stepFrames(harness, 8);
 
@@ -1786,7 +1854,7 @@ describe('settings, from the game', () => {
     const audio = recordingAudio();
     const store = fakeStore();
     const harness = createHarness({ audio, store });
-    harness.game.start();
+    startGame(harness);
     const fake = harness.views[0];
     expect(fake).toBeDefined();
     fake!.fovs.length = 0;
