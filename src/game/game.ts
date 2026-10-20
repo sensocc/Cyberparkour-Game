@@ -38,6 +38,7 @@ import { FrameStats, type StatsSnapshot } from '../diagnostics/stats.js';
 import { DomInput } from '../input/domInput.js';
 import { floorFromAction } from '../input/bindings.js';
 import type { InputState } from '../input/inputState.js';
+import { TouchControls } from '../input/touchControls.js';
 import { CameraEffects, type MotionSample } from './camera.js';
 import { applyLook, type Orientation } from './look.js';
 import { describePose, emptyPose, type PlayerPose } from './pose.js';
@@ -101,6 +102,8 @@ export interface GameOptions {
   readonly hud: DebugHud;
   readonly gameHud: GameHud;
   readonly input: InputState;
+  /** On-screen controls, present on a coarse-pointer device. Built by the caller. */
+  readonly touchControls?: TouchControls;
   readonly crashReporter: CrashReporter;
   readonly logBuffer?: LogBuffer;
   readonly config?: GameConfig;
@@ -170,6 +173,8 @@ export class Game {
   private readonly accumulator: FixedStepAccumulator;
   private readonly stats: FrameStats;
   private readonly domInput: DomInput;
+  /** On-screen controls on a touch device; null on a keyboard-and-mouse machine. */
+  private readonly touchControls: TouchControls | null;
   /**
    * Watches the movement state machine.
    *
@@ -366,6 +371,10 @@ export class Game {
       input: options.input,
       onPointerLockChange: (locked) => this.handlePointerLockChange(locked),
     });
+    this.touchControls = options.touchControls ?? null;
+    // The touch look scale is part of the settings, so a freshly built layer starts at it rather
+    // than at its own default and waiting for a settings change.
+    this.touchControls?.setLookSensitivity(this.settings.touchSensitivity);
 
     this.audioDirector = new AudioDirector(this.config);
     this.audioOutput = options.audio ?? new SilentAudio();
@@ -430,8 +439,13 @@ export class Game {
     this.resetSimulation();
     this.setStatus('playing');
     this.domInput.attach();
-    this.domInput.requestPointerLock();
-    this.warnIfNoMouseLook();
+    // Touch has no pointer lock: the stick and the look-drag are the mouse. Requesting it on a
+    // phone is refused (and the warning below would lie about it), so the whole gesture path is
+    // skipped rather than asked for and failed.
+    if (!this.touchControls) {
+      this.domInput.requestPointerLock();
+      this.warnIfNoMouseLook();
+    }
     this.audioOutput.resume();
     this.audioOutput.setMusic(true);
 
@@ -541,7 +555,7 @@ export class Game {
     this.options.ui.showGame();
     this.domInput.attach();
     this.loop.start();
-    this.domInput.requestPointerLock();
+    if (!this.touchControls) this.domInput.requestPointerLock();
     this.log?.info('game', 'resumed');
   }
 
@@ -596,7 +610,7 @@ export class Game {
     // restart's own duration would be simulated as one enormous frame.
     this.loop.stop();
     this.loop.start();
-    this.domInput.requestPointerLock();
+    if (!this.touchControls) this.domInput.requestPointerLock();
   }
 
   /** Shuts the demo down and releases the GPU. */
@@ -628,6 +642,7 @@ export class Game {
     this.loop.stop();
     this.disposeView();
     this.domInput.detach();
+    this.touchControls?.detach();
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     globalThis.removeEventListener('resize', this.handleResize);
@@ -812,6 +827,7 @@ export class Game {
     this.options.input.setBindings(next.bindings);
     this.domInput.setBindings(next.bindings);
     this.audioOutput.setVolumes(next.volumes);
+    this.touchControls?.setLookSensitivity(next.touchSensitivity);
     this.view?.setFov(next.fov);
     this.view?.setQuality(QUALITY_PRESETS[next.quality]);
 
@@ -1076,6 +1092,10 @@ export class Game {
     const previous = this.status;
     this.status = status;
     this.log?.debug('game', `status ${previous} -> ${status}`);
+    // The touch controls are part of *play*: visible exactly while the game is being played and
+    // gone behind every menu, exactly like the crosshair. One place to flip it, so no transition
+    // can forget it.
+    this.touchControls?.setVisible(status === 'playing');
     this.options.onStatusChange?.(status);
   }
 
@@ -1304,12 +1324,17 @@ export class Game {
   private refreshElevatorPrompt(): void {
     if (this.status !== 'playing') return;
     if (this.nearNpc()) {
-      this.elevatorPrompt = this.npcPrompt();
+      const prompt = this.npcPrompt();
+      this.elevatorPrompt = prompt;
+      // The cat's "left to find" is information, not an action; only "has something to say" (and
+      // the finish) makes the interact button mean anything.
+      this.pushTouchContext(prompt.kind === 'enter' ? 'TALK' : null, []);
       return;
     }
     const near = this.elevators.approach(this.player.position);
     if (!near) {
       this.elevatorPrompt = null;
+      this.pushTouchContext(null, []);
       return;
     }
 
@@ -1324,6 +1349,7 @@ export class Game {
           .map((floor, index) => `${index + 1} ${floor.name}${index === here ? ' *' : ''}`)
           .join('  ·  '),
       };
+      this.pushTouchContext(null, floors.map((floor) => floor.name));
       return;
     }
 
@@ -1334,6 +1360,19 @@ export class Game {
       title: near.docked ? 'LIFT HERE' : 'LIFT AWAY',
       detail: near.docked ? `Walk in - ${name}` : 'Press E to call it',
     };
+    // A docked lift is walked into, not pressed; an away lift is called. Either way the floor
+    // picker stays hidden until the player is actually inside.
+    this.pushTouchContext(near.docked ? null : 'CALL', []);
+  }
+
+  /**
+   * Projects the current prompt onto the touch buttons, when there is a touch layer to show it on.
+   *
+   * The desktop prompt lives in the middle of the screen as text; the touch version is the interact
+   * button's face and the floor picker. Same facts, two presentations - one source, pushed here.
+   */
+  private pushTouchContext(interactLabel: string | null, floors: readonly string[]): void {
+    this.touchControls?.setContext({ interactLabel, floors });
   }
 
   /**

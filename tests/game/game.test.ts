@@ -25,6 +25,7 @@ import { DEMO_DISTRICT, type LevelDefinition, type PropDefinition } from '../../
 import type { Orientation } from '../../src/game/look.js';
 import type { PlayerPose } from '../../src/game/pose.js';
 import { InputState } from '../../src/input/inputState.js';
+import { TouchControls } from '../../src/input/touchControls.js';
 import { GraphicsUnavailableError, type CreateView, type GameViewLike } from '../../src/render/types.js';
 import { GameHud } from '../../src/ui/gameHud.js';
 import { DebugHud } from '../../src/ui/hud.js';
@@ -122,6 +123,8 @@ interface Harness {
   readonly views: FakeView[];
   readonly statuses: GameStatus[];
   readonly canvases: () => HTMLCanvasElement[];
+  /** The touch layer, when the harness was asked for a coarse pointer. */
+  readonly touch: TouchControls | null;
 }
 
 interface HarnessOptions {
@@ -131,6 +134,8 @@ interface HarnessOptions {
   readonly settings?: GameSettings;
   /** Replaces the silent default, so a test can see what was asked of the mixer. */
   readonly audio?: AudioOutput;
+  /** Builds the touch layer, as a coarse-pointer device would. */
+  readonly touch?: boolean;
 }
 
 function createHarness(options: HarnessOptions = {}): Harness {
@@ -192,6 +197,8 @@ function createHarness(options: HarnessOptions = {}): Harness {
       return view;
     });
 
+  const touch = options.touch ? new TouchControls({ target: uiRoot, input }) : null;
+
   const game = new Game({
     host,
     pointerLockTarget: app,
@@ -199,6 +206,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     hud,
     gameHud,
     input,
+    ...(touch ? { touchControls: touch } : {}),
     crashReporter: reporter,
     logBuffer: new LogBuffer({ mirrorToConsole: false }),
     config: DEFAULT_CONFIG,
@@ -223,6 +231,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
     host,
     views,
     statuses,
+    touch,
     canvases: () => [...host.querySelectorAll('canvas')],
   };
 }
@@ -463,6 +472,59 @@ describe('the loading screen', () => {
     stepFrames(harness, 2);
     expect(harness.game.currentStatus).toBe('crashed');
     expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(true);
+  });
+});
+
+describe('the touch mode', () => {
+  it('shows the touch controls while playing and hides them on every menu', () => {
+    const harness = createHarness({ touch: true });
+    const touch = harness.touch;
+    expect(touch).not.toBeNull();
+
+    // Hidden until play begins.
+    expect(touch?.element.hidden).toBe(true);
+
+    startGame(harness);
+    expect(touch?.element.hidden).toBe(false);
+
+    harness.game.pause();
+    expect(touch?.element.hidden).toBe(true);
+
+    harness.game.resume();
+    expect(touch?.element.hidden).toBe(false);
+
+    harness.game.toMainMenu();
+    expect(touch?.element.hidden).toBe(true);
+  });
+
+  it('does not request pointer lock on a touch device', () => {
+    const harness = createHarness({ touch: true });
+    const target = harness.host.parentElement as HTMLElement;
+    const request = vi.fn();
+    Object.defineProperty(target, 'requestPointerLock', { configurable: true, value: request });
+
+    startGame(harness);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('maps the prompt onto the interact button: TALK by the cat, USE away from it', () => {
+    // A cat sitting exactly where the player spawns, so the prompt is deterministic: quest state
+    // "none" makes it "has something to say", which the touch layer reads as a TALK button.
+    const CAT_LEVEL = {
+      ...DEMO_DISTRICT,
+      checkpoints: [],
+      collectibles: [],
+      goal: undefined,
+      npc: { id: 'test-cat', name: 'Alley cat', position: { x: 0, y: 0.5, z: 3 }, reach: 4 },
+    };
+
+    const harness = createHarness({ level: CAT_LEVEL, touch: true });
+    startGame(harness);
+    stepFrames(harness, 2);
+
+    const interact = harness.touch?.buttons.get('interact');
+    expect(interact?.textContent).toBe('TALK');
+    expect(interact?.classList.contains('touch__button--active')).toBe(true);
   });
 });
 

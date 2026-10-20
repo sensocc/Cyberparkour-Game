@@ -36,6 +36,8 @@ import { createAudio, type AudioOutput } from './audio/engine.js';
 import { Game } from './game/game.js';
 import { DEMO_DISTRICT, type LevelDefinition } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
+import { TouchControls } from './input/touchControls.js';
+import { isCoarsePointer } from './core/device.js';
 import { disposeSceneAssets, loadSceneAssets } from './render/assets.js';
 import { NO_ASSETS, type SceneAssets } from './render/types.js';
 import { GameView } from './render/view.js';
@@ -71,6 +73,8 @@ interface Shell {
   readonly audio: AudioOutput;
   /** What the player chose, read once at boot and applied by the game. */
   readonly settings: GameSettings;
+  /** On-screen controls, built when the primary pointer is touch. */
+  readonly touchControls: TouchControls | null;
   /** Assigned once the game exists; the UI callbacks read it lazily. */
   readonly holder: { game: Game | null };
 }
@@ -108,7 +112,11 @@ function createShell(): Shell {
   // Read once, before anything that needs them: the input layer, the camera and the
   // mixer are all constructed from what the player chose last time. The operating
   // system's motion preference is the fallback for a player who has never chosen.
-  const settings = readSettings(store, prefersReducedMotion());
+  // A coarse pointer is the fallback for *quality*: a phone starts on Low rather
+  // than High, because it is the same GPU under a thermal ceiling the desktop never
+  // hits. Both fallbacks yield to an explicit stored choice.
+  const touch = isCoarsePointer();
+  const settings = readSettings(store, prefersReducedMotion(), touch);
 
   const input = new InputState(settings.bindings);
   const audio = createAudioBackend();
@@ -131,6 +139,7 @@ function createShell(): Shell {
     root: uiRoot,
     version: APP_VERSION,
     settings,
+    touch,
     callbacks: {
       onStart: () => holder.game?.start(),
       onResume: () => holder.game?.resume(),
@@ -226,7 +235,14 @@ function createShell(): Shell {
 
   ui.showStart();
 
-  return { app, canvasHost, input, hud, gameHud, ui, reporter, store, settings, audio, holder };
+  // The touch layer is built once and lives for the session, attached but hidden until the game
+  // is actually playing - `Game.setStatus` flips it. Built only on a coarse pointer, so a desktop
+  // never carries the stick or its listeners.
+  const touchControls = isCoarsePointer() ? new TouchControls({ target: ui.root, input, lookSensitivity: settings.touchSensitivity }) : null;
+  touchControls?.attach();
+  touchControls?.setVisible(false);
+
+  return { app, canvasHost, input, hud, gameHud, ui, reporter, store, settings, audio, holder, touchControls };
 }
 
 /** Loads the flat textures, degrading to flat colours rather than failing. */
@@ -250,6 +266,7 @@ function createGame(shell: Shell, level: LevelDefinition, assets: SceneAssets): 
     hud: shell.hud,
     gameHud: shell.gameHud,
     input: shell.input,
+    touchControls: shell.touchControls ?? undefined,
     crashReporter: shell.reporter,
     logBuffer: logger,
     config: DEFAULT_CONFIG,

@@ -221,3 +221,63 @@ describe('InputState.clear', () => {
     expect(input.consumePointerDelta()).toEqual({ dx: 0, dy: 0 });
   });
 });
+
+describe('InputState touch input', () => {
+  it('merges the touch stick with the keys, clamped to the unit square', () => {
+    const input = new InputState();
+    input.setTouchMove(0.5, 0);
+    expect(axes(input.moveInput)).toEqual({ forward: 0.5, right: 0 });
+
+    // A key on top of a tilt: both writers count, and the sum is clamped so a full key plus a
+    // full tilt cannot exceed the range movement normalises against.
+    input.keyDown('KeyW');
+    expect(axes(input.moveInput)).toEqual({ forward: 1, right: 0 });
+
+    input.setTouchMove(0.75, -0.25);
+    input.keyDown('KeyD');
+    expect(input.moveInput.forward).toBeCloseTo(1, 6);
+    expect(input.moveInput.right).toBeCloseTo(0.75, 6);
+  });
+
+  it('clamps out-of-range touch axes rather than trusting them', () => {
+    const input = new InputState();
+    input.setTouchMove(3, -2);
+    expect(axes(input.moveInput)).toEqual({ forward: 1, right: -1 });
+
+    input.setTouchMove(Number.NaN, Number.POSITIVE_INFINITY);
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 0 });
+  });
+
+  it('lets a touch button hold a movement action the binding table knows nothing about', () => {
+    const input = new InputState();
+    expect(input.moveInput.jump).toBe(false);
+
+    input.pressAction('jump');
+    expect(input.moveInput.jump).toBe(true);
+    expect(input.isActionPressed('jump')).toBe(true);
+
+    input.releaseAction('jump');
+    expect(input.moveInput.jump).toBe(false);
+  });
+
+  it('queues UI actions from a touch button exactly like a key press', () => {
+    const input = new InputState();
+    input.pressAction('interact');
+    input.pressAction('pause');
+    expect(input.consumeActions()).toEqual(['interact', 'pause']);
+
+    // A held button must not re-queue: the press is edge-triggered, like a key repeat.
+    input.pressAction('interact');
+    expect(input.consumeActions()).toEqual([]);
+  });
+
+  it('clears touch axes and held touch actions with everything else', () => {
+    const input = new InputState();
+    input.setTouchMove(0.4, 0.6);
+    input.pressAction('crouch');
+
+    input.clear();
+    expect(axes(input.moveInput)).toEqual({ forward: 0, right: 0 });
+    expect(input.moveInput.crouch).toBe(false);
+  });
+});

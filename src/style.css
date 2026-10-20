@@ -1061,3 +1061,113 @@ body {
   opacity: 0.18;
   transition: opacity 40ms ease-in;
 }
+
+/* ------------------------------------------------------------- touch --- */
+
+/*
+ * The on-screen controls, which exist only on a coarse-pointer device. The layer is inert except
+ * for the three zones that actually take input - the stick, the look area and the buttons - and
+ * every one of them stops the browser from turning a game gesture into a scroll or a pinch.
+ */
+.touch {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.touch[hidden] {
+  display: none;
+}
+
+/* The movement stick: a ring the thumb rides inside. */
+.touch__stick {
+  position: absolute;
+  left: 26px;
+  bottom: 30px;
+  width: 128px;
+  height: 128px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch__stick-thumb {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+  opacity: 0.85;
+}
+
+/* The right-hand look zone: a drag anywhere here turns the camera. */
+.touch__look {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 45%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* The buttons sit bottom-right, over the look zone. */
+.touch__buttons {
+  position: absolute;
+  right: 20px;
+  bottom: 30px;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.touch__button {
+  min-width: 66px;
+  min-height: 48px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+
+/* The contextual face: a button that has something to do right now. */
+.touch__button--active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
+}
+
+/* The floor picker: stacked above the buttons, only while standing inside a lift. */
+.touch__floors {
+  position: absolute;
+  right: 20px;
+  bottom: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.touch__floors[hidden] {
+  display: none;
+}
+
+.touch__button--floor {
+  min-width: 110px;
+}

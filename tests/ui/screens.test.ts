@@ -29,7 +29,12 @@ interface Harness {
   readonly lastReport: () => CrashReport | null;
 }
 
-function createUi(version = '0.0.0', levelName = 'Rooftop — Technical Demo', settings: GameSettings = DEFAULT_SETTINGS): Harness {
+function createUi(
+  version = '0.0.0',
+  levelName = 'Rooftop — Technical Demo',
+  settings: GameSettings = DEFAULT_SETTINGS,
+  touch = false,
+): Harness {
   document.body.innerHTML = '';
   const root = document.createElement('div');
   document.body.append(root);
@@ -58,6 +63,7 @@ function createUi(version = '0.0.0', levelName = 'Rooftop — Technical Demo', s
     version,
     levelName,
     settings,
+    touch,
     callbacks: calls,
   });
 
@@ -128,6 +134,18 @@ describe('GameUi construction', () => {
   it('hides the crosshair until the game is running', () => {
     const { root } = createUi();
     expect(root.querySelector('.crosshair')?.hasAttribute('hidden')).toBe(true);
+  });
+
+  it('shows the touch look slider only on a touch device', () => {
+    // A slider for a finger that does not exist on a desktop is noise, so the panel is built with
+    // the device's answer and the row simply is not there for a mouse.
+    const labels = (touch: boolean): string[] =>
+      [...createUi('0.0.0', 'Rooftop', DEFAULT_SETTINGS, touch).root.querySelectorAll('.settings__label')].map(
+        (node) => node.textContent ?? '',
+      );
+
+    expect(labels(false)).not.toContain('Touch look sensitivity');
+    expect(labels(true)).toContain('Touch look sensitivity');
   });
 });
 

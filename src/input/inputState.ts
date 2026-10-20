@@ -21,6 +21,11 @@ export class InputState {
   private readonly actionQueue: KeyAction[] = [];
   private pointerDx = 0;
   private pointerDy = 0;
+  /** Touch-stick movement axes, each -1..1; merged with the keys by `moveInput`. */
+  private touchForward = 0;
+  private touchRight = 0;
+  /** Actions held by on-screen buttons rather than keys, so `isActionPressed` sees them too. */
+  private readonly heldTouchActions = new Set<KeyAction>();
 
   constructor(private bindings: Bindings = DEFAULT_BINDINGS) {}
 
@@ -66,7 +71,36 @@ export class InputState {
 
   /** Whether any key bound to `action` is currently held. */
   isActionPressed(action: KeyAction): boolean {
+    // Touch buttons hold an *action* directly, not a key code: an on-screen jump button has no
+    // `Space`, and the binding table is about keyboards. Both writers are asked, so a key and a
+    // thumb can hold the same action at once without either being ignored.
+    if (this.heldTouchActions.has(action)) return true;
     return this.bindings[action].some((code) => this.pressedCodes.has(code));
+  }
+
+  /**
+   * Sets the virtual stick's movement axes, each clamped to -1..1.
+   *
+   * Fractional, because a thumb gives an analogue amount, not a held key: a half-tilt should be
+   * half speed, which is exactly what the movement code already does with `input.forward` and
+   * `input.right` - it normalises and scales by the input magnitude, so the touch stick writes the
+   * same shape the keyboard does, just with finer values.
+   */
+  setTouchMove(forward: number, right: number): void {
+    this.touchForward = Number.isFinite(forward) ? Math.max(-1, Math.min(1, forward)) : 0;
+    this.touchRight = Number.isFinite(right) ? Math.max(-1, Math.min(1, right)) : 0;
+  }
+
+  /** An on-screen button went down. Held actions stay held; UI actions queue exactly like a key. */
+  pressAction(action: KeyAction): void {
+    if (this.heldTouchActions.has(action)) return;
+    this.heldTouchActions.add(action);
+    if (isUiAction(action)) this.actionQueue.push(action);
+  }
+
+  /** An on-screen button was released. */
+  releaseAction(action: KeyAction): void {
+    this.heldTouchActions.delete(action);
   }
 
   /**
@@ -77,8 +111,12 @@ export class InputState {
    * what players expect and avoids a one-frame input buffer.
    */
   get moveInput(): MoveInput {
-    const forward = Number(this.isActionPressed('moveForward')) - Number(this.isActionPressed('moveBackward'));
-    const right = Number(this.isActionPressed('moveRight')) - Number(this.isActionPressed('moveLeft'));
+    const keyForward = Number(this.isActionPressed('moveForward')) - Number(this.isActionPressed('moveBackward'));
+    const keyRight = Number(this.isActionPressed('moveRight')) - Number(this.isActionPressed('moveLeft'));
+    // The two writers are merged and clamped, so a full key plus a full tilt cannot exceed the
+    // range the movement code already assumes - it would otherwise normalise to a diagonal bias.
+    const forward = Math.max(-1, Math.min(1, keyForward + this.touchForward));
+    const right = Math.max(-1, Math.min(1, keyRight + this.touchRight));
     return {
       forward,
       right,
@@ -113,6 +151,9 @@ export class InputState {
     this.actionQueue.length = 0;
     this.pointerDx = 0;
     this.pointerDy = 0;
+    this.touchForward = 0;
+    this.touchRight = 0;
+    this.heldTouchActions.clear();
   }
 
   /** Number of held keys; handy for diagnostics. */

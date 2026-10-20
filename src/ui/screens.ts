@@ -52,6 +52,8 @@ export interface GameUiOptions {
   readonly levelName?: string;
   /** The settings in force, drawn on the settings screen. */
   readonly settings: GameSettings;
+  /** Whether the session is on a touch device, which gates the touch-only settings. */
+  readonly touch?: boolean;
   readonly callbacks: UiCallbacks;
 }
 
@@ -170,11 +172,14 @@ export class GameUi {  readonly root: HTMLElement;
     this.reducedMotion = options.settings.motion !== 'full';
     this.root.classList.add('ui');
 
-    this.settingsPanel = new SettingsPanel({
-      onChange: (patch) => this.callbacks.onSettingsChange(patch),
-      onReset: () => this.callbacks.onSettingsReset(),
-      onBack: () => this.goBack(),
-    });
+    this.settingsPanel = new SettingsPanel(
+      {
+        onChange: (patch) => this.callbacks.onSettingsChange(patch),
+        onReset: () => this.callbacks.onSettingsReset(),
+        onBack: () => this.goBack(),
+      },
+      options.touch === true,
+    );
     this.settingsPanel.update(options.settings);
     this.root.append(this.settingsPanel.element);
     setHidden(this.settingsPanel.element, true);

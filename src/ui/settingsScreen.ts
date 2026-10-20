@@ -25,6 +25,7 @@ import {
   QUALITY_LEVELS,
   QUALITY_PRESETS,
   SENSITIVITY_RANGE,
+  TOUCH_SENSITIVITY_RANGE,
   bindingConflicts,
   rebind,
   type GameSettings,
@@ -110,6 +111,8 @@ export class SettingsPanel {
 
   private readonly sensitivity: Slider;
   private readonly fov: Slider;
+  /** The touch-look slider, built only on a touch device; null everywhere else. */
+  private readonly touchSensitivity: Slider | null;
   // **Wired to something.** These three were built with no callback at all, so the sliders
   // moved, the numbers changed, the settings were never told, and no volume control in the game
   // did anything - which is exactly how it was reported.
@@ -142,7 +145,7 @@ export class SettingsPanel {
   /** The last settings drawn, so a rebind can merge into them. */
   private last: GameSettings = DEFAULT_SETTINGS;
 
-  constructor(callbacks: SettingsPanelCallbacks) {
+  constructor(callbacks: SettingsPanelCallbacks, touch = false) {
     this.callbacks = callbacks;
 
     this.sensitivity = this.slider(
@@ -161,6 +164,18 @@ export class SettingsPanel {
       (value) => `${Math.round(value)}\u00b0`,
       (value) => this.callbacks.onChange({ fov: value }),
     );
+    // Touch look is a separate multiplier from mouse look - a finger travels a different distance
+    // per glance than a mouse does - so it only appears where there is a touch layer to apply it.
+    this.touchSensitivity = touch
+      ? this.slider(
+          'Touch look sensitivity',
+          TOUCH_SENSITIVITY_RANGE.min,
+          TOUCH_SENSITIVITY_RANGE.max,
+          TOUCH_SENSITIVITY_RANGE.step,
+          (value) => `${value.toFixed(2)}\u00d7`,
+          (value) => this.callbacks.onChange({ touchSensitivity: value }),
+        )
+      : null;
 
     this.invertY = new Choices<'no' | 'yes'>(
       'Invert vertical look',
@@ -194,6 +209,7 @@ export class SettingsPanel {
         this.sensitivity.row,
         this.fov.row,
         this.invertYRow,
+        ...(this.touchSensitivity ? [this.touchSensitivity.row] : []),
         this.motion.row,
       ]),
       this.group('Graphics', [this.quality.row, this.note]),
@@ -214,6 +230,7 @@ export class SettingsPanel {
     this.last = settings;
     this.sensitivity.set(settings.sensitivity);
     this.fov.set(settings.fov);
+    this.touchSensitivity?.set(settings.touchSensitivity);
     this.invertY.set(settings.invertY ? 'yes' : 'no');
     this.motion.set(settings.motion);
     this.quality.set(settings.quality);

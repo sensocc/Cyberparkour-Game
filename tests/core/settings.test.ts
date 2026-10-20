@@ -19,6 +19,7 @@ import {
   QUALITY_PRESETS,
   SENSITIVITY_RANGE,
   SETTINGS_STORAGE_KEY,
+  TOUCH_SENSITIVITY_RANGE,
   bindingConflicts,
   defaultSettings,
   normaliseSettings,
@@ -102,6 +103,8 @@ describe('normaliseSettings', () => {
     expect(normaliseSettings({ fov: -5 }).fov).toBe(FOV_RANGE.min);
     expect(normaliseSettings({ sensitivity: 0 }).sensitivity).toBe(SENSITIVITY_RANGE.min);
     expect(normaliseSettings({ sensitivity: 99 }).sensitivity).toBe(SENSITIVITY_RANGE.max);
+    expect(normaliseSettings({ touchSensitivity: 0 }).touchSensitivity).toBe(TOUCH_SENSITIVITY_RANGE.min);
+    expect(normaliseSettings({ touchSensitivity: 99 }).touchSensitivity).toBe(TOUCH_SENSITIVITY_RANGE.max);
     expect(normaliseSettings({ volumes: { master: 4 } }).volumes.master).toBe(1);
     expect(normaliseSettings({ volumes: { master: -1 } }).volumes.master).toBe(0);
   });
@@ -238,6 +241,24 @@ describe('reading and writing', () => {
     expect(defaultSettings(true).motion).toBe('reduced');
     expect(defaultSettings(false)).toBe(DEFAULT_SETTINGS);
     expect(readSettings(memoryStore(), true).motion).toBe('reduced');
+  });
+
+  it('starts a touch device on Low, never on High', () => {
+    // A phone is the same GPU under a thermal ceiling the desktop never hits: bloom and shadows
+    // are the first things to cost it, and a first-run player should not have to discover that the
+    // hard way. A desktop is untouched.
+    expect(defaultSettings(false, true).quality).toBe('low');
+    expect(defaultSettings(false, false)).toBe(DEFAULT_SETTINGS);
+    expect(readSettings(memoryStore(), false, true).quality).toBe('low');
+    // Both fallbacks compose: reduced motion *and* low quality.
+    expect(defaultSettings(true, true)).toEqual({ ...DEFAULT_SETTINGS, motion: 'reduced', quality: 'low' });
+  });
+
+  it('never lets the touch fallback override a saved quality choice', () => {
+    const store = memoryStore({
+      [SETTINGS_STORAGE_KEY]: JSON.stringify({ ...DEFAULT_SETTINGS, quality: 'high' }),
+    });
+    expect(readSettings(store, false, true).quality).toBe('high');
   });
 
   it('never lets the system preference override a saved choice', () => {

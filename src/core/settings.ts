@@ -121,6 +121,9 @@ export interface VolumeSettings {
 export interface GameSettings {
   /** Mouse-look sensitivity, as a multiple of the tuned base. */
   readonly sensitivity: number;
+  /** Touch-look sensitivity, as a multiple of the tuned base. A finger covers more screen than a
+   *  mouse per centimetre of travel, so it is scaled separately rather than sharing the mouse's. */
+  readonly touchSensitivity: number;
   /** Whether moving the mouse up looks down. */
   readonly invertY: boolean;
   /** Vertical field of view, in degrees. */
@@ -133,6 +136,7 @@ export interface GameSettings {
 
 /** Bounds for each numeric setting: the order the UI shows them in, and the clamps. */
 export const SENSITIVITY_RANGE = { min: 0.25, max: 3, step: 0.05 } as const;
+export const TOUCH_SENSITIVITY_RANGE = { min: 0.25, max: 3, step: 0.05 } as const;
 export const FOV_RANGE = { min: 65, max: 110, step: 1 } as const;
 
 /**
@@ -144,6 +148,7 @@ export const FOV_RANGE = { min: 65, max: 110, step: 1 } as const;
  */
 export const DEFAULT_SETTINGS: GameSettings = {
   sensitivity: 1,
+  touchSensitivity: 1,
   invertY: false,
   fov: 82,
   quality: 'high',
@@ -194,6 +199,12 @@ export function normaliseSettings(raw: unknown): GameSettings {
       SENSITIVITY_RANGE.min,
       SENSITIVITY_RANGE.max,
       DEFAULT_SETTINGS.sensitivity,
+    ),
+    touchSensitivity: clampNumber(
+      source.touchSensitivity,
+      TOUCH_SENSITIVITY_RANGE.min,
+      TOUCH_SENSITIVITY_RANGE.max,
+      DEFAULT_SETTINGS.touchSensitivity,
     ),
     invertY: typeof source.invertY === 'boolean' ? source.invertY : DEFAULT_SETTINGS.invertY,
     fov: clampNumber(source.fov, FOV_RANGE.min, FOV_RANGE.max, DEFAULT_SETTINGS.fov),
@@ -252,9 +263,14 @@ export function prefersReducedMotion(): boolean {
  * is reacting to, and a head bob that ignores the system setting is the bug the CSS half leaves
  * open. An explicit choice always wins, because this is only ever the fallback - see `readSettings`.
  */
-export function defaultSettings(prefersReduced: boolean): GameSettings {
-  if (!prefersReduced) return DEFAULT_SETTINGS;
-  return { ...DEFAULT_SETTINGS, motion: 'reduced' };
+export function defaultSettings(prefersReduced: boolean, touch = false): GameSettings {
+  if (!prefersReduced && !touch) return DEFAULT_SETTINGS;
+  const reduced = prefersReduced ? { motion: 'reduced' as const } : {};
+  // A phone starts on Low, not because it is a worse machine on paper but because it is the same
+  // GPU under a thermal ceiling the desktop never hits - bloom and shadows are the first things to
+  // cost it. An explicit choice always wins: this is only ever the fallback, see `readSettings`.
+  const lowQuality = touch ? { quality: 'low' as const } : {};
+  return { ...DEFAULT_SETTINGS, ...reduced, ...lowQuality };
 }
 
 /**
@@ -263,8 +279,8 @@ export function defaultSettings(prefersReduced: boolean): GameSettings {
  * `prefersReduced` is the operating system's motion preference, used only when there is nothing
  * stored - so once a player has chosen, their answer is the one that counts.
  */
-export function readSettings(store?: SettingsStore, prefersReduced = false): GameSettings {
-  const fallback = defaultSettings(prefersReduced);
+export function readSettings(store?: SettingsStore, prefersReduced = false, touch = false): GameSettings {
+  const fallback = defaultSettings(prefersReduced, touch);
   if (!store) return fallback;
   let text: string | null = null;
   try {
