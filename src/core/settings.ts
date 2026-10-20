@@ -148,7 +148,10 @@ export const FOV_RANGE = { min: 65, max: 110, step: 1 } as const;
  */
 export const DEFAULT_SETTINGS: GameSettings = {
   sensitivity: 1,
-  touchSensitivity: 1,
+  // Touch look is scaled separately *and tuned faster*: a mouse can flick across a desk, but a
+  // thumb has a few centimetres of glass, so the same "multiple of base" is not the same turn. At
+  // 1.0 the camera was reported as far too slow to play; 2.5 reads as responsive without whipping.
+  touchSensitivity: 2.5,
   invertY: false,
   fov: 82,
   quality: 'high',

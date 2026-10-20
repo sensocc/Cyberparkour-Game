@@ -30,3 +30,23 @@ export function isCoarsePointer(): boolean {
   }
   return false;
 }
+
+/**
+ * Asks the browser to go landscape, best-effort.
+ *
+ * This game is built for a sideways phone, so on a touch device it is requested when play starts
+ * (from the tap, which is what the platform requires). It is a *request*, never a promise: the
+ * lock is refused outside fullscreen, iOS ignores it outright, and a desktop or a tablet in
+ * portrait keeps whatever it had. The portrait "rotate your device" prompt is the reliable half;
+ * this is the try for the browsers that will oblige.
+ */
+export function requestLandscape(): void {
+  try {
+    const orientation = (globalThis.screen as { orientation?: { lock?: (value: string) => unknown } }).orientation;
+    if (typeof orientation?.lock !== 'function') return;
+    const result = orientation.lock('landscape');
+    if (result instanceof Promise) result.catch(() => {});
+  } catch {
+    // A refused lock is not an error worth surfacing: the prompt is already there.
+  }
+}

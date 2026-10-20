@@ -54,6 +54,13 @@ describe('the defaults', () => {
     expect(DEFAULT_SETTINGS.motion).toBe('full');
   });
 
+  it('tunes touch look faster than mouse look, because a thumb has less room than a desk', () => {
+    // The same "multiple of base" is not the same turn for a finger as for a mouse; the shipped
+    // default has to be meaningfully higher, or a phone camera crawls. The test holds the *gap*,
+    // not a value, so it stays true however the two are retuned together.
+    expect(DEFAULT_SETTINGS.touchSensitivity).toBeGreaterThan(DEFAULT_SETTINGS.sensitivity);
+  });
+
   it('offers quality presets that get better as they get more expensive', () => {
     const order = ['low', 'medium', 'high'] as const;
     for (let index = 1; index < order.length; index += 1) {

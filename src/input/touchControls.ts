@@ -50,6 +50,19 @@ export function stickAxes(dx: number, dy: number, radius = STICK_RADIUS): StickA
   return { forward: -dy * scale, right: dx * scale };
 }
 
+/**
+ * Where the thumb should *appear*, in pixels from the ring's centre, for a finger that far away.
+ *
+ * Different from `stickAxes` on purpose: the input applies the deadzone and the ramp, but the
+ * *visual* thumb must follow the finger from the first pixel - a thumb that stays pinned to the
+ * centre while the player is already steering reads as broken. The only clamp is the ring's edge.
+ */
+export function stickThumbOffset(dx: number, dy: number, radius = STICK_RADIUS): { x: number; y: number } {
+  const length = Math.hypot(dx, dy);
+  const scale = length > radius ? radius / length : 1;
+  return { x: dx * scale, y: dy * scale };
+}
+
 /** The on-screen buttons: an action and its face. */
 export interface TouchButtonSpec {
   readonly action: KeyAction;
@@ -138,7 +151,8 @@ export class TouchControls {
     this.element.hidden = true;
 
     const stick = el('div', { className: 'touch__stick' });
-    stick.append(el('div', { className: 'touch__stick-thumb' }));
+    const stickThumb = el('div', { className: 'touch__stick-thumb' });
+    stick.append(stickThumb);
     this.element.append(stick);
 
     const look = el('div', { className: 'touch__look' });
@@ -156,13 +170,22 @@ export class TouchControls {
     this.floorBar.hidden = true;
     this.element.append(this.floorBar);
 
+    // The portrait fallback: shown by CSS whenever the device is held upright, since this game is
+    // built for a sideways phone and the orientation lock is only ever a request.
+    const rotate = el('div', { className: 'touch__rotate' });
+    rotate.append(el('p', { className: 'touch__rotate-glyph', text: '\u21bb' }));
+    rotate.append(el('p', { className: 'touch__rotate-text', text: 'ROTATE YOUR DEVICE' }));
+    this.element.append(rotate);
+
     // The three zones keep their references through closure over the elements, not `this`, so the
     // listeners below are stable functions attach/detach can add and remove.
     this.stickElement = stick;
+    this.stickThumb = stickThumb;
     this.lookElement = look;
   }
 
   private readonly stickElement: HTMLElement;
+  private readonly stickThumb: HTMLElement;
   private readonly lookElement: HTMLElement;
 
   /** Swaps the look multiplier, for a mid-session settings change. */
@@ -256,6 +279,7 @@ export class TouchControls {
     // A second thumb on the stick is ignored: one stick, one thumb. The first keeps steering.
     if (this.stick !== null) return;
     this.stick = { id: event.pointerId, origin: { x: event.clientX, y: event.clientY } };
+    this.moveStickThumb(0, 0);
   };
 
   private handleLookDown = (event: PointerEvent): void => {
@@ -270,13 +294,21 @@ export class TouchControls {
     if (action === null || this.heldButtons.has(event.pointerId)) return;
     this.heldButtons.set(event.pointerId, action);
     this.input.pressAction(action);
+    // Visual feedback: the button lights up and pops, then holds a faint glow until the finger
+    // leaves it - see `.touch__button--pressed` in the stylesheet.
+    this.buttons.get(action)?.classList.add('touch__button--pressed');
   };
 
   private handleMove = (event: PointerEvent): void => {
     if (this.stick !== null && this.stick.id === event.pointerId) {
       const origin = this.stick.origin;
-      const axes = stickAxes(event.clientX - origin.x, event.clientY - origin.y);
+      const dx = event.clientX - origin.x;
+      const dy = event.clientY - origin.y;
+      const axes = stickAxes(dx, dy);
       this.input.setTouchMove(axes.forward, axes.right);
+      // The thumb follows the finger, while the *input* follows the deadzone and ramp - two
+      // different truths about the same drag, and the visual one must not freeze.
+      this.moveStickThumb(dx, dy);
       return;
     }
 
@@ -293,6 +325,7 @@ export class TouchControls {
     if (this.stick !== null && this.stick.id === event.pointerId) {
       this.stick = null;
       this.input.setTouchMove(0, 0);
+      this.moveStickThumb(0, 0);
     }
 
     if (this.looks.delete(event.pointerId)) {
@@ -303,6 +336,7 @@ export class TouchControls {
     if (action !== undefined) {
       this.heldButtons.delete(event.pointerId);
       this.input.releaseAction(action);
+      this.buttons.get(action)?.classList.remove('touch__button--pressed');
     }
   };
 
@@ -312,5 +346,11 @@ export class TouchControls {
       if (element.contains(target) || element === target) return action;
     }
     return null;
+  }
+
+  /** Puts the thumb where a finger `dx, dy` from the stick's centre is, clamped to the ring. */
+  private moveStickThumb(dx: number, dy: number): void {
+    const offset = stickThumbOffset(dx, dy);
+    this.stickThumb.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
   }
 }

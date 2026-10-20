@@ -1144,6 +1144,11 @@ body {
   letter-spacing: 0.12em;
   pointer-events: auto;
   touch-action: manipulation;
+  transition:
+    transform 90ms ease-out,
+    box-shadow 140ms ease-out,
+    border-color 140ms ease-out,
+    background 140ms ease-out;
 }
 
 /* The contextual face: a button that has something to do right now. */
@@ -1151,6 +1156,32 @@ body {
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: 0 0 8px var(--accent);
+}
+
+/*
+ * A press: the button pops up and lights, settles to a faint raised glow while the finger holds it,
+ * and eases back down when the finger leaves. The pop is a keyframe (so it only runs once, on the
+ * down-stroke); the hold is the class itself; the release is the base transition above.
+ */
+.touch__button--pressed {
+  transform: scale(1.08);
+  border-color: var(--accent);
+  background: rgba(88, 222, 255, 0.16);
+  box-shadow: 0 0 14px var(--accent);
+  animation: touch-button-pop 220ms ease-out;
+}
+
+@keyframes touch-button-pop {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.16);
+    box-shadow: 0 0 24px var(--accent);
+  }
+  100% {
+    transform: scale(1.08);
+  }
 }
 
 /* The floor picker: stacked above the buttons, only while standing inside a lift. */
@@ -1170,4 +1201,53 @@ body {
 
 .touch__button--floor {
   min-width: 110px;
+}
+
+/*
+ * The portrait fallback. This game is built for a sideways phone, so while the device is held
+ * upright this covers the screen and asks for the turn. It is inside the touch layer, so it only
+ * exists on a coarse pointer, and the media query means it only shows in portrait - rotate and it
+ * vanishes with nothing to clear.
+ */
+.touch__rotate {
+  display: none;
+}
+
+@media (orientation: portrait) {
+  .touch__rotate {
+    display: grid;
+    place-items: center;
+    align-content: center;
+    gap: 18px;
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    text-align: center;
+    pointer-events: auto;
+  }
+
+  .touch__rotate-glyph {
+    margin: 0;
+    font-size: 72px;
+    line-height: 1;
+    color: var(--accent);
+    animation: rotate-nudge 1.8s ease-in-out infinite;
+  }
+
+  .touch__rotate-text {
+    margin: 0;
+    font-size: 14px;
+    letter-spacing: 0.34em;
+    text-indent: 0.34em;
+    color: var(--text);
+  }
+}
+
+@keyframes rotate-nudge {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  40%, 60% {
+    transform: rotate(90deg);
+  }
 }

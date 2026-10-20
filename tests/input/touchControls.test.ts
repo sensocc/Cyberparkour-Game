@@ -7,7 +7,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { InputState } from '../../src/input/inputState.js';
-import { STICK_RADIUS, TouchControls, stickAxes } from '../../src/input/touchControls.js';
+import { STICK_RADIUS, TouchControls, stickAxes, stickThumbOffset } from '../../src/input/touchControls.js';
 
 function pointer(type: string, pointerId: number, x: number, y: number): PointerEvent {
   return new PointerEvent(type, { pointerId, clientX: x, clientY: y, bubbles: true });
@@ -18,6 +18,7 @@ interface Harness {
   readonly target: HTMLElement;
   readonly controls: TouchControls;
   readonly stick: HTMLElement;
+  readonly stickThumb: HTMLElement;
   readonly look: HTMLElement;
   readonly button: (action: string) => HTMLElement;
 }
@@ -32,11 +33,12 @@ function createHarness(lookSensitivity = 1): Harness {
   controls.attach();
 
   const stick = controls.element.querySelector('.touch__stick') as HTMLElement;
+  const stickThumb = controls.element.querySelector('.touch__stick-thumb') as HTMLElement;
   const look = controls.element.querySelector('.touch__look') as HTMLElement;
   const button = (action: string): HTMLElement =>
     controls.buttons.get(action as never) as HTMLElement;
 
-  return { input, target, controls, stick, look, button };
+  return { input, target, controls, stick, stickThumb, look, button };
 }
 
 afterEach(() => {
@@ -67,7 +69,31 @@ describe('stickAxes', () => {
   });
 });
 
+describe('stickThumbOffset', () => {
+  it('follows the finger inside the ring, and stops at its edge', () => {
+    expect(stickThumbOffset(0, 0)).toEqual({ x: 0, y: 0 });
+    expect(stickThumbOffset(24, -10)).toEqual({ x: 24, y: -10 });
+    // A full-tilt finger would be well past the ring; the thumb stops at the ring's edge.
+    const edge = stickThumbOffset(STICK_RADIUS, 0);
+    expect(edge.x).toBeCloseTo(STICK_RADIUS, 6);
+    expect(edge.y).toBeCloseTo(0, 6);
+  });
+});
+
 describe('TouchControls', () => {
+  it('moves the thumb with the finger, and recentres it on release', () => {
+    const { input, stick, stickThumb } = createHarness();
+    stick.dispatchEvent(pointer('pointerdown', 1, 100, 100));
+    expect(stickThumb.style.transform).toBe('translate(0px, 0px)');
+
+    window.dispatchEvent(pointer('pointermove', 1, 100, 100 - STICK_RADIUS));
+    expect(stickThumb.style.transform).toContain(`translate(0px, ${-STICK_RADIUS}px)`);
+    expect(input.moveInput.forward).toBeCloseTo(1, 6);
+
+    window.dispatchEvent(pointer('pointerup', 1, 100, 100 - STICK_RADIUS));
+    expect(stickThumb.style.transform).toBe('translate(0px, 0px)');
+  });
+
   it('steers from a stick drag and recentres on release', () => {
     const { input, stick } = createHarness();
     stick.dispatchEvent(pointer('pointerdown', 1, 100, 100));
@@ -113,6 +139,16 @@ describe('TouchControls', () => {
 
     window.dispatchEvent(pointer('pointerup', 1, 0, 0));
     expect(input.moveInput.jump).toBe(false);
+  });
+
+  it('lights a button up while it is held and dims it on release', () => {
+    const { button } = createHarness();
+    const jump = button('jump');
+    jump.dispatchEvent(pointer('pointerdown', 1, 0, 0));
+    expect(jump.classList.contains('touch__button--pressed')).toBe(true);
+
+    window.dispatchEvent(pointer('pointerup', 1, 0, 0));
+    expect(jump.classList.contains('touch__button--pressed')).toBe(false);
   });
 
   it('queues a UI action on the press edge only', () => {

@@ -39,6 +39,7 @@ import { DomInput } from '../input/domInput.js';
 import { floorFromAction } from '../input/bindings.js';
 import type { InputState } from '../input/inputState.js';
 import { TouchControls } from '../input/touchControls.js';
+import { requestLandscape } from '../core/device.js';
 import { CameraEffects, type MotionSample } from './camera.js';
 import { applyLook, type Orientation } from './look.js';
 import { describePose, emptyPose, type PlayerPose } from './pose.js';
@@ -441,10 +442,13 @@ export class Game {
     this.domInput.attach();
     // Touch has no pointer lock: the stick and the look-drag are the mouse. Requesting it on a
     // phone is refused (and the warning below would lie about it), so the whole gesture path is
-    // skipped rather than asked for and failed.
+    // skipped rather than asked for and failed. The tap *is* the gesture that also lets us ask the
+    // platform for landscape, so that request rides the same moment.
     if (!this.touchControls) {
       this.domInput.requestPointerLock();
       this.warnIfNoMouseLook();
+    } else {
+      requestLandscape();
     }
     this.audioOutput.resume();
     this.audioOutput.setMusic(true);

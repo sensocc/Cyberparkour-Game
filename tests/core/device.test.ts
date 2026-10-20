@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isCoarsePointer } from '../../src/core/device.js';
+import { isCoarsePointer, requestLandscape } from '../../src/core/device.js';
 
 function stubMatchMedia(matches: boolean): void {
   vi.stubGlobal(
@@ -56,5 +56,35 @@ describe('isCoarsePointer', () => {
     vi.stubGlobal('matchMedia', undefined);
     vi.stubGlobal('navigator', undefined);
     expect(isCoarsePointer()).toBe(false);
+  });
+});
+
+describe('requestLandscape', () => {
+  it('asks the orientation API for landscape when it is there', () => {
+    const lock = vi.fn(() => undefined);
+    vi.stubGlobal('screen', { orientation: { lock } });
+    requestLandscape();
+    expect(lock).toHaveBeenCalledWith('landscape');
+  });
+
+  it('swallows a promise rejection rather than surfacing it', async () => {
+    const lock = vi.fn(() => Promise.reject(new Error('denied')));
+    vi.stubGlobal('screen', { orientation: { lock } });
+    requestLandscape();
+    // Give the caught rejection a turn to settle without becoming an unhandled rejection.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+
+  it('does nothing when the API is absent', () => {
+    vi.stubGlobal('screen', undefined);
+    expect(() => requestLandscape()).not.toThrow();
+  });
+
+  it('does not throw when the lock itself throws synchronously', () => {
+    const lock = vi.fn(() => {
+      throw new Error('refused');
+    });
+    vi.stubGlobal('screen', { orientation: { lock } });
+    expect(() => requestLandscape()).not.toThrow();
   });
 });
