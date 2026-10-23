@@ -1195,6 +1195,23 @@ body {
   pointer-events: auto;
 }
 
+/* The fullscreen toggle: top corner, away from the thumbs and the HUD. */
+.touch__fullscreen {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 7px 10px;
+  opacity: 0.75;
+}
+
+.touch__fullscreen--on {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+
 .touch__floors[hidden] {
   display: none;
 }

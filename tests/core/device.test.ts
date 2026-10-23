@@ -8,7 +8,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isCoarsePointer, requestLandscape } from '../../src/core/device.js';
+import { isCoarsePointer, requestLandscape, exitFullscreen, fullscreenSupported, isFullscreen, requestFullscreen } from '../../src/core/device.js';
 
 function stubMatchMedia(matches: boolean): void {
   vi.stubGlobal(
@@ -86,5 +86,78 @@ describe('requestLandscape', () => {
     });
     vi.stubGlobal('screen', { orientation: { lock } });
     expect(() => requestLandscape()).not.toThrow();
+  });
+});
+
+describe('fullscreen helpers', () => {
+  function stubDocumentFullscreen(options: {
+    supported?: boolean;
+    element?: Element | null;
+    request?: () => unknown;
+    exit?: () => unknown;
+  }): void {
+    // The helpers only ever touch `document.documentElement.requestFullscreen`, `document
+    // .fullscreenElement` and `document.exitFullscreen`, so the whole document is stubbed as a
+    // plain object - this file runs in the node environment, where there is no `document` at all.
+    vi.stubGlobal('document', {
+      documentElement: options.supported
+        ? { requestFullscreen: options.request ?? (() => undefined) }
+        : {},
+      fullscreenElement: options.element ?? null,
+      exitFullscreen: options.exit,
+    });
+  }
+
+  it('reports support only when requestFullscreen exists', () => {
+    stubDocumentFullscreen({ supported: false });
+    expect(fullscreenSupported()).toBe(false);
+
+    stubDocumentFullscreen({ supported: true });
+    expect(fullscreenSupported()).toBe(true);
+  });
+
+  it('reports fullscreen from the document element, treating absence as not-fullscreen', () => {
+    stubDocumentFullscreen({ element: null });
+    expect(isFullscreen()).toBe(false);
+
+    const body = {} as Element;
+    stubDocumentFullscreen({ element: body });
+    expect(isFullscreen()).toBe(true);
+
+    // `fullscreenElement` as `undefined` (an environment with no such property) is also "not
+    // fullscreen", not "maybe fullscreen".
+    vi.stubGlobal('document', { fullscreenElement: undefined });
+    expect(isFullscreen()).toBe(false);
+  });
+
+  it('requests and exits fullscreen, and swallows both a throw and a rejection', async () => {
+    const request = vi.fn(() => Promise.resolve());
+    const exit = vi.fn(() => undefined);
+    stubDocumentFullscreen({ supported: true, request, exit });
+
+    requestFullscreen();
+    expect(request).toHaveBeenCalledTimes(1);
+
+    exitFullscreen();
+    expect(exit).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing when the fullscreen API is absent', () => {
+    stubDocumentFullscreen({ supported: false, exit: undefined });
+    expect(() => requestFullscreen()).not.toThrow();
+    expect(() => exitFullscreen()).not.toThrow();
+  });
+
+  it('does not throw when a request or exit is refused synchronously or asynchronously', async () => {
+    stubDocumentFullscreen({
+      supported: true,
+      request: () => Promise.reject(new Error('denied')),
+      exit: () => {
+        throw new Error('denied');
+      },
+    });
+    expect(() => requestFullscreen()).not.toThrow();
+    expect(() => exitFullscreen()).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 });

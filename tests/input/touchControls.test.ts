@@ -4,7 +4,7 @@
 // listens for exist) but not pointer capture, which is exactly why the class tracks gestures by
 // `pointerId` with window-level listeners - the tests exercise that path directly.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { InputState } from '../../src/input/inputState.js';
 import { STICK_RADIUS, TouchControls, stickAxes, stickThumbOffset } from '../../src/input/touchControls.js';
@@ -208,5 +208,72 @@ describe('TouchControls.setContext', () => {
 
     controls.setContext({ interactLabel: null, floors: ['A', 'B'] });
     expect(bar.querySelector('button')).toBe(first);
+  });
+});
+
+describe('TouchControls fullscreen button', () => {
+  function stubFullscreen(options: { supported?: boolean; element?: Element | null } = {}): {
+    request: ReturnType<typeof vi.fn>;
+    exit: ReturnType<typeof vi.fn>;
+  } {
+    const request = vi.fn(() => undefined);
+    const exit = vi.fn(() => undefined);
+    if (options.supported) {
+      Object.defineProperty(document.documentElement, 'requestFullscreen', {
+        configurable: true,
+        value: request,
+      });
+    } else {
+      Reflect.deleteProperty(document.documentElement, 'requestFullscreen');
+    }
+    Object.defineProperty(document, 'exitFullscreen', { configurable: true, value: exit });
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      value: options.element ?? null,
+    });
+    return { request, exit };
+  }
+
+  afterEach(() => {
+    Reflect.deleteProperty(document.documentElement, 'requestFullscreen');
+    Reflect.deleteProperty(document, 'exitFullscreen');
+    Reflect.deleteProperty(document, 'fullscreenElement');
+  });
+
+  it('is absent where fullscreen is not supported', () => {
+    stubFullscreen({ supported: false });
+    const { controls } = createHarness();
+    expect(controls.element.querySelector('.touch__fullscreen')).toBeNull();
+  });
+
+  it('enters and leaves fullscreen on tap', () => {
+    const { request, exit } = stubFullscreen({ supported: true });
+    const { controls } = createHarness();
+    const button = controls.element.querySelector('.touch__fullscreen') as HTMLButtonElement;
+
+    button.click();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: document.body });
+    button.click();
+    expect(exit).toHaveBeenCalledTimes(1);
+  });
+
+  it('relabels and toggles its state class on fullscreenchange', () => {
+    stubFullscreen({ supported: true });
+    const { controls } = createHarness();
+    const button = controls.element.querySelector('.touch__fullscreen') as HTMLButtonElement;
+    expect(button.textContent).toBe('FULL');
+
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: document.body });
+    document.dispatchEvent(new Event('fullscreenchange'));
+    expect(button.textContent).toBe('EXIT');
+    expect(button.classList.contains('touch__fullscreen--on')).toBe(true);
+
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+    document.dispatchEvent(new Event('fullscreenchange'));
+    expect(button.textContent).toBe('FULL');
+    expect(button.classList.contains('touch__fullscreen--on')).toBe(false);
   });
 });

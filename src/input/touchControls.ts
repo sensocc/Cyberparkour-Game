@@ -19,6 +19,12 @@
 import { el } from '../ui/dom.js';
 import { FLOOR_ACTIONS, type KeyAction } from './bindings.js';
 import type { InputState } from './inputState.js';
+import {
+  exitFullscreen,
+  fullscreenSupported,
+  isFullscreen,
+  requestFullscreen,
+} from '../core/device.js';
 
 /** How far the thumb can travel before the stick is "full", in CSS pixels. */
 export const STICK_RADIUS = 48;
@@ -136,6 +142,8 @@ export class TouchControls {
   private readonly looks = new Map<number, Gesture>();
   /** Every held button, keyed by the pointer that is holding it. */
   private readonly heldButtons = new Map<number, KeyAction>();
+  /** The fullscreen toggle, present only where the browser can actually go fullscreen. */
+  private readonly fullscreenButton: HTMLElement | null;
 
   private attached = false;
 
@@ -176,6 +184,21 @@ export class TouchControls {
     rotate.append(el('p', { className: 'touch__rotate-glyph', text: '\u21bb' }));
     rotate.append(el('p', { className: 'touch__rotate-text', text: 'ROTATE YOUR DEVICE' }));
     this.element.append(rotate);
+
+    // The fullscreen toggle, in the top corner out of the thumbs' way. iPhone Safari has no
+    // `requestFullscreen` at all, so the button is simply not built there - a button that does
+    // nothing is worse than none. Its face reflects the state it last observed.
+    this.fullscreenButton = fullscreenSupported()
+      ? el('button', {
+          className: 'touch__button touch__fullscreen',
+          text: 'FULL',
+          attrs: { type: 'button', 'aria-label': 'Enter fullscreen' },
+        })
+      : null;
+    if (this.fullscreenButton) {
+      this.fullscreenButton.addEventListener('click', this.handleFullscreenToggle);
+      this.element.append(this.fullscreenButton);
+    }
 
     // The three zones keep their references through closure over the elements, not `this`, so the
     // listeners below are stable functions attach/detach can add and remove.
@@ -253,6 +276,9 @@ export class TouchControls {
     window.addEventListener('pointermove', this.handleMove);
     window.addEventListener('pointerup', this.handleUp);
     window.addEventListener('pointercancel', this.handleUp);
+    // The browser can leave fullscreen on its own (Esc on desktop, a gesture on Android), so the
+    // button's face is kept honest by the event rather than by assuming the tap did what it asked.
+    document.addEventListener('fullscreenchange', this.handleFullscreenChange);
   }
 
   detach(): void {
@@ -268,6 +294,7 @@ export class TouchControls {
     window.removeEventListener('pointermove', this.handleMove);
     window.removeEventListener('pointerup', this.handleUp);
     window.removeEventListener('pointercancel', this.handleUp);
+    document.removeEventListener('fullscreenchange', this.handleFullscreenChange);
 
     this.stick = null;
     this.looks.clear();
@@ -280,6 +307,23 @@ export class TouchControls {
     if (this.stick !== null) return;
     this.stick = { id: event.pointerId, origin: { x: event.clientX, y: event.clientY } };
     this.moveStickThumb(0, 0);
+  };
+
+  /** The fullscreen tap: enter if we are not in it, leave if we are. */
+  private handleFullscreenToggle = (): void => {
+    if (isFullscreen()) exitFullscreen();
+    else requestFullscreen();
+  };
+
+  /** The browser changed fullscreen (itself, or because of our tap): keep the face honest. */
+  private handleFullscreenChange = (): void => {
+    const button = this.fullscreenButton;
+    if (!button) return;
+    const full = isFullscreen();
+    const label = full ? 'EXIT' : 'FULL';
+    if (button.textContent !== label) button.textContent = label;
+    button.setAttribute('aria-label', full ? 'Exit fullscreen' : 'Enter fullscreen');
+    button.classList.toggle('touch__fullscreen--on', full);
   };
 
   private handleLookDown = (event: PointerEvent): void => {

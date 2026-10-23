@@ -50,3 +50,59 @@ export function requestLandscape(): void {
     // A refused lock is not an error worth surfacing: the prompt is already there.
   }
 }
+
+/**
+ * Whether this browser can put the page in fullscreen at all.
+ *
+ * iPhone Safari has no `requestFullscreen` on any element, so the button that asks for it must not
+ * appear - a button that does nothing is worse than none. Desktop, Android and iPad have it.
+ */
+export function fullscreenSupported(): boolean {
+  try {
+    const doc = globalThis.document as Document | undefined;
+    return typeof doc?.documentElement?.requestFullscreen === 'function';
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the document is currently fullscreen. */
+export function isFullscreen(): boolean {
+  try {
+    // `!= null` rather than `!== null`: a document without the property (jsdom) reports `undefined`,
+    // which is "not fullscreen", not "maybe fullscreen".
+    return (globalThis.document as Document | undefined)?.fullscreenElement != null;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Requests fullscreen on the document element, best-effort.
+ *
+ * The tap is the user gesture the API requires, so the caller wires this to the button press.
+ * Like the orientation lock it is a request, never a promise: a rejection (or a browser that
+ * ignores it) is not an error, and `isFullscreen` is how the button learns what actually happened.
+ */
+export function requestFullscreen(): void {
+  try {
+    const el = (globalThis.document as Document | undefined)?.documentElement;
+    if (typeof el?.requestFullscreen !== 'function') return;
+    const result = el.requestFullscreen();
+    if (result instanceof Promise) result.catch(() => {});
+  } catch {
+    // Absent API or a refusal: fullscreen is a nicety, never a failure.
+  }
+}
+
+/** Leaves fullscreen, best-effort. */
+export function exitFullscreen(): void {
+  try {
+    const doc = globalThis.document as (Document & { exitFullscreen?: () => unknown }) | undefined;
+    if (typeof doc?.exitFullscreen !== 'function') return;
+    const result = doc.exitFullscreen();
+    if (result instanceof Promise) result.catch(() => {});
+  } catch {
+    // Not fullscreen, or the browser refused: nothing to do.
+  }
+}
