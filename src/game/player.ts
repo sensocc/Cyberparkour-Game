@@ -192,6 +192,8 @@ export interface PlayerState {
   pipeNormal: Vec3;
   /** Seconds until the same pipe can be grabbed again. */
   pipeCooldown: number;
+  /** Seconds until a climbable face can be grabbed again after jumping off it. */
+  climbCooldown: number;
   /** In-progress scripted move, if any. */
   maneuver: ManeuverMove | null;
   /** Deepest downward speed since leaving the ground, for fall damage. */
@@ -331,6 +333,7 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     pipeDirection: 0,
     pipeNormal: vec3(0, 0, 0),
     pipeCooldown: 0,
+    climbCooldown: 0,
     maneuver: null,
     peakFallSpeed: 0,
     bobPhase: 0,
@@ -439,6 +442,7 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.pipeNormal.y = 0;
   state.pipeNormal.z = 0;
   state.pipeCooldown = 0;
+  state.climbCooldown = 0;
   state.maneuver = null;
   state.peakFallSpeed = 0;
   state.bobPhase = 0;
@@ -481,6 +485,7 @@ export function stepPlayer(
   if (state.grabCooldown > 0) state.grabCooldown = Math.max(0, state.grabCooldown - dt);
   if (state.wallCooldown > 0) state.wallCooldown = Math.max(0, state.wallCooldown - dt);
   if (state.pipeCooldown > 0) state.pipeCooldown = Math.max(0, state.pipeCooldown - dt);
+  if (state.climbCooldown > 0) state.climbCooldown = Math.max(0, state.climbCooldown - dt);
 
   // While dead the player keeps falling - so the death reads as a fall rather
   // than a freeze - but no input is accepted and the death cannot re-trigger.
@@ -788,7 +793,7 @@ function stepClimbing(
     climbableIds,
   });
 
-  // Lost the face - or let go - and gravity takes over.
+  // Lost the face - and gravity takes over.
   //
   // **The id is allowed to change, and that is the fix for a bug that made long ladders unusable.**
   // A ladder is built as a stack of five-metre sections, one collider each, so that the rungs keep
@@ -797,7 +802,7 @@ function stepClimbing(
   // above it - and the climb then let go of a face that was still there. On a twenty-eight metre
   // ladder that happened four times, and the symptom was exactly what it sounds like: you climb,
   // you detach, you fall, and it does the same thing next time you try.
-  if (!surface || input.forward <= 0) {
+  if (!surface) {
     state.climbId = null;
     state.velocity.y = 0;
     return outcome(createMoveResult(), { ended: 'climb' });
@@ -805,6 +810,19 @@ function stepClimbing(
   state.climbId = surface.id;
 
   const climb = options.game.maneuver.climb;
+
+  // Jump lets go of the ladder: out and up, so leaving it keeps the height gained - and a
+  // cooldown stops the very next step from grabbing the same face again. Without it, holding
+  // forward into the rung you just left would re-grab it on the following frame.
+  if (input.jump) {
+    state.climbId = null;
+    state.climbCooldown = climb.releaseCooldownSeconds;
+    state.velocity.x = -facing.x * climb.kickSpeed;
+    state.velocity.z = -facing.z * climb.kickSpeed;
+    state.velocity.y = climb.kickUpSpeed;
+    return outcome(createMoveResult(), { ended: 'climb' });
+  }
+
   const feetY = state.position.y;
   // Reaching the top hands over to a mantle, so climbing a riser gets you onto
   // whatever it was carrying rather than leaving you pinned to its edge.
@@ -858,18 +876,28 @@ function stepClimbing(
     return outcome(downMove);
   }
 
+  // Forward climbs. Neither forward nor back - and no jump - holds the rung: a player who stops
+  // pressing stays where they are, rather than drifting up or being peeled off the face.
+  if (input.forward > 0) {
+    state.velocity.x = 0;
+    state.velocity.z = 0;
+    state.velocity.y = climb.speed;
+
+    const box = playerBox(state.position, config.radius, playerHeight(state, config));
+    const move = world.move(box, { x: 0, y: climb.speed * dt, z: 0 }, state.velocity);
+    adoptBox(state, box, config, move);
+    // Climbing is a controlled ascent, not a fall.
+    state.peakFallSpeed = 0;
+    advanceHeadBob(state, options, dt, 0);
+    return outcome(move);
+  }
+
+  // Holding still.
   state.velocity.x = 0;
+  state.velocity.y = 0;
   state.velocity.z = 0;
-  state.velocity.y = climb.speed;
-
-  const box = playerBox(state.position, config.radius, playerHeight(state, config));
-  const move = world.move(box, { x: 0, y: climb.speed * dt, z: 0 }, state.velocity);
-  adoptBox(state, box, config, move);
-  // Climbing is a controlled ascent, not a fall.
-  state.peakFallSpeed = 0;
   advanceHeadBob(state, options, dt, 0);
-
-  return outcome(move);
+  return outcome(createMoveResult());
 }
 
 // ------------------------------------------------------------------- pipes
@@ -1744,6 +1772,7 @@ function tryClimb(state: PlayerState, input: MoveInput, options: PlayerStepOptio
   const climbableIds = options.climbableIds;
   if (!climbableIds || climbableIds.size === 0) return false;
   if (input.forward <= 0) return false;
+  if (state.climbCooldown > 0) return false;
 
   const { config, world } = options;
   const climb = options.game.maneuver.climb;

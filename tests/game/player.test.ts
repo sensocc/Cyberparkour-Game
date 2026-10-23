@@ -608,7 +608,7 @@ describe('climbing', () => {
     expect(backwards.climbId).toBeNull();
   });
 
-  it('lets go when forward is released', () => {
+  it('holds the rung when forward is released, rather than letting go', () => {
     const pipe = climbableAt('pipe', 6);
     const collisionWorld = world(FLOOR, pipe);
     const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
@@ -620,7 +620,46 @@ describe('climbing', () => {
     }
     expect(state.climbId).toBe('pipe');
 
+    // Letting go is now a jump, not a release of the stick: neutral holds the rung.
     stepPlayer(state, STILL, STEP, climbOptions);
+    expect(state.climbId).toBe('pipe');
+  });
+
+  it('jumps off the ladder, out and up, instead of being stuck to it', () => {
+    const ladder = climbableAt('ladder', 6);
+    const collisionWorld = world(FLOOR, ladder);
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    for (let step = 0; step < 40; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+    }
+    expect(state.climbId).toBe('ladder');
+
+    stepPlayer(state, input({ jump: true }), STEP, climbOptions);
+    expect(state.climbId).toBeNull();
+    // A hop off the face: away from it (the ladder is to the east, +X) and upwards, so leaving it
+    // keeps the height gained rather than peeling straight off and dropping.
+    expect(state.velocity.x).toBeLessThan(0);
+    expect(state.velocity.y).toBeGreaterThan(0);
+  });
+
+  it('cannot re-grab the same ladder the instant after jumping off it', () => {
+    const ladder = climbableAt('ladder', 6);
+    const collisionWorld = world(FLOOR, ladder);
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    for (let step = 0; step < 40; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+    }
+    expect(state.climbId).toBe('ladder');
+
+    stepPlayer(state, input({ jump: true }), STEP, climbOptions);
+    // The jump-off arms a cooldown, so the very next step - still pushing forward into the rung -
+    // must not snap straight back onto it.
+    expect(state.climbCooldown).toBeGreaterThan(0);
+    stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
     expect(state.climbId).toBeNull();
   });
 

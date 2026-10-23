@@ -154,6 +154,12 @@ export interface ClimbConfig {
   readonly minHeight: number;
   /** How far ahead the climb probe looks (m). */
   readonly reach: number;
+  /** Seconds before the same face can be climbed again after jumping off. */
+  readonly releaseCooldownSeconds: number;
+  /** Horizontal speed of a jump off a climbable face (m/s). */
+  readonly kickSpeed: number;
+  /** Upward speed of that jump (m/s). */
+  readonly kickUpSpeed: number;
 }
 
 /**
@@ -455,6 +461,10 @@ export const DEFAULT_CONFIG: GameConfig = {
       speed: 2.4,
       minHeight: 1.6,
       reach: 0.45,
+      releaseCooldownSeconds: 0.3,
+      // A hop off the ladder: out and up, so leaving it keeps the height gained.
+      kickSpeed: 4.5,
+      kickUpSpeed: 5.6,
     },
 
     pipe: {
