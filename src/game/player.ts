@@ -184,6 +184,8 @@ export interface PlayerState {
   jumpLatch: boolean;
   /** Collider being climbed, if any. */
   climbId: string | null;
+  /** Horizontal unit vector from the player towards the climbed face. */
+  climbNormal: Vec3;
   /** Pipe being climbed, if any. */
   pipeId: string | null;
   /** Vertical direction the player is working the pipe: +1 up, -1 down. */
@@ -329,6 +331,7 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     grabCooldown: 0,
     jumpLatch: false,
     climbId: null,
+    climbNormal: vec3(0, 0, 0),
     pipeId: null,
     pipeDirection: 0,
     pipeNormal: vec3(0, 0, 0),
@@ -436,6 +439,9 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.grabCooldown = 0;
   state.jumpLatch = false;
   state.climbId = null;
+  state.climbNormal.x = 0;
+  state.climbNormal.y = 0;
+  state.climbNormal.z = 0;
   state.pipeId = null;
   state.pipeDirection = 0;
   state.pipeNormal.x = 0;
@@ -780,11 +786,14 @@ function stepClimbing(
   copyVec3(state.previousPosition, state.position);
 
   const body = playerBox(state.position, config.radius, playerHeight(state, config));
-  const facing = intoYawBasis(state.yaw, climbBasisScratch).forward;
+  // The climb looks for the face along the direction the player pushed into it, *not* the direction
+  // they are currently looking. Without that, glancing sideways while climbing reads as "lost the
+  // face" and peels the player off a ladder they are still holding - detaching by looking around,
+  // which breaks the rule that only a jump or climbing off ends a climb.
   const surface = findClimbable({
     world,
     box: body,
-    direction: facing,
+    direction: state.climbNormal,
     reach: options.game.maneuver.climb.reach,
     minTopY: 0,
     maxTopY: Number.POSITIVE_INFINITY,
@@ -817,8 +826,8 @@ function stepClimbing(
   if (input.jump) {
     state.climbId = null;
     state.climbCooldown = climb.releaseCooldownSeconds;
-    state.velocity.x = -facing.x * climb.kickSpeed;
-    state.velocity.z = -facing.z * climb.kickSpeed;
+    state.velocity.x = -state.climbNormal.x * climb.kickSpeed;
+    state.velocity.z = -state.climbNormal.z * climb.kickSpeed;
     state.velocity.y = climb.kickUpSpeed;
     return outcome(createMoveResult(), { ended: 'climb' });
   }
@@ -835,14 +844,14 @@ function stepClimbing(
       {
         world,
         box: body,
-        direction: facing,
+        direction: state.climbNormal,
         reach: climb.reach,
         minTopY: 0,
         maxTopY: Number.POSITIVE_INFINITY,
         radius: config.radius,
         standHeight: config.standHeight,
       },
-      facing,
+      state.climbNormal,
       surface.box.max.y,
     );
     state.climbId = null;
@@ -1793,6 +1802,9 @@ function tryClimb(state: PlayerState, input: MoveInput, options: PlayerStepOptio
   if (!surface) return false;
 
   state.climbId = surface.id;
+  // Remember which way the player was pushing, so the climb keeps working even if they look around
+  // afterwards - the face is in front of this direction, not in front of wherever the head is now.
+  copyVec3(state.climbNormal, facing);
   state.crouching = false;
   state.sliding = false;
   state.velocity.x = 0;

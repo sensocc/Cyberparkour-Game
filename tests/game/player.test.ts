@@ -644,6 +644,30 @@ describe('climbing', () => {
     expect(state.velocity.y).toBeGreaterThan(0);
   });
 
+  it('stays on the ladder while looking away from it, and still lets go on a jump', () => {
+    const ladder = climbableAt('ladder', 6);
+    const collisionWorld = world(FLOOR, ladder);
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    for (let step = 0; step < 40; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+    }
+    expect(state.climbId).toBe('ladder');
+
+    // Turn the head to face due west - the ladder is behind the player now. Climbing must not read
+    // that as "lost the face": the only ways off are a jump or climbing off, not glancing around.
+    state.yaw = FACING_EAST + Math.PI;
+    for (let step = 0; step < 4; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+      expect(state.climbId).toBe('ladder');
+    }
+
+    // ...and the jump still detaches, exactly as before.
+    stepPlayer(state, input({ jump: true }), STEP, climbOptions);
+    expect(state.climbId).toBeNull();
+  });
+
   it('cannot re-grab the same ladder the instant after jumping off it', () => {
     const ladder = climbableAt('ladder', 6);
     const collisionWorld = world(FLOOR, ladder);
