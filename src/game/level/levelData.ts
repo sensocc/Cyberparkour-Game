@@ -16,6 +16,37 @@
 import type { ReadonlyVec3 } from '../../core/vec3.js';
 import type { ColliderKind } from '../physics/collision.js';
 
+/**
+ * Imported GLTF prop models, drawn by the renderer instead of box parts.
+ *
+ * The level references them by id; the renderer owns the files and the loading.
+ * They are decoration - rooftop and street clutter - and never carry collision.
+ */
+export type GltfPropModelId =
+  | 'ac'
+  | 'ac-side'
+  | 'antenna-1'
+  | 'antenna-2'
+  | 'cable-small'
+  | 'computer'
+  | 'door'
+  | 'fence'
+  | 'light-square'
+  | 'water-tower'
+  | 'solar-flat'
+  | 'solar-landscape'
+  | 'chimney-small'
+  | 'chimney-medium'
+  | 'detail-tank'
+  | 'windmill-low'
+  | 'container-a'
+  | 'dumpster'
+  | 'street-light'
+  | 'pole-single'
+  | 'barrier'
+  | 'npc-a'
+  | 'npc-b';
+
 export interface PropDefinition {
   readonly id: string;
   /** Which model in the model library this prop is an instance of. */
@@ -51,6 +82,20 @@ export interface PropDefinition {
   readonly pipe?: boolean;
   readonly castShadow?: boolean;
   readonly receiveShadow?: boolean;
+  /**
+   * An imported GLTF model drawn instead of the box parts.
+   *
+   * `model` is the renderer's prop library; `scale` is uniform. The prop still
+   * carries a box `model` and `size`, so a scene without the model loaded (a
+   * test, a failed fetch) falls back to ordinary box parts. The collider is the
+   * prop's own box, like any other prop - decorations pass `collide: 'none'`.
+   */
+  readonly gltf?: {
+    readonly model: GltfPropModelId;
+    readonly scale: number;
+    /** Rotation around Y, in radians. */
+    readonly yaw?: number;
+  };
 }
 
 
@@ -888,19 +933,20 @@ export const DEMO_DISTRICT: LevelDefinition = {
   // before the street, so a fall reads as fatal rather than as a long, silent one.
   killPlaneY: -12,
   environment: {
-    skyColor: '#0b1020',
+    skyColor: '#172a52',
     // The fog colour is picked to match the sky's horizon glow rather than to be a
     // neutral grey: the skyline is painted on a cylinder 240 m out, and it has to
-    // dissolve into the haze rather than into a line. V0.5 pulls the far plane in
-    // and warms the colour, so the district has depth instead of just distance.
-    fogColor: '#3d3355',
+    // dissolve into the haze rather than into a line. V2.0 lifts the whole night a
+    // step: the sky, the haze and the sun all brighten together, so the city reads
+    // before it strains.
+    fogColor: '#524a73',
     fogNear: 90,
     fogFar: 480,
-    ambientSkyColor: '#8399c9',
-    ambientGroundColor: '#131a26',
-    ambientIntensity: 0.95,
-    sunColor: '#dfe9ff',
-    sunIntensity: 3.2,
+    ambientSkyColor: '#9fb3e0',
+    ambientGroundColor: '#222c3e',
+    ambientIntensity: 1.35,
+    sunColor: '#eef4ff',
+    sunIntensity: 3.8,
     sunDirection: { x: 0.55, y: 0.9, z: 0.35 },
     backdrop: {
       radius: 240,

@@ -14,6 +14,7 @@ import { clamp01 } from '../core/math.js';
 import { DEFAULT_SETTINGS, type VolumeSettings } from '../core/settings.js';
 import { logger } from '../core/log.js';
 import type { AudioCue } from './director.js';
+import type { SfxSampleId } from './samples.js';
 import {
   MUSIC_SECONDS,
   SAMPLE_RATE,
@@ -78,6 +79,13 @@ export interface WebAudioOptions {
   readonly config: GameConfig;
   /** Injectable for tests; defaults to the real thing. */
   readonly contextFactory?: () => AudioContext;
+  /**
+   * Loads the recorded samples against this engine's context.
+   *
+   * The synthesiser stays the fallback for every cue, so the game sounds from the
+   * first frame and a slow (or failed) fetch only upgrades the sound as it lands.
+   */
+  readonly sampleLoader?: (context: AudioContext) => Promise<ReadonlyMap<SfxSampleId, AudioBuffer>>;
 }
 
 /** Web Audio playback of the synthesised soundbank. */
@@ -92,6 +100,7 @@ export class WebAudio implements AudioOutput {
   private musicEnabled = false;
   private readonly windSource: AudioBufferSourceNode | null;
   private readonly buffers = new Map<string, AudioBuffer>();
+  private samples: ReadonlyMap<SfxSampleId, AudioBuffer> = new Map();
   private musicSource: AudioBufferSourceNode | null = null;
   private muted = false;
   private wind = 0;
@@ -126,6 +135,38 @@ export class WebAudio implements AudioOutput {
     this.windSource.loop = true;
     this.windSource.connect(this.windGain);
     this.windSource.start();
+
+    // The recorded samples are an upgrade, not a requirement: the synth covers every
+    // cue from the first frame, and the recordings replace it as they arrive. A loader
+    // that never resolves (or rejects) leaves the game sounding exactly as before.
+    const loader = options.sampleLoader ?? (() => Promise.resolve(new Map<SfxSampleId, AudioBuffer>()));
+    void loader(this.context).then(
+      (samples) => {
+        this.samples = samples;
+      },
+      (error) => {
+        logger.debug('audio', 'recorded samples unavailable - synthesising', { error: String(error) });
+      },
+    );
+  }
+
+  private sampleOneShot(id: SfxSampleId, gain = 1, rate = 1): boolean {
+    const buffer = this.samples.get(id);
+    if (!buffer) return false;
+    try {
+      const source = this.context.createBufferSource();
+      source.buffer = buffer;
+      source.playbackRate.value = rate;
+      const node = this.context.createGain();
+      node.gain.value = gain;
+      source.connect(node);
+      node.connect(this.sfxGain);
+      source.start();
+      return true;
+    } catch (error) {
+      logger.debug('audio', `could not play sample "${id}"`, { error: String(error) });
+      return false;
+    }
   }
 
   private buffer(key: string, render: () => Float32Array): AudioBuffer {
@@ -173,9 +214,13 @@ export class WebAudio implements AudioOutput {
         case 'climb-tick':
           this.oneShot(`climb-${cue.variant % 2}`, () => renderClimbTick(cue.variant % 2));
           break;
-        case 'land':
-          this.oneShot(`land-${cue.intensity}`, () => renderLanding(cue.intensity));
+        case 'land': {
+          const sampleId = (['land-soft', 'land-medium', 'land-hard'] as const)[cue.intensity];
+          if (!this.sampleOneShot(sampleId, 0.9)) {
+            this.oneShot(`land-${cue.intensity}`, () => renderLanding(cue.intensity));
+          }
           break;
+        }
         case 'grab':
           this.oneShot('grab', renderGrab);
           break;
@@ -199,14 +244,18 @@ export class WebAudio implements AudioOutput {
         case 'slide-stop':
           break;
         case 'whoosh':
-          this.oneShot('whoosh', renderWhoosh);
+          if (!this.sampleOneShot('jump', 0.85)) {
+            this.oneShot('whoosh', renderWhoosh);
+          }
           break;
         case 'pickup':
           // One buffer per pitch step, so a pickup does not have to be
           // re-synthesised every time one is taken. The key is the *step*, not the
           // index: `renderPickup` clamps its own pitch, so keying on the index would
           // cache a separate (identical) buffer for every past the tenth.
-          this.oneShot(`pickup-${pitchStep(cue.index)}`, () => renderPickup(cue.index));
+          if (!this.sampleOneShot('pickup', 1, Math.pow(2, pitchStep(cue.index) / 12))) {
+            this.oneShot(`pickup-${pitchStep(cue.index)}`, () => renderPickup(cue.index));
+          }
           break;
         case 'complete':
           this.oneShot('complete', renderComplete);
@@ -217,7 +266,9 @@ export class WebAudio implements AudioOutput {
         case 'ui-click':
           // Quieter than everything else: it plays on every button, and it is the
           // one cue that must never be the loudest thing in the room.
-          this.oneShot('ui-click', renderUiClick, 0.6);
+          if (!this.sampleOneShot('ui-click', 0.6)) {
+            this.oneShot('ui-click', renderUiClick, 0.6);
+          }
           break;
       }
     } catch (error) {

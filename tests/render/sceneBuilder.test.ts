@@ -19,12 +19,13 @@ import {
   updateMovingVisibility,
 } from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
-import { DEMO_DISTRICT, type LevelDefinition } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT, type GltfPropModelId, type LevelDefinition } from '../../src/game/level/levelData.js';
 import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
 import { isMountedModel } from '../../src/game/level/models.js';
 import { isElevatorGateOf, resolvePropParts } from '../../src/game/level/level.js';
 import { buildCity } from '../../src/game/level/city.js';
 import type { PropDefinition } from '../../src/game/level/levelData.js';
+import type { PropModel } from '../../src/render/propModels.js';
 
 function assetTextures(): SceneAssets {
   return {
@@ -32,6 +33,7 @@ function assetTextures(): SceneAssets {
     skybox: new THREE.CubeTexture(),
     surfaces: new Map(surfaceTextureIds().map((id) => [id, new THREE.Texture()])),
     smoke: new THREE.Texture(),
+    props: new Map(),
   };
 }
 
@@ -914,7 +916,7 @@ describe('buildScene sky dome', () => {
   });
 
   it('falls back to a flat colour when the skybox is missing', () => {
-    const built = buildScene(DEMO_DISTRICT, { cityBackdrop: null, skybox: null, surfaces: new Map(), smoke: null });
+    const built = buildScene(DEMO_DISTRICT, { cityBackdrop: null, skybox: null, surfaces: new Map(), smoke: null, props: new Map() });
     try {
       const background = built.scene.background as THREE.Color;
       expect(background).toBeInstanceOf(THREE.Color);
@@ -1089,6 +1091,96 @@ describe('buildScene disposal', () => {
 
     for (const mesh of built.moving) {
       expect(disposed.has(mesh.geometry), mesh.name).toBe(true);
+    }
+  });
+});
+
+describe('buildScene imported models', () => {
+  /** One fake prop model: a group with a named mesh, and whatever clips it carries. */
+  function fakeModel(clips: readonly THREE.AnimationClip[] = []): { scene: THREE.Group; animations: readonly THREE.AnimationClip[] } {
+    const scene = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
+    mesh.name = 'imported-mesh';
+    scene.add(mesh);
+    return { scene, animations: clips };
+  }
+
+  function gltfProp(id: string, model: GltfPropModelId): PropDefinition {
+    return {
+      id,
+      model: 'slab',
+      kind: 'prop',
+      position: { x: 10, y: 3, z: 12 },
+      size: { x: 2.3, y: 1.6, z: 1.8 },
+      collide: 'none',
+      gltf: { model, scale: 2 },
+    };
+  }
+
+  it('draws a prop with a loaded GLTF model as a clone of that model', () => {
+    const template = fakeModel();
+    const assets = { ...assetTextures(), props: new Map<GltfPropModelId, PropModel>([['ac', template]]) };
+    const built = buildScene(onlyLevel(gltfProp('decor-ac', 'ac')), assets);
+    try {
+      const clone = built.scene.getObjectByName('imported-mesh');
+      expect(clone).toBeDefined();
+      expect(clone).not.toBe(template.scene.children[0]);
+
+      // The model's origin is its base, so the clone stands on the prop's bottom, scaled.
+      const group = (clone as THREE.Mesh).parent as THREE.Object3D;
+      expect(group.position.x).toBeCloseTo(10, 9);
+      expect(group.position.y).toBeCloseTo(3 - 1.6 / 2, 9);
+      expect(group.position.z).toBeCloseTo(12, 9);
+      expect(group.scale.x).toBeCloseTo(2, 9);
+      expect(group.rotation.y).toBeCloseTo(0, 9);
+
+      // Shadows follow the prop's own flags, and the clone joins the distance-culled set.
+      const mesh = clone as THREE.Mesh;
+      expect(mesh.castShadow).toBe(true);
+      expect(mesh.receiveShadow).toBe(true);
+      expect(built.moving).toContain(clone);
+      expect(mesh.userData.cullX).toBeCloseTo(10, 9);
+      expect(mesh.userData.cullZ).toBeCloseTo(12, 9);
+
+      // The parts map records an imported prop with no box parts.
+      expect(partsOf(built, 'decor-ac').count).toBe(0);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('falls back to box parts when the model is not loaded', () => {
+    const built = buildScene(onlyLevel(gltfProp('decor-ac', 'ac')), assetTextures());
+    try {
+      expect(partsOf(built, 'decor-ac').count).toBeGreaterThan(0);
+      expect(built.npcMixers).toHaveLength(0);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('gives a character prop an idle mixer when the file has an Idle clip', () => {
+    const idle = new THREE.AnimationClip('Idle', 1, []);
+    const assets = { ...assetTextures(), props: new Map<GltfPropModelId, PropModel>([['npc-a', fakeModel([idle])]]) };
+    const built = buildScene(onlyLevel(gltfProp('decor-npc', 'npc-a')), assets);
+    try {
+      expect(built.npcMixers).toHaveLength(1);
+      expect(built.npcMixers[0]?.existingAction(idle)?.isRunning()).toBe(true);
+    } finally {
+      built.dispose();
+    }
+  });
+
+  it('steps the citizens on the game clock, freezing them when the run pauses', () => {
+    const idle = new THREE.AnimationClip('Idle', 1, []);
+    const assets = { ...assetTextures(), props: new Map<GltfPropModelId, PropModel>([['npc-a', fakeModel([idle])]]) };
+    const built = buildScene(onlyLevel(gltfProp('decor-npc', 'npc-a')), assets);
+    try {
+      // No animate call, no advance: the mixer waits for the game's clock.
+      const action = built.npcMixers[0]?.existingAction(idle);
+      expect(action?.time).toBe(0);
+    } finally {
+      built.dispose();
     }
   });
 });

@@ -69,13 +69,13 @@ export function generateCityBackdrop(options: CityBackdropOptions = {}): RgbaIma
   // layers are darker silhouettes with the most lit windows.
   const layers: SkylineLayer[] = [
     {
-      color: hexColor('#48587f'),
+      color: hexColor('#5a6c99'),
       minHeight: 0.3,
       maxHeight: 0.62,
       minWidth: 26,
       maxWidth: 74,
       litChance: 0.05,
-      windowColor: hexColor('#a8c7ec'),
+      windowColor: hexColor('#b4d2f2'),
       windowSize: 2,
       windowGapX: 6,
       windowGapY: 7,
@@ -83,7 +83,7 @@ export function generateCityBackdrop(options: CityBackdropOptions = {}): RgbaIma
       beaconColor: hexColor('#ffe2b0'),
     },
     {
-      color: hexColor('#2e3b57'),
+      color: hexColor('#3d4d6e'),
       minHeight: 0.18,
       maxHeight: 0.46,
       minWidth: 36,
@@ -97,7 +97,7 @@ export function generateCityBackdrop(options: CityBackdropOptions = {}): RgbaIma
       beaconColor: hexColor('#ff9d5c'),
     },
     {
-      color: hexColor('#1e2636'),
+      color: hexColor('#2b3548'),
       minHeight: 0.1,
       maxHeight: 0.32,
       minWidth: 52,
@@ -135,7 +135,7 @@ export function generateCityBackdrop(options: CityBackdropOptions = {}): RgbaIma
 
   // A faint single-pixel rim on the near silhouettes keeps the skyline crisp
   // against the sky at a distance, where the texture is minified.
-  outline(image, hexColor('#39496e'));
+  outline(image, hexColor('#4a5c85'));
 
   return image;
 }

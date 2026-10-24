@@ -70,22 +70,22 @@ export function pixelToFaceCoordinates(index: number, size: number): number {
 
 // ------------------------------------------------------------------- sky
 
-const ZENITH = hexColor('#040613');
-const UPPER = hexColor('#0c1430');
-const HIGH_HAZE = hexColor('#1d2a52');
-const HORIZON = hexColor('#5b3f7d');
-const HORIZON_WARM = hexColor('#7c4270');
-const BELOW_HORIZON = hexColor('#2e2749');
-const LOWER = hexColor('#131730');
-const NADIR = hexColor('#060a14');
+const ZENITH = hexColor('#0a1330');
+const UPPER = hexColor('#15234f');
+const HIGH_HAZE = hexColor('#2d3e73');
+const HORIZON = hexColor('#6d4f95');
+const HORIZON_WARM = hexColor('#955287');
+const BELOW_HORIZON = hexColor('#453c68');
+const LOWER = hexColor('#202848');
+const NADIR = hexColor('#0b1226');
 
 /** The cloud band, tinted by the city glow underneath it. */
-const CLOUD_HIGH = hexColor('#3f3560');
-const CLOUD_LOW = hexColor('#6a4a7d');
+const CLOUD_HIGH = hexColor('#574a80');
+const CLOUD_LOW = hexColor('#7f5f96');
 
 /** The sodium-and-neon wash of a lit city, just above its skyline. */
-const CITY_GLOW = hexColor('#c06a86');
-const CITY_COOL = hexColor('#4d6fa8');
+const CITY_GLOW = hexColor('#d1809e');
+const CITY_COOL = hexColor('#6184c2');
 const STARLIGHT = hexColor('#eef2ff');
 /** The other half of a star field: bright stars read cool, faint ones warm. */
 const STARLIGHT_WARM = hexColor('#ffe6c4');

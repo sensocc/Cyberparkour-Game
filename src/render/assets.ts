@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 
 import { logger } from '../core/log.js';
-import type { SurfaceTextureId } from '../game/level/surfaces.js';
+import { MIRRORED_SURFACE_TEXTURES, type SurfaceTextureId } from '../game/level/surfaces.js';
 import cityBackdropUrl from '../assets/textures/city-backdrop.png';
 import smokeUrl from '../assets/textures/fx-smoke.png';
 import skyNx from '../assets/textures/sky-nx.png';
@@ -27,6 +27,10 @@ import surfaceGrille from '../assets/textures/surface-grille.png';
 import surfaceHazard from '../assets/textures/surface-hazard.png';
 import surfaceMetalPanel from '../assets/textures/surface-metal-panel.png';
 import surfaceSign from '../assets/textures/surface-sign.png';
+import surfaceFacadeA from '../assets/textures/surface-facade-a.png';
+import surfaceFacadeB from '../assets/textures/surface-facade-b.png';
+import surfaceFacadeC from '../assets/textures/surface-facade-c.png';
+import surfaceFacadeStreet from '../assets/textures/surface-facade-street.png';
 import type { SceneAssets } from './types.js';
 
 /**
@@ -66,6 +70,10 @@ export const TEXTURE_URLS = {
     grille: surfaceGrille,
     glass: surfaceGlass,
     sign: surfaceSign,
+    'facade-a': surfaceFacadeA,
+    'facade-b': surfaceFacadeB,
+    'facade-c': surfaceFacadeC,
+    'facade-street': surfaceFacadeStreet,
   } satisfies Record<SurfaceTextureId, string>,
 } as const;
 
@@ -141,9 +149,13 @@ export async function loadSurfaceTextures(
       if (!texture) return null;
 
       // Surfaces repeat across props; wrapping both axes and keeping one tile at
-      // a fixed physical size is what the scene builder's UVs assume.
-      texture.wrapS = THREE.RepeatWrapping;
-      texture.wrapT = THREE.RepeatWrapping;
+      // a fixed physical size is what the scene builder's UVs assume. Facade art
+      // does not tile edge-to-edge, so those mirror instead: seamless, and a
+      // mirrored facade reads as a symmetric building.
+      texture.wrapS = MIRRORED_SURFACE_TEXTURES.has(id)
+        ? THREE.MirroredRepeatWrapping
+        : THREE.RepeatWrapping;
+      texture.wrapT = texture.wrapS;
       // A baseline that does not depend on the hardware. `applyAnisotropy` raises
       // this to whatever the GPU reports once there is a renderer to ask; this is
       // what anything that never reaches a renderer will use.
@@ -217,7 +229,7 @@ export async function loadSceneAssets(
     logger.warn('render', `${missing} scene texture(s) unavailable - using flat colours`);
   }
 
-  return { cityBackdrop, skybox, surfaces, smoke };
+  return { cityBackdrop, skybox, surfaces, smoke, props: new Map() };
 }
 
 /** Releases the loaded textures. */

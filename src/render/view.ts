@@ -251,7 +251,7 @@ export class GameView implements GameViewLike {
     this.renderer.setPixelRatio(drawingRatio(this.quality));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.1;
+    this.renderer.toneMappingExposure = 1.2;
     this.renderer.shadowMap.enabled = true;
     // `PCFSoftShadowMap` was removed from three.js in r186: setting it logs a warning
     // and silently falls back to `PCFShadowMap`, so the demo spent a version asking
@@ -606,6 +606,10 @@ export class GameView implements GameViewLike {
       group.position.y = this.pickupScratch.y;
       group.rotation.y = this.pickupScratch.spin;
     }
+
+    // The imported citizens idle: the game clock is the only clock they answer to, so pausing the
+    // run freezes them too.
+    for (const mixer of this.built.npcMixers) mixer.update(deltaSeconds);
   }
 
   /**

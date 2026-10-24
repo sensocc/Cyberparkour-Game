@@ -13,6 +13,7 @@
  */
 
 import * as THREE from 'three';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { LevelDefinition } from '../game/level/levelData.js';
@@ -109,6 +110,13 @@ export interface BuiltScene {
    * gates and cars only ever move vertically.
    */
   readonly moving: readonly THREE.Mesh[];
+  /**
+   * Idle animation mixers for the imported character props.
+   *
+   * Stepped by the view's `animate` - the game clock is the only clock the
+   * characters should answer to, so pausing the run freezes the citizens too.
+   */
+  readonly npcMixers: readonly THREE.AnimationMixer[];
   /** Every smoke sprite, with its emitter, for the animation pass. */
   /**
    * The batched puffs - smoke, and the impact dust that rides the same draw.
@@ -941,9 +949,54 @@ export function buildScene(
 
   const buckets = new Map<string, { material: THREE.Material; buffer: PartBuffer; cx: number; cz: number; cast: boolean; receive: boolean }>();
   const partInfo = new Map<string, { count: number; materials: THREE.Material[] }>();
+  /** Meshes that move (or imported models that never joined a chunk), distance-culled one by one. */
+  const moving: THREE.Mesh[] = [];
+  /** Idle animation for the imported character props, stepped by the view. */
+  const npcMixers: THREE.AnimationMixer[] = [];
 
   for (const prop of definition.props) {
     if (gateProps.has(prop.id)) continue;
+
+    // An imported model replaces the box parts when it loaded. The group's origin is the
+    // model's base, so it stands on the prop's bottom rather than its centre; shadows and
+    // distance culling follow the prop's own flags and place. When the model is not there -
+    // a failed fetch, a headless test - the box parts below draw instead.
+    const gltfSpec = prop.gltf;
+    const template = gltfSpec ? assets.props.get(gltfSpec.model) : undefined;
+    if (template && gltfSpec) {
+      const hasSkin = template.scene.getObjectByProperty('isSkinnedMesh', true) !== undefined;
+      // Characters need their own bones (skinned meshes), plain props can share the template.
+      const instance = hasSkin ? SkeletonUtils.clone(template.scene) : template.scene.clone();
+      instance.position.set(
+        prop.position.x,
+        prop.position.y - prop.size.y / 2,
+        prop.position.z,
+      );
+      instance.scale.setScalar(gltfSpec.scale);
+      instance.rotation.y = gltfSpec.yaw ?? 0;
+      const cast = prop.castShadow ?? true;
+      const receive = prop.receiveShadow ?? true;
+      instance.traverse((node: THREE.Object3D) => {
+        if (!(node as THREE.Mesh).isMesh) return;
+        const mesh = node as THREE.Mesh;
+        mesh.castShadow = cast;
+        mesh.receiveShadow = receive;
+        mesh.userData.cullX = prop.position.x;
+        mesh.userData.cullZ = prop.position.z;
+        moving.push(mesh);
+      });
+      scene.add(instance);
+      // Characters idle: the clip comes from the file, so a prop only dances if it has one.
+      const idle = template.animations.find((clip) => clip.name === 'Idle');
+      if (idle) {
+        const mixer = new THREE.AnimationMixer(instance);
+        mixer.clipAction(idle).play();
+        npcMixers.push(mixer);
+      }
+      partInfo.set(prop.id, { count: 0, materials: [] });
+      continue;
+    }
+
     const parts = resolvePropParts(prop);
     const used: THREE.Material[] = [];
     let drawn = 0;
@@ -1085,7 +1138,6 @@ export function buildScene(
    * and says nothing about where on the map the mesh is. A gate's place is its prop's, a car's is
    * the shaft it runs in, and neither ever moves in the plane.
    */
-  const moving: THREE.Mesh[] = [];
   const markMoving = (group: THREE.Object3D, x: number, z: number): void => {
     for (const child of group.children) {
       const mesh = child as THREE.Mesh;
@@ -1302,6 +1354,7 @@ export function buildScene(
     lifts,
     gates,
     moving,
+    npcMixers,
     smoke,
     lamps,
     materials,

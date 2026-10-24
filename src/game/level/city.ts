@@ -31,6 +31,7 @@ import {
   liftTower,
   type CheckpointDefinition,
   type CollectibleDefinition,
+  type GltfPropModelId,
   type GoalDefinition,
   type LevelDefinition,
   type NpcDefinition,
@@ -463,7 +464,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
       const cellId = `cell-${ix}-${iz}`;
       const roadY = config.groundY - 0.02;
       const roadHalf = street / 2;
-      const tarmac = { concrete: '#2b2e36', 'concrete-dark': '#242730' };
+      const tarmac = { concrete: '#3a404c', 'concrete-dark': '#31363f' };
       context.props.push(
         make(`${cellId}-road-x`, {
           at: [cx, cz + footprint + roadHalf],
@@ -487,7 +488,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
           size: [footprint * 1.2, 0.03, 0.25],
           model: 'neon-strip',
           collide: 'none',
-          tints: { neon: '#c8c2a6' },
+          tints: { neon: '#d8d2b6' },
         }),
       );
 
@@ -506,9 +507,9 @@ export function generateCity(options: CityOptions = {}): CityParts {
         context.lights.push({
           id: `${cellId}-lamp-light`,
           position: { x: cornerX, y: config.groundY + 5.4, z: cornerZ },
-          color: '#ffcf8a',
-          intensity: 9,
-          distance: 22,
+          color: '#ffd9a3',
+          intensity: 11,
+          distance: 26,
         });
         context.count('lamppost');
       } else {
@@ -527,6 +528,29 @@ export function generateCity(options: CityOptions = {}): CityParts {
           }),
         );
         context.count('planter');
+      }
+
+      // A second lamp on the opposite corner of every other cell, so a crossing read
+      // from the rooftops is a pair of lights rather than a single one. Parity, not
+      // chance: the seeded stream stays untouched, and the same seed keeps the same
+      // layout - just brighter at the crossings.
+      if ((ix + iz) % 2 === 0) {
+        context.props.push(
+          make(`${cellId}-lamp-b`, {
+            at: [2 * cx - cornerX, 2 * cz - cornerZ],
+            bottom: config.groundY,
+            size: [0.4, 5.6, 0.4],
+            model: 'lamp-post',
+          }),
+        );
+        context.lights.push({
+          id: `${cellId}-lamp-b-light`,
+          position: { x: 2 * cx - cornerX, y: config.groundY + 5.4, z: 2 * cz - cornerZ },
+          color: '#9fd8ff',
+          intensity: 10,
+          distance: 24,
+        });
+        context.count('lamppost');
       }
 
       const roll = random();
@@ -592,9 +616,9 @@ export function generateCity(options: CityOptions = {}): CityParts {
         context.lights.push({
           id: `${cellId}-yard-lamp`,
           position: { x: cx, y: config.groundY + 4, z: cz },
-          color: '#bfd8ff',
-          intensity: 7,
-          distance: 16,
+          color: '#cfe4ff',
+          intensity: 9,
+          distance: 20,
         });
         continue;
       }
@@ -639,7 +663,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
       size: [config.radius * 2.4, 0.5, config.radius * 2.4],
       model: 'slab',
       kind: 'floor',
-      tints: { concrete: '#2b3240', 'concrete-dark': '#232936' },
+      tints: { concrete: '#3a4354', 'concrete-dark': '#313a49' },
     }),
   );
 
@@ -669,6 +693,10 @@ export function generateCity(options: CityOptions = {}): CityParts {
       x: prop.position.x,
       z: prop.position.z,
       y: prop.position.y + prop.size.y / 2,
+      // Half-extents, so the dressing pass can place furniture near the deck's edges
+      // without standing it on a neighbour's roof.
+      halfX: prop.size.x / 2,
+      halfZ: prop.size.z / 2,
     }));
 
   /** True when nobody is already standing there: a foot of headroom, and no prop in it. */
@@ -840,6 +868,83 @@ export function generateCity(options: CityOptions = {}): CityParts {
     distance: 10,
   });
 
+  // ------------------------------------------------------------------ dressing
+  //
+  // Imported models dress the city: rooftop machinery, street furniture and a few citizens.
+  // A separate RNG stream, so the layout above is byte-identical to the version without
+  // dressing - same seed, same city, plus the same furniture. Everything here is
+  // `collide: 'none'`: furniture, not gameplay, and a prop whose model failed to load falls
+  // back to its plain box.
+  const dressRandom = createRandom((config.seed ^ 0x9e3779b9) >>> 0);
+  let dressIndex = 0;
+  const dress = (
+    gltfModel: GltfPropModelId,
+    at: readonly [number, number],
+    bottom: number,
+    yaw = 0,
+  ): void => {
+    const spec = DRESSING[gltfModel];
+    props.push(
+      make(`dress-${dressIndex++}-${gltfModel}`, {
+        at,
+        bottom,
+        size: spec.size,
+        model: 'slab',
+        collide: 'none',
+        gltf: { model: gltfModel, scale: spec.scale, yaw },
+      }),
+    );
+    count('gltf-prop');
+  };
+
+  const roofPool: readonly GltfPropModelId[] = [
+    'ac', 'ac-side', 'antenna-1', 'antenna-2', 'water-tower', 'solar-flat',
+    'solar-landscape', 'chimney-small', 'chimney-medium', 'detail-tank',
+    'windmill-low', 'container-a', 'computer', 'cable-small', 'fence', 'door', 'light-square',
+  ];
+  const streetPool: readonly GltfPropModelId[] = ['dumpster', 'barrier', 'pole-single', 'street-light'];
+
+  // Roofs get machinery near their edges - never the centre, which is where the run lives.
+  for (const deck of roofDecks) {
+    if (dressRandom() > 0.55) continue;
+    const model = roofPool[Math.floor(dressRandom() * roofPool.length)] ?? roofPool[0]!;
+    const dx = (deck.halfX - 2.5) * (dressRandom() < 0.5 ? -1 : 1) * (0.4 + dressRandom() * 0.6);
+    const dz = (deck.halfZ - 2.5) * (dressRandom() < 0.5 ? -1 : 1) * (0.4 + dressRandom() * 0.6);
+    dress(model, [deck.x + dx, deck.z + dz], deck.y, dressRandom() * Math.PI * 2);
+  }
+
+  // Streets: furniture at the ends of the roads, where the eye is when you look down.
+  const roads = props.filter((prop) => prop.id.endsWith('-road-x') || prop.id.endsWith('-road-z'));
+  for (const road of roads) {
+    if (dressRandom() > 0.06) continue;
+    const model = streetPool[Math.floor(dressRandom() * streetPool.length)] ?? streetPool[0]!;
+    const along = road.size.x > road.size.z ? road.size.x / 2 - 2 : road.size.z / 2 - 2;
+    const at: [number, number] = road.size.x > road.size.z
+      ? [road.position.x + (dressRandom() < 0.5 ? 1 : -1) * along, road.position.z]
+      : [road.position.x, road.position.z + (dressRandom() < 0.5 ? 1 : -1) * along];
+    dress(model, at, config.groundY, dressRandom() * Math.PI * 2);
+  }
+
+  // Citizens: two on the rooftops, two at street level, each idling on their own clock.
+  for (let npc = 0; npc < 4; npc += 1) {
+    const model: GltfPropModelId = npc % 2 === 0 ? 'npc-a' : 'npc-b';
+    const yaw = dressRandom() * Math.PI * 2;
+    if (npc < 2) {
+      const deck = roofDecks[Math.floor(dressRandom() * roofDecks.length)];
+      if (!deck) continue;
+      dress(
+        model,
+        [deck.x + (deck.halfX - 3) * (dressRandom() < 0.5 ? -1 : 1), deck.z + (deck.halfZ - 3) * (dressRandom() < 0.5 ? -1 : 1)],
+        deck.y,
+        yaw,
+      );
+    } else {
+      const road = roads[Math.floor(dressRandom() * roads.length)];
+      if (!road) continue;
+      dress(model, [road.position.x, road.position.z], config.groundY, yaw);
+    }
+  }
+
   return {
     props,
     lights: lights.length > 0 ? lights : undefined,
@@ -963,6 +1068,7 @@ function make(
     readonly collide?: PropDefinition['collide'];
     readonly tints?: Record<string, string>;
     readonly climbable?: boolean;
+    readonly gltf?: PropDefinition['gltf'];
   },
 ): PropDefinition {
   return {
@@ -974,17 +1080,54 @@ function make(
     ...(spec.tints ? { tints: spec.tints } : {}),
     ...(spec.collide ? { collide: spec.collide } : {}),
     ...(spec.climbable ? { climbable: true } : {}),
+    ...(spec.gltf ? { gltf: spec.gltf } : {}),
   };
 }
 
 /** A concrete-ish palette, picked per block so a street reads as a street. */
 const BODY_TINTS: readonly { concrete: string; 'concrete-dark': string }[] = [
-  { concrete: '#414d63', 'concrete-dark': '#333d4e' },
-  { concrete: '#4a5361', 'concrete-dark': '#3d4550' },
-  { concrete: '#55606e', 'concrete-dark': '#454f5c' },
-  { concrete: '#5c5563', 'concrete-dark': '#4a4450' },
-  { concrete: '#4d5a55', 'concrete-dark': '#3f4a46' },
+  { concrete: '#58637a', 'concrete-dark': '#485261' },
+  { concrete: '#626a79', 'concrete-dark': '#505863' },
+  { concrete: '#6d7787', 'concrete-dark': '#59626f' },
+  { concrete: '#756e7c', 'concrete-dark': '#5f5965' },
+  { concrete: '#65726d', 'concrete-dark': '#535e59' },
 ];
+
+/**
+ * Imported models dressing the city: the fallback box (drawn when a model failed to
+ * load) and the scale that puts the file's own units into metres.
+ *
+ * The heights are what the models actually stand at - measured, not guessed - and the
+ * box heights stay under four metres so the old-town clearance test (which skips slabs
+ * shorter than that) keeps treating them as rooftop kit rather than as buildings.
+ */
+const DRESSING: Readonly<
+  Record<GltfPropModelId, { readonly size: readonly [number, number, number]; readonly scale: number }>
+> = {
+  ac: { size: [2.3, 1.6, 1.8], scale: 2 },
+  'ac-side': { size: [2.6, 1.4, 1.3], scale: 1.5 },
+  'antenna-1': { size: [1.3, 3.9, 0.6], scale: 3 },
+  'antenna-2': { size: [1.3, 1.6, 1.4], scale: 2 },
+  'cable-small': { size: [0.6, 3, 0.5], scale: 3 },
+  computer: { size: [0.9, 1.9, 1.2], scale: 1.8 },
+  door: { size: [1.5, 2.4, 0.5], scale: 2 },
+  fence: { size: [1.5, 2.6, 0.4], scale: 2 },
+  'light-square': { size: [0.7, 1.1, 0.7], scale: 2 },
+  'water-tower': { size: [1.9, 3.9, 1.8], scale: 2 },
+  'solar-flat': { size: [2.9, 0.7, 1.8], scale: 4 },
+  'solar-landscape': { size: [2.2, 1, 1.3], scale: 3 },
+  'chimney-small': { size: [1.3, 3.2, 1.3], scale: 4 },
+  'chimney-medium': { size: [1.1, 3.9, 1.1], scale: 2 },
+  'detail-tank': { size: [2.6, 1.4, 1.7], scale: 3 },
+  'windmill-low': { size: [1.4, 3.7, 2.3], scale: 2 },
+  'container-a': { size: [3.8, 1.7, 1.7], scale: 4.5 },
+  dumpster: { size: [2.1, 1.3, 1.6], scale: 5.5 },
+  'street-light': { size: [0.7, 3.9, 0.7], scale: 8 },
+  'pole-single': { size: [0.8, 3.8, 0.8], scale: 9 },
+  barrier: { size: [1.9, 1.2, 0.6], scale: 8 },
+  'npc-a': { size: [0.9, 1.9, 1], scale: 0.62 },
+  'npc-b': { size: [0.9, 1.9, 1], scale: 0.58 },
+};
 
 function tintSet(context: Context): Record<string, string> {
   const pick = BODY_TINTS[Math.floor(context.random() * BODY_TINTS.length)] ?? BODY_TINTS[0];
@@ -1015,7 +1158,7 @@ function roofKit(
       // A curtain wall is a sheet of glass rather than a slab of concrete, and a city of the
       // size this one is has towers that are all window.
       model: opts.body ?? 'slab',
-      tints: opts.body === 'glass-slab' ? { glass: '#b8d4e0' } : tintSet(context),
+      tints: opts.body === 'glass-slab' ? { glass: '#c8e2ee' } : tintSet(context),
     }),
   );
 

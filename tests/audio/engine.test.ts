@@ -13,6 +13,7 @@ import { DEFAULT_SETTINGS } from '../../src/core/settings.js';
 
 import { SilentAudio, WebAudio, createAudio, type AudioOutput } from '../../src/audio/engine.js';
 import type { AudioCue } from '../../src/audio/director.js';
+import type { SfxSampleId } from '../../src/audio/samples.js';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { logsFrom, messages } from '../helpers/logs.js';
 
@@ -26,6 +27,7 @@ function fakeContext() {
     loop: boolean;
     loopEnd: number;
     buffer: unknown;
+    playbackRate: { value: number };
     started: boolean;
     stopped: boolean;
     connect(): void;
@@ -68,6 +70,7 @@ function fakeContext() {
         buffer: null,
         loop: false,
         loopEnd: 0,
+        playbackRate: { value: 1 },
         started: false,
         stopped: false,
         connect() {},
@@ -278,6 +281,118 @@ describe('WebAudio', () => {
     } as unknown as AudioContext;
 
     expect(() => new WebAudio({ config: DEFAULT_CONFIG, contextFactory: () => broken })).toThrow();
+  });
+
+  describe('recorded samples', () => {
+    const sample = (): AudioBuffer =>
+      ({ length: 0, getChannelData: () => new Float32Array(0), copyToChannel() {} }) as unknown as AudioBuffer;
+
+    async function engineWith(samples: ReadonlyMap<SfxSampleId, AudioBuffer>) {
+      const fake = fakeContext();
+      const engine = new WebAudio({
+        config: DEFAULT_CONFIG,
+        contextFactory: () => fake.context,
+        sampleLoader: async () => samples,
+      });
+      // The loader resolves asynchronously; give the samples a chance to land.
+      await Promise.resolve();
+      await Promise.resolve();
+      return { engine, ...fake };
+    }
+
+    it('plays the recorded landing for the cue intensity, and synthesises the missing band', async () => {
+      const soft = sample();
+      const hard = sample();
+      const { engine, sources, buffers } = await engineWith(
+        new Map([
+          ['land-soft', soft],
+          ['land-hard', hard],
+        ]),
+      );
+      try {
+        const before = sources.length;
+        engine.play({ kind: 'land', intensity: 0 });
+        engine.play({ kind: 'land', intensity: 2 });
+        engine.play({ kind: 'land', intensity: 1 });
+        expect(sources[before]?.buffer).toBe(soft);
+        expect(sources[before + 1]?.buffer).toBe(hard);
+        // The medium band was not recorded, so the synth covered it.
+        expect(sources[before + 2]?.buffer).not.toBe(soft);
+        expect(sources[before + 2]?.buffer).not.toBe(hard);
+        expect(buffers.length).toBeGreaterThan(0);
+      } finally {
+        engine.dispose();
+      }
+    });
+
+    it('pitches the recorded pickup by how many have been taken', async () => {
+      const pickup = sample();
+      const { engine, sources } = await engineWith(new Map([['pickup', pickup]]));
+      try {
+        const before = sources.length;
+        engine.play({ kind: 'pickup', index: 4 });
+        // pitchStep(4) is three semitones above the first pickup.
+        expect(sources[before]?.buffer).toBe(pickup);
+        expect(sources[before]?.playbackRate.value).toBeCloseTo(Math.pow(2, 3 / 12), 9);
+      } finally {
+        engine.dispose();
+      }
+    });
+
+    it('uses the recorded jump and click', async () => {
+      const jump = sample();
+      const click = sample();
+      const { engine, sources } = await engineWith(
+        new Map([
+          ['jump', jump],
+          ['ui-click', click],
+        ]),
+      );
+      try {
+        const before = sources.length;
+        engine.play({ kind: 'whoosh' });
+        engine.play({ kind: 'ui-click' });
+        expect(sources[before]?.buffer).toBe(jump);
+        expect(sources[before + 1]?.buffer).toBe(click);
+      } finally {
+        engine.dispose();
+      }
+    });
+
+    it('synthesises every cue until the samples arrive, and when the loader fails', async () => {
+      const fake = fakeContext();
+      const never = new WebAudio({
+        config: DEFAULT_CONFIG,
+        contextFactory: () => fake.context,
+        sampleLoader: () => new Promise(() => {}),
+      });
+      try {
+        const before = fake.sources.length;
+        never.play({ kind: 'land', intensity: 0 });
+        never.play({ kind: 'whoosh' });
+        expect(fake.sources.length).toBe(before + 2);
+        // The synthesised buffers come from `createBuffer`, not from a recording.
+        expect(fake.buffers.length).toBeGreaterThan(0);
+      } finally {
+        never.dispose();
+      }
+
+      const failing = await engineWith(new Map());
+      const rejected = new WebAudio({
+        config: DEFAULT_CONFIG,
+        contextFactory: () => failing.context,
+        sampleLoader: async () => {
+          throw new Error('no network');
+        },
+      });
+      try {
+        const before = failing.sources.length;
+        rejected.play({ kind: 'ui-click' });
+        expect(failing.sources.length).toBe(before + 1);
+      } finally {
+        rejected.dispose();
+      }
+    });
   });
 });
 

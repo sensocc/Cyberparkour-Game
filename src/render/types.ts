@@ -14,8 +14,9 @@ import type { QualityPreset } from '../core/settings.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import type { PlayerPose } from '../game/pose.js';
-import type { LevelDefinition } from '../game/level/levelData.js';
+import type { GltfPropModelId, LevelDefinition } from '../game/level/levelData.js';
 import type { SurfaceTextureId } from '../game/level/surfaces.js';
+import type { PropModel } from './propModels.js';
 
 /**
  * Textures the scene needs.
@@ -32,6 +33,13 @@ export interface SceneAssets {
   readonly surfaces: ReadonlyMap<SurfaceTextureId, Texture>;
   /** The soft puff the smoke plumes are built from. */
   readonly smoke: Texture | null;
+  /**
+   * Imported GLTF prop models, keyed by id.
+   *
+   * Like the textures, a missing model is not a failure: the scene builder falls
+   * back to the prop's ordinary box parts.
+   */
+  readonly props: ReadonlyMap<GltfPropModelId, PropModel>;
 }
 
 export const NO_ASSETS: SceneAssets = {
@@ -39,6 +47,7 @@ export const NO_ASSETS: SceneAssets = {
   skybox: null,
   surfaces: new Map(),
   smoke: null,
+  props: new Map(),
 };
 
 /** Everything the game needs from a renderer. */

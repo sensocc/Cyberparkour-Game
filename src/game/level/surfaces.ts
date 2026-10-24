@@ -22,7 +22,41 @@ export type SurfaceTextureId =
   | 'hazard'
   | 'grille'
   | 'glass'
-  | 'sign';
+  | 'sign'
+  // Imported art: Kenney city-kit facades (CC0), 512px, windows and panels for
+  // building walls. Not part of the procedural generator - see IMPORTED_SURFACE_TEXTURES.
+  | 'facade-a'
+  | 'facade-b'
+  | 'facade-c'
+  | 'facade-street';
+
+/**
+ * Surface textures that are imported files rather than generator output.
+ *
+ * The texture test regenerates the procedural set and compares pixels; these are
+ * exempt from that, because their pixels come from the Kenney city kits. They are
+ * committed alongside the generated ones and verified by presence and size.
+ */
+export const IMPORTED_SURFACE_TEXTURES: readonly SurfaceTextureId[] = [
+  'facade-a',
+  'facade-b',
+  'facade-c',
+  'facade-street',
+];
+
+/**
+ * Surface textures whose art does not tile edge-to-edge.
+ *
+ * The facades are windows over a wall, so a hard repeat seam cuts a window in
+ * half. Mirroring makes any texture seamless, and a mirrored facade reads as a
+ * symmetric building rather than as a copy-paste glitch.
+ */
+export const MIRRORED_SURFACE_TEXTURES: ReadonlySet<SurfaceTextureId> = new Set([
+  'facade-a',
+  'facade-b',
+  'facade-c',
+  'facade-street',
+]);
 
 export interface SurfaceDefinition {
   readonly id: string;
@@ -61,6 +95,13 @@ export const METRES_PER_TILE: Readonly<Record<SurfaceTextureId, number>> = {
   grille: 0.8,
   glass: 2,
   sign: 2,
+  // Facades repeat per storey-band rather than per metre: one tile is about one
+  // and a half floors of windows, which keeps the windows roughly window-sized on
+  // a tower without making a short wall a wall of tiny portholes.
+  'facade-a': 6,
+  'facade-b': 6,
+  'facade-c': 6,
+  'facade-street': 5,
 };
 
 /**
@@ -87,6 +128,12 @@ export const ACOUSTIC_BY_TEXTURE: Readonly<Record<SurfaceTextureId, AcousticMate
   glass: 'glass',
   // A sign is a glass tube in a metal frame; it rings like glass.
   sign: 'glass',
+  // Facades are walked across on ledges and parapets: glass and steel, so they
+  // read as metal underfoot.
+  'facade-a': 'metal',
+  'facade-b': 'metal',
+  'facade-c': 'metal',
+  'facade-street': 'metal',
 };
 
 export const SURFACES: readonly SurfaceDefinition[] = [
@@ -95,6 +142,14 @@ export const SURFACES: readonly SurfaceDefinition[] = [
   { id: 'deck-dark', texture: 'deck-plate', tint: '#3a4350', metresPerTile: METRES_PER_TILE['deck-plate'] },
   { id: 'concrete', texture: 'concrete', tint: '#6c737d', metresPerTile: METRES_PER_TILE.concrete },
   { id: 'concrete-dark', texture: 'concrete', tint: '#5b626b', metresPerTile: METRES_PER_TILE.concrete },
+
+  // Imported building facades, Kenney city kits (CC0). These carry their own
+  // windows and panels, so the tint stays near-white to preserve the authored
+  // art; the four entries are subtle recolours for variety across towers.
+  { id: 'facade', texture: 'facade-a', tint: '#f0f0f0', metresPerTile: METRES_PER_TILE['facade-a'] },
+  { id: 'facade-cool', texture: 'facade-b', tint: '#dce4f0', metresPerTile: METRES_PER_TILE['facade-b'] },
+  { id: 'facade-warm', texture: 'facade-c', tint: '#efe7d8', metresPerTile: METRES_PER_TILE['facade-c'] },
+  { id: 'facade-street', texture: 'facade-street', tint: '#dfe5ec', metresPerTile: METRES_PER_TILE['facade-street'] },
 
   // Plant and panels
   { id: 'metal', texture: 'metal-panel', tint: '#67717f', metresPerTile: METRES_PER_TILE['metal-panel'] },

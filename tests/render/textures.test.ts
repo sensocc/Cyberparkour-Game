@@ -46,7 +46,12 @@ import {
   skyColorAt,
 } from '../../tools/textures/skybox.js';
 import { SURFACE_TEXTURES, surfaceMetresPerTile } from '../../tools/textures/surfaces.ts';
-import { METRES_PER_TILE, SURFACES, surfaceTextureIds } from '../../src/game/level/surfaces.js';
+import {
+  IMPORTED_SURFACE_TEXTURES,
+  METRES_PER_TILE,
+  SURFACES,
+  surfaceTextureIds,
+} from '../../src/game/level/surfaces.js';
 
 const TEXTURE_DIR = fileURLToPath(new URL('../../src/assets/textures/', import.meta.url));
 
@@ -143,10 +148,24 @@ describe('the committed texture set', () => {
 
   it('agrees with the surface table the renderer uses', () => {
     // The generator owns the pixels; `src/` owns the ids and the tile sizes. If
-    // those two drift, a surface would silently render untextured.
-    expect(SURFACE_TEXTURES.map((entry) => entry.id).sort()).toEqual(surfaceTextureIds());
-    for (const id of surfaceTextureIds()) {
-      expect(surfaceMetresPerTile(id)).toBe(METRES_PER_TILE[id]);
+    // those two drift, a surface would silently render untextured. Imported
+    // textures (the Kenney facades) are exempt from the generator but still need
+    // a tile size and a committed file.
+    const generatedIds = surfaceTextureIds().filter((id) => !IMPORTED_SURFACE_TEXTURES.includes(id));
+    expect(SURFACE_TEXTURES.map((entry) => entry.id).sort()).toEqual(generatedIds);
+    for (const entry of SURFACE_TEXTURES) {
+      expect(surfaceMetresPerTile(entry.id)).toBe(METRES_PER_TILE[entry.id]);
+    }
+    for (const id of IMPORTED_SURFACE_TEXTURES) {
+      expect(METRES_PER_TILE[id], id).toBeGreaterThan(0);
+    }
+  });
+
+  it('ships the imported surface textures at their authored size', () => {
+    for (const id of IMPORTED_SURFACE_TEXTURES) {
+      const image = load(`surface-${id}.png`);
+      expect(image.width, id).toBe(512);
+      expect(image.height, id).toBe(512);
     }
   });
 

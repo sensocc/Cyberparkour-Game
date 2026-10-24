@@ -21,7 +21,7 @@ import {
   type TextureLoaderLike,
 } from '../../src/render/assets.js';
 import { NO_ASSETS } from '../../src/render/types.js';
-import { SURFACES, surfaceTextureIds } from '../../src/game/level/surfaces.js';
+import { MIRRORED_SURFACE_TEXTURES, SURFACES, surfaceTextureIds } from '../../src/game/level/surfaces.js';
 import { logsFrom, logsFromAsync, messages } from '../helpers/logs.js';
 
 type Outcome = THREE.Texture | Error;
@@ -141,13 +141,16 @@ describe('loadSkybox', () => {
 });
 
 describe('loadSurfaceTextures', () => {
-  it('loads every surface and makes it repeat', async () => {
+  it('loads every surface and makes it repeat - or mirror, for facade art', async () => {
     const surfaces = await loadSurfaceTextures(okLoader());
 
     expect(surfaces.size).toBe(surfaceTextureIds().length);
     for (const [id, texture] of surfaces) {
-      expect(texture.wrapS, id).toBe(THREE.RepeatWrapping);
-      expect(texture.wrapT, id).toBe(THREE.RepeatWrapping);
+      const expected = MIRRORED_SURFACE_TEXTURES.has(id)
+        ? THREE.MirroredRepeatWrapping
+        : THREE.RepeatWrapping;
+      expect(texture.wrapS, id).toBe(expected);
+      expect(texture.wrapT, id).toBe(expected);
       expect(texture.name, id).toBe(`surface-${id}`);
     }
   });
@@ -218,6 +221,7 @@ describe('disposeSceneAssets', () => {
       skybox: new THREE.CubeTexture(),
       surfaces: new Map([['hazard' as const, new THREE.Texture()]]),
       smoke: new THREE.Texture(),
+      props: new Map(),
     };
 
     let disposed = 0;
@@ -245,7 +249,7 @@ describe('disposeSceneAssets', () => {
   });
 
   it('is safe to call twice', () => {
-    const assets = { cityBackdrop: new THREE.Texture(), skybox: null, surfaces: new Map(), smoke: null };
+    const assets = { cityBackdrop: new THREE.Texture(), skybox: null, surfaces: new Map(), smoke: null, props: new Map() };
     disposeSceneAssets(assets);
     expect(() => disposeSceneAssets(assets)).not.toThrow();
   });

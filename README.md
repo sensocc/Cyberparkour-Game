@@ -1,6 +1,6 @@
 # Cyberparkour
 
-A first-person parkour game in a procedurally generated cyberpunk city: a kilometre of rooftops to run across, ninety lifts, three time trials, and a courtyard cat with a quest for ten shards.
+A first-person parkour game in a procedurally generated cyberpunk city: a kilometre of rooftops to run across, ninety lifts, three time trials, and a courtyard cat with a quest for ten shards. The city is dressed with imported low-poly art — Kenney facades and street furniture, Quaternius rooftop machinery and idle citizens — under a brightened night sky, with recorded SFX under the jumps and landings.
 
 TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser with WebGL 2 and Web Audio.
 
@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `1.0.29` |
+| Version | `2.0.0` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1262 in 46 files |
+| Tests | 1284 in 48 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -87,7 +87,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1262 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1284 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - The physics is compared against itself: the collision grid is held to the linear scan it replaced, over the whole city.

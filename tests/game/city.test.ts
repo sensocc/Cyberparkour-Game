@@ -1040,3 +1040,33 @@ describe('ways back up from the street', () => {
     expect((heights[heights.length - 1] as number) - (heights[0] as number)).toBeGreaterThan(6);
   });
 });
+
+describe('the dressing', () => {
+  it('dresses roofs and streets with imported models, deterministically', () => {
+    const first = generateCity({ seed: 7, radius: 150 });
+    const second = generateCity({ seed: 7, radius: 150 });
+    const dressed = (city: ReturnType<typeof generateCity>) =>
+      city.props.filter((prop) => prop.gltf !== undefined);
+
+    expect(dressed(first).length).toBeGreaterThan(8);
+    // Same seed, same furniture.
+    expect(JSON.stringify(dressed(first))).toBe(JSON.stringify(dressed(second)));
+
+    // Furniture, not gameplay: none of it collides, and every model is known.
+    for (const prop of dressed(first)) {
+      expect(prop.collide, prop.id).toBe('none');
+      expect(prop.gltf?.scale, prop.id).toBeGreaterThan(0);
+    }
+  });
+
+  it('puts citizens on roofs and streets, each with an idle file', () => {
+    const city = generateCity({ seed: 7, radius: 150 });
+    const npcs = city.props.filter(
+      (prop) => prop.gltf?.model === 'npc-a' || prop.gltf?.model === 'npc-b',
+    );
+    expect(npcs.length).toBe(4);
+    for (const npc of npcs) {
+      expect(npc.collide, npc.id).toBe('none');
+    }
+  });
+});

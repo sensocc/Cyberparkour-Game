@@ -33,12 +33,15 @@ import {
   type KeyValueStore,
 } from './diagnostics/crashSinks.js';
 import { createAudio, type AudioOutput } from './audio/engine.js';
+import { loadSfxSamples } from './audio/samples.js';
 import { Game } from './game/game.js';
 import { DEMO_DISTRICT, type LevelDefinition } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
 import { TouchControls } from './input/touchControls.js';
 import { isCoarsePointer } from './core/device.js';
 import { disposeSceneAssets, loadSceneAssets } from './render/assets.js';
+import { disposePropModels, loadPropModels } from './render/propModels.js';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { NO_ASSETS, type SceneAssets } from './render/types.js';
 import { GameView } from './render/view.js';
 import { GameHud } from './ui/gameHud.js';
@@ -86,7 +89,12 @@ interface Shell {
  * creates it; `Game.start()` resumes it from the click that begins play.
  */
 function createAudioBackend(): AudioOutput {
-  return createAudio({ config: DEFAULT_CONFIG });
+  return createAudio({
+    config: DEFAULT_CONFIG,
+    // The recorded Kenney samples upgrade the most-heard cues; the synthesiser
+    // covers every one of them until (and unless) the recordings arrive.
+    sampleLoader: (context) => loadSfxSamples(context),
+  });
 }
 
 /**
@@ -245,10 +253,11 @@ function createShell(): Shell {
   return { app, canvasHost, input, hud, gameHud, ui, reporter, store, settings, audio, holder, touchControls };
 }
 
-/** Loads the flat textures, degrading to flat colours rather than failing. */
+/** Loads the flat textures and prop models, degrading to flat colours rather than failing. */
 async function loadAssets(): Promise<SceneAssets> {
   try {
-    return await loadSceneAssets();
+    const [textures, props] = await Promise.all([loadSceneAssets(), loadPropModels(new GLTFLoader())]);
+    return { ...textures, props };
   } catch (error) {
     logger.warn('app', 'scene textures could not be loaded - using flat colours', {
       error: String(error),
@@ -289,6 +298,7 @@ function createGame(shell: Shell, level: LevelDefinition, assets: SceneAssets): 
     game.dispose();
     // The view borrows the textures, so this is the only place they are freed.
     disposeSceneAssets(assets);
+    disposePropModels(assets.props);
   });
 
   logger.info('app', 'ready');
