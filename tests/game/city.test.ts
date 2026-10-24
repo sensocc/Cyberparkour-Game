@@ -414,24 +414,50 @@ describe('the grid, which is uniform on purpose', () => {
     // are inside the 5.7 m a running jump crosses, so the variation is visible without ever
     // putting a neighbour out of reach.
     const jump = crossingGap(DEFAULT_CONFIG);
+    // **A neighbour's envelope, and how far inside its plot it stands.** A block is one solid body
+    // inset 0.7 m a side; a hall is four walls and no body - so that walking in through its door
+    // gets you a room rather than a block of concrete - and those walls stand flush with the plot.
+    // The street is the gap between two envelopes less both their insets, which is the same number
+    // either way: measuring from bodies alone was right only while a hall was still poured solid.
+    const wallsOf = new Map<string, { id: string; minX: number; maxX: number; minZ: number; maxZ: number }>();
+    for (const prop of generated) {
+      const owner = /^(hall-.*)-wall-[wens](?:-[lr])?$/.exec(prop.id)?.[1];
+      if (!owner) continue;
+      const box = wallsOf.get(owner) ?? {
+        id: owner,
+        minX: Number.POSITIVE_INFINITY,
+        maxX: Number.NEGATIVE_INFINITY,
+        minZ: Number.POSITIVE_INFINITY,
+        maxZ: Number.NEGATIVE_INFINITY,
+      };
+      box.minX = Math.min(box.minX, prop.position.x - prop.size.x / 2);
+      box.maxX = Math.max(box.maxX, prop.position.x + prop.size.x / 2);
+      box.minZ = Math.min(box.minZ, prop.position.z - prop.size.z / 2);
+      box.maxZ = Math.max(box.maxZ, prop.position.z + prop.size.z / 2);
+      wallsOf.set(owner, box);
+    }
+    const masses = [
+      ...bodies.map((body) => ({ ...body, inset: 0.7 })),
+      ...[...wallsOf.values()].map((hall) => ({ ...hall, inset: 0 })),
+    ];
+
     const streets: number[] = [];
-    for (let i = 0; i < bodies.length; i += 1) {
-      for (let j = i + 1; j < bodies.length; j += 1) {
-        const a = bodies[i]!;
-        const b = bodies[j]!;
+    for (let i = 0; i < masses.length; i += 1) {
+      for (let j = i + 1; j < masses.length; j += 1) {
+        const a = masses[i]!;
+        const b = masses[j]!;
         if (b.id.startsWith(a.id) || a.id.startsWith(b.id)) continue;
         const gapX = Math.max(0, Math.max(a.minX - b.maxX, b.minX - a.maxX));
         const gapZ = Math.max(0, Math.max(a.minZ - b.maxZ, b.minZ - a.maxZ));
         if (gapX > 0 && gapZ > 0) continue;
-        const street = gapX + gapZ;
+        const street = gapX + gapZ - (a.inset + b.inset);
         if (street < 12) streets.push(street);
       }
     }
 
     expect(streets.length).toBeGreaterThan(60);
-    // The bodies are inset 0.7 m a side, so the gap between two of them is the street plus 1.4.
-    const tightest = Math.min(...streets) - 1.4;
-    const widest = Math.max(...streets) - 1.4;
+    const tightest = Math.min(...streets);
+    const widest = Math.max(...streets);
     expect(tightest).toBeGreaterThan(3.5);
     expect(widest).toBeLessThan(jump + 0.2);
     // ...and they are not all the same, which is the change.
@@ -1067,6 +1093,153 @@ describe('the dressing', () => {
     expect(npcs.length).toBe(4);
     for (const npc of npcs) {
       expect(npc.collide, npc.id).toBe('none');
+    }
+  });
+});
+
+describe('what stands on the city, and what it stands in', () => {
+  // **The invariant the V2.0.1 pass was for.** Signs hung inside their own building, the second
+  // lamp on every other corner stood inside its neighbour's planter, a block's roof storey was
+  // erected through the solar array, the dressing pass dropped its models into whatever was already
+  // there, and twenty-two cranes had their jibs four metres inside the building next door. Each was
+  // fixed at its own cause; this is the test that says they stay fixed.
+  //
+  // Depth, not intersection: two boxes that share a face overlap by 0.0, and the city is full of
+  // surfaces that meet exactly - a deck and its body, a ladder flush against a wall. What matters
+  // is how far one is *inside* the other, so a pair counts only when it interpenetrates by more
+  // than a tolerance. Boxes, not meshes, because a prop's box is the space it claims.
+  const city = buildCity(DEMO_DISTRICT);
+
+  interface Box {
+    readonly id: string;
+    readonly x0: number;
+    readonly x1: number;
+    readonly y0: number;
+    readonly y1: number;
+    readonly z0: number;
+    readonly z1: number;
+  }
+
+  const boxes: Box[] = city.props.map((prop) => ({
+    id: prop.id,
+    x0: prop.position.x - prop.size.x / 2,
+    x1: prop.position.x + prop.size.x / 2,
+    y0: prop.position.y - prop.size.y / 2,
+    y1: prop.position.y + prop.size.y / 2,
+    z0: prop.position.z - prop.size.z / 2,
+    z1: prop.position.z + prop.size.z / 2,
+  }));
+
+  const penetrating = (a: Box, b: Box): number => {
+    const x = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+    const y = Math.min(a.y1, b.y1) - Math.max(a.y0, b.y0);
+    const z = Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0);
+    return x > 0 && y > 0 && z > 0 ? Math.min(x, y, z) : 0;
+  };
+
+  // A grid over X and Z, so the test does not compare twelve thousand props with twelve thousand
+  // props: the ground slab and the sky alone are four hundred by four hundred metres, and a brute
+  // force sweep of the whole city takes fifteen seconds and finds 144 million pairs.
+  const CELL = 16;
+  const grid = new Map<string, number[]>();
+  const oversized: number[] = [];
+  boxes.forEach((box, index) => {
+    if (Math.max(box.x1 - box.x0, box.z1 - box.z0) > 64) {
+      oversized.push(index);
+      return;
+    }
+    for (let gx = Math.floor(box.x0 / CELL); gx <= Math.floor(box.x1 / CELL); gx += 1) {
+      for (let gz = Math.floor(box.z0 / CELL); gz <= Math.floor(box.z1 / CELL); gz += 1) {
+        const key = `${gx},${gz}`;
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(index);
+        else grid.set(key, [index]);
+      }
+    }
+  });
+
+  /** Every prop that could share space with `index`: its own cells, plus the oversized ones. */
+  const neighbours = (index: number): number[] => {
+    const box = boxes[index]!;
+    const found = new Set<number>(oversized);
+    for (let gx = Math.floor(box.x0 / CELL); gx <= Math.floor(box.x1 / CELL); gx += 1) {
+      for (let gz = Math.floor(box.z0 / CELL); gz <= Math.floor(box.z1 / CELL); gz += 1) {
+        for (const other of grid.get(`${gx},${gz}`) ?? []) found.add(other);
+      }
+    }
+    return [...found].filter((other) => other !== index);
+  };
+
+  /** The worst interpenetration of each prop in `ids` against anything else, as readable lines. */
+  const deepest = (ids: readonly number[], limit: number): string[] => {
+    const failures: string[] = [];
+    for (const index of ids) {
+      const box = boxes[index]!;
+      for (const other of neighbours(index)) {
+        const depth = penetrating(box, boxes[other]!);
+        if (depth > limit) failures.push(`${box.id} x ${boxes[other]!.id}: ${depth.toFixed(2)} m`);
+      }
+    }
+    return failures;
+  };
+
+  const indexOf = (predicate: (prop: (typeof city.props)[number]) => boolean): number[] =>
+    city.props.flatMap((prop, index) => (predicate(prop) ? [index] : []));
+
+  it('leaves the imported furniture clear of everything it is put on', () => {
+    // The dressing pass places machines, crates and citizens on roofs and kerbs. Each of them has
+    // to fit the room it is given - it asks before it sits down - so none of them may be inside
+    // anything at all.
+    const dressed = indexOf((prop) => prop.gltf !== undefined);
+    expect(dressed.length).toBeGreaterThan(60);
+    expect(deepest(dressed, 0.1)).toEqual([]);
+  });
+
+  it('hangs every sign and window band on the wall rather than through it', () => {
+    // Signs hang on their own building's faces and window bands on the plane their wall stands at,
+    // and the two share that wall without sharing a strip of it - all three of which were broken.
+    const signage = indexOf(
+      (prop) => /-sign-\d+$/.test(prop.id) || prop.model === 'window-band',
+    );
+    expect(signage.length).toBeGreaterThan(400);
+    expect(deepest(signage, 0.1)).toEqual([]);
+  });
+
+  it('never reaches one building into another', () => {
+    // **The one that is about the map rather than the view.** Props belonging to the same building
+    // are allowed to meet - a deck sits on its body, a ladder is flush against a wall, a roof storey
+    // stands on the roof below it - but nothing from one building, courtyard or construction site
+    // may reach into a different one. This is what the crane jib and the street-corner lamps broke.
+    const ownerOf = (id: string): string =>
+      /^(city-?-?\d+-?-?\d+|hall-?-?\d+-?-?\d+|inside-?-?\d+-?-?\d+|site-?-?\d+-?-?\d+|cell-?\d+-?\d+|dress-\d+)/
+        .exec(id)?.[1] ?? id;
+
+    const failures: string[] = [];
+    for (let index = 0; index < boxes.length; index += 1) {
+      const box = boxes[index]!;
+      for (const other of neighbours(index)) {
+        if (other < index) continue;
+        if (ownerOf(box.id) === ownerOf(boxes[other]!.id)) continue;
+        const depth = penetrating(box, boxes[other]!);
+        if (depth > 0.5) failures.push(`${box.id} x ${boxes[other]!.id}: ${depth.toFixed(2)} m`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it('keeps the deliberate mounts, which are not mistakes', () => {
+    // The other half of the invariant: the overlaps that are *meant* to be there, so a later pass
+    // does not "fix" them. A planter is a box with a bush planted in it; a ladder stands against
+    // the wall it climbs, and the roof kit stands on the roof it belongs to.
+    const planterBush = city.props.filter((prop) => /-planter$/.test(prop.id)).length;
+    const bushes = city.props.filter((prop) => /-bush$/.test(prop.id)).length;
+    expect(bushes).toBe(planterBush);
+    if (planterBush > 0) {
+      const planter = boxes[indexOf((prop) => /-planter$/.test(prop.id))[0]!]!;
+      const bush = boxes[indexOf((prop) => /-bush$/.test(prop.id))[0]!]!;
+      // Same courtyard, and the bush is inside the planter - which is the point of a planter.
+      expect(planter.id.replace(/-planter$/, '')).toBe(bush.id.replace(/-bush$/, ''));
+      expect(penetrating(planter, bush)).toBeGreaterThan(0);
     }
   });
 });

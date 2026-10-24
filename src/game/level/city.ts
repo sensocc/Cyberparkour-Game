@@ -388,6 +388,29 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // The widest a building may be, for the checks that ask whether a cell is clear of something.
   const half = (config.pitch - STREET) / 2;
 
+  // ---- street corners, and who got there first
+  //
+  // **A cell's corner is its neighbour's corner.** A cell's own lamp stands at `cx + pitch/2` - the
+  // far plot corner - and the second lamp goes on the *mirror* of that point, which is `cx - pitch/2`:
+  // exactly the +X+Z corner of the cell diagonally before it, where that cell has already stood its
+  // lamp, or planted its planter and bush. So the second lamp was built inside the first cell's
+  // furniture - sixty lamps inside another lamp-post, and fifty-eight more inside a planter or a bush.
+  //
+  // The corners sit on the same grid as the cells, so the ground level keeps a list of which are
+  // taken. The margin is generous on purpose: the cells are jittered by up to half a metre, so two
+  // lamps meant to be the same lamp land up to that far apart - and two lamps half a metre apart is
+  // the same mistake as one inside the other. Roof furniture is `roofKit`'s business and has its own
+  // reservation. Nothing here draws from the seeded stream, so every other prop keeps its place.
+  const cornerProps: { x0: number; x1: number; z0: number; z1: number }[] = [];
+  const cornerFree = (x: number, z: number, w: number, d: number): boolean =>
+    !cornerProps.some(
+      (r) =>
+        x - w / 2 < r.x1 + 0.8 && x + w / 2 > r.x0 - 0.8 && z - d / 2 < r.z1 + 0.8 && z + d / 2 > r.z0 - 0.8,
+    );
+  const claimCorner = (x: number, z: number, w: number, d: number): void => {
+    cornerProps.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 });
+  };
+
   for (let ix = 0; ix < cells; ix += 1) {
     for (let iz = 0; iz < cells; iz += 1) {
       // **Uneven, and only a little.** A grid on exact graph paper reads as graph paper from a
@@ -512,6 +535,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
           distance: 26,
         });
         context.count('lamppost');
+        claimCorner(cornerX, cornerZ, 0.4, 0.4);
       } else {
         context.props.push(
           make(`${cellId}-planter`, {
@@ -528,29 +552,43 @@ export function generateCity(options: CityOptions = {}): CityParts {
           }),
         );
         context.count('planter');
+        claimCorner(cornerX, cornerZ, 3, 3);
+        claimCorner(cornerX + 0.4, cornerZ - 0.4, 2, 2);
       }
 
       // A second lamp on the opposite corner of every other cell, so a crossing read
       // from the rooftops is a pair of lights rather than a single one. Parity, not
       // chance: the seeded stream stays untouched, and the same seed keeps the same
       // layout - just brighter at the crossings.
+      //
+      // **Unless that corner is already furnished.** The mirrored point is the *+X+Z corner of the
+      // cell diagonally before this one* - it is not a free corner at all - so this lamp used to be
+      // built inside whichever lamp, planter or bush that cell had already put there: sixty
+      // lamp-posts inside another lamp-post and fifty-eight more inside a planter or a bush. The
+      // corner is asked for, and where it is taken this cell simply gets one lamp instead of two.
+      // Nothing here draws from the seeded stream, so the layout of every other prop is unchanged.
       if ((ix + iz) % 2 === 0) {
-        context.props.push(
-          make(`${cellId}-lamp-b`, {
-            at: [2 * cx - cornerX, 2 * cz - cornerZ],
-            bottom: config.groundY,
-            size: [0.4, 5.6, 0.4],
-            model: 'lamp-post',
-          }),
-        );
-        context.lights.push({
-          id: `${cellId}-lamp-b-light`,
-          position: { x: 2 * cx - cornerX, y: config.groundY + 5.4, z: 2 * cz - cornerZ },
-          color: '#9fd8ff',
-          intensity: 10,
-          distance: 24,
-        });
-        context.count('lamppost');
+        const mirrorX = 2 * cx - cornerX;
+        const mirrorZ = 2 * cz - cornerZ;
+        if (cornerFree(mirrorX, mirrorZ, 0.4, 0.4)) {
+          context.props.push(
+            make(`${cellId}-lamp-b`, {
+              at: [mirrorX, mirrorZ],
+              bottom: config.groundY,
+              size: [0.4, 5.6, 0.4],
+              model: 'lamp-post',
+            }),
+          );
+          context.lights.push({
+            id: `${cellId}-lamp-b-light`,
+            position: { x: mirrorX, y: config.groundY + 5.4, z: mirrorZ },
+            color: '#9fd8ff',
+            intensity: 10,
+            distance: 24,
+          });
+          context.count('lamppost');
+          claimCorner(mirrorX, mirrorZ, 0.4, 0.4);
+        }
       }
 
       const roll = random();
@@ -904,13 +942,81 @@ export function generateCity(options: CityOptions = {}): CityParts {
   ];
   const streetPool: readonly GltfPropModelId[] = ['dumpster', 'barrier', 'pole-single', 'street-light'];
 
-  // Roofs get machinery near their edges - never the centre, which is where the run lives.
-  for (const deck of roofDecks) {
+  /**
+   * True when `model`'s own bounding box stands clear at (x, z) on a surface at height `y`.
+   *
+   * **Furniture has to check the room before it sits down.** The pass used to pick a deck, pick an
+   * offset near its edge and drop the model there without asking what was already on the spot - so
+   * forty of the city's imported props stood inside a vent stack, a solar panel or a container, and
+   * the models placed on a hall's *mezzanine* stood inside the hall's roof. This is the same test
+   * the kit uses: boxes, not points, and it is the placement that gives way, never the kit.
+   */
+  const dressFits = (
+    model: GltfPropModelId,
+    x: number,
+    y: number,
+    z: number,
+  ): boolean => {
+    const [w, h, d] = DRESSING[model].size;
+    for (const prop of props) {
+      if (Math.abs(prop.position.x - x) >= prop.size.x / 2 + w / 2 + 0.3) continue;
+      if (Math.abs(prop.position.z - z) >= prop.size.z / 2 + d / 2 + 0.3) continue;
+      if (prop.position.y + prop.size.y / 2 <= y + 0.1) continue;
+      if (prop.position.y - prop.size.y / 2 >= y + h + 0.3) continue;
+      return false;
+    }
+    return true;
+  };
+
+  /**
+   * A clear spot for `model` on a deck: the first free place in an aligned row along one edge.
+   *
+   * **Rows, not scatter.** Offsets drawn at random put a roof's furniture at arbitrary points and
+   * arbitrary angles, which reads as debris rather than as a plant room - and the rooftop kit above
+   * already lays itself out on a grid. Each deck takes one of its four edges, decided by its own
+   * place in the list so it does not change between runs, and its furniture sits on an evenly
+   * pitched row just inside that edge, turned to face across the roof. The first slot that is clear
+   * wins, so two pieces on one deck stand side by side rather than inside each other.
+   */
+  const spotFor = (
+    model: GltfPropModelId,
+    deck: { readonly x: number; readonly z: number; readonly y: number; readonly halfX: number; readonly halfZ: number },
+    edge: number,
+  ): { readonly x: number; readonly z: number; readonly yaw: number } | null => {
+    const [w, , d] = DRESSING[model].size;
+    // The row runs along the edge, so `onX` means a ±Z edge and `side` says which of the pair.
+    const onX = edge % 2 === 0;
+    const side = edge < 2 ? 1 : -1;
+    const length = onX ? deck.halfX * 2 : deck.halfZ * 2;
+    const pitch = (onX ? w : d) + 1.4;
+    // Two metres off each end, so nothing overhangs the corner of the roof.
+    const slots = Math.max(1, Math.floor(Math.max(0, length - 4) / pitch));
+    // Clear of the parapet: half the piece's own depth, plus a step.
+    const inset = (onX ? d : w) / 2 + 1.1;
+    // Facing across the roof rather than along the row.
+    const yaw = onX ? (side > 0 ? 0 : Math.PI) : (side > 0 ? -Math.PI / 2 : Math.PI / 2);
+    for (let slot = 0; slot < slots; slot += 1) {
+      // Centred on the edge, so a row of one stands in the middle and a row of four is symmetric.
+      const offset = (slot - (slots - 1) / 2) * pitch;
+      const x = onX ? deck.x + offset : deck.x + side * (deck.halfX - inset);
+      const z = onX ? deck.z + side * (deck.halfZ - inset) : deck.z + offset;
+      if (dressFits(model, x, deck.y, z)) return { x, z, yaw };
+    }
+    return null;
+  };
+
+  // **Roofs, which means a surface with the sky over it.** A hall's mezzanine is a `deck` too, and
+  // is the same size as a roof - so the pass dressed it, and put rooftop machinery inside the hall.
+  // Only the roof a building actually wears is a roof.
+  const dressedDecks = roofDecks.filter((deck) => !/-mezz$/.test(deck.id));
+
+  // Roofs get machinery on a row along one edge - never the centre, which is where the run lives.
+  for (const [index, deck] of dressedDecks.entries()) {
     if (dressRandom() > 0.55) continue;
     const model = roofPool[Math.floor(dressRandom() * roofPool.length)] ?? roofPool[0]!;
-    const dx = (deck.halfX - 2.5) * (dressRandom() < 0.5 ? -1 : 1) * (0.4 + dressRandom() * 0.6);
-    const dz = (deck.halfZ - 2.5) * (dressRandom() < 0.5 ? -1 : 1) * (0.4 + dressRandom() * 0.6);
-    dress(model, [deck.x + dx, deck.z + dz], deck.y, dressRandom() * Math.PI * 2);
+    const place = spotFor(model, deck, index % 4);
+    if (!place) continue;
+    dress(model, [place.x, place.z], deck.y, place.yaw);
   }
 
   // Streets: furniture at the ends of the roads, where the eye is when you look down.
@@ -919,10 +1025,16 @@ export function generateCity(options: CityOptions = {}): CityParts {
     if (dressRandom() > 0.06) continue;
     const model = streetPool[Math.floor(dressRandom() * streetPool.length)] ?? streetPool[0]!;
     const along = road.size.x > road.size.z ? road.size.x / 2 - 2 : road.size.z / 2 - 2;
+    const side = dressRandom() < 0.5 ? 1 : -1;
     const at: [number, number] = road.size.x > road.size.z
-      ? [road.position.x + (dressRandom() < 0.5 ? 1 : -1) * along, road.position.z]
-      : [road.position.x, road.position.z + (dressRandom() < 0.5 ? 1 : -1) * along];
-    dress(model, at, config.groundY, dressRandom() * Math.PI * 2);
+      ? [road.position.x + side * along, road.position.z]
+      : [road.position.x, road.position.z + side * along];
+    // Street furniture shares the kerb with the lamps, the planters, the bushes and the kerb-side
+    // kit, so it asks the same question the roofs do.
+    if (!dressFits(model, at[0], config.groundY, at[1])) continue;
+    // Set along the road rather than at whatever angle the dice gave, which is how a kerb reads.
+    const yaw = road.size.x > road.size.z ? Math.PI / 2 : 0;
+    dress(model, at, config.groundY, yaw);
   }
 
   // Citizens: two on the rooftops, two at street level, each idling on their own clock.
@@ -930,17 +1042,17 @@ export function generateCity(options: CityOptions = {}): CityParts {
     const model: GltfPropModelId = npc % 2 === 0 ? 'npc-a' : 'npc-b';
     const yaw = dressRandom() * Math.PI * 2;
     if (npc < 2) {
-      const deck = roofDecks[Math.floor(dressRandom() * roofDecks.length)];
+      const index = Math.floor(dressRandom() * dressedDecks.length);
+      const deck = dressedDecks[index];
       if (!deck) continue;
-      dress(
-        model,
-        [deck.x + (deck.halfX - 3) * (dressRandom() < 0.5 ? -1 : 1), deck.z + (deck.halfZ - 3) * (dressRandom() < 0.5 ? -1 : 1)],
-        deck.y,
-        yaw,
-      );
+      const place = spotFor(model, deck, index % 4);
+      if (!place) continue;
+      // A citizen keeps its own idle turn: it is a person, not part of the plant room.
+      dress(model, [place.x, place.z], deck.y, yaw);
     } else {
       const road = roads[Math.floor(dressRandom() * roads.length)];
       if (!road) continue;
+      if (!dressFits(model, road.position.x, config.groundY, road.position.z)) continue;
       dress(model, [road.position.x, road.position.z], config.groundY, yaw);
     }
   }
@@ -1142,7 +1254,46 @@ function roofKit(
   width: number,
   depth: number,
   top: number,
-  opts: { readonly solar?: boolean; readonly kit?: boolean; readonly body?: string } = { solar: true },
+  opts: {
+    readonly solar?: boolean;
+    readonly kit?: boolean;
+    readonly body?: string;
+    /**
+     * The height this roof's own wall becomes visible at.
+     *
+     * A roof deck is built *inside* the stage above it: a block's roof storey, a tower's setback
+     * and its cap are all columns that fall through the building below them, so a sign or a window
+     * band measured from `groundY` lands *inside* the mass that encloses this stage. That is where
+     * a hundred and forty of the city's signs spent V2.0.0 - hung on a wall nobody could see. The
+     * caller passes the height the wall is exposed at; everything hung on it starts above that.
+     */
+    readonly exposed?: number;
+    /** Footprints already standing on this roof, which nothing placed here may touch. */
+    readonly reserved?: readonly {
+      readonly x: number;
+      readonly z: number;
+      readonly w: number;
+      readonly d: number;
+    }[];
+    /**
+     * Where this stage's wall actually is, on each axis - the distance from `at` to the plane a
+     * window band belongs on.
+     *
+     * The inset body is the default, but a caller whose wall stands somewhere else has to say so:
+     * a hall's walls run to its full footprint, so a band on the inset body would be buried inside
+     * them - which is exactly where the city's hall windows spent V2.0.0.
+     */
+    readonly wallHalfX?: number;
+    readonly wallHalfZ?: number;
+    /**
+     * Whether this roof has no solid mass under it.
+     *
+     * A hall already has four walls and an interior to walk around in, so a body would be a block of
+     * concrete poured into the middle of it - over its columns, its mezzanine and its floor. A hall
+     * says so here and gets a roof instead.
+     */
+    readonly noBody?: boolean;
+  } = { solar: true },
 ): void {
   const { props, random, config } = context;
 
@@ -1150,24 +1301,65 @@ function roofKit(
   props.push(
     make(id, { at, bottom: top - 0.8, size: [width, 0.8, depth], model: 'deck', kind: 'floor' }),
   );
-  props.push(
-    make(`${id}-body`, {
-      at,
-      bottom: config.groundY,
-      size: [width - 1.4, top - 0.8 - config.groundY, depth - 1.4],
-      // A curtain wall is a sheet of glass rather than a slab of concrete, and a city of the
-      // size this one is has towers that are all window.
-      model: opts.body ?? 'slab',
-      tints: opts.body === 'glass-slab' ? { glass: '#c8e2ee' } : tintSet(context),
-    }),
-  );
+  const exposed = opts.exposed ?? config.groundY;
+  // **Where the wall is.** The body is inset 0.7 m inside the deck, so the surface a sign or a
+  // window band belongs on is the body's plane, not the deck's edge. A caller whose wall stands
+  // elsewhere - a hall, whose walls run to the full footprint - passes its own.
+  const planeX = opts.wallHalfX ?? (width - 1.4) / 2;
+  const planeZ = opts.wallHalfZ ?? (depth - 1.4) / 2;
+  // **The body stands on whatever the roof stands on, not on the pavement.**
+  //
+  // Every roof deck used to run its body from `groundY`, which is right for a building and wrong
+  // for a stage: a tower's setback and a block's roof storey are *columns through the building below
+  // them*, so their bodies ran down through the interior - the tower's own floors and corridors, the
+  // hall's columns and mezzanine - and filled them with solid concrete. That was four hundred of the
+  // city's interpenetrations on its own. A stage's body starts at the roof it stands on.
+  const bodyBottom = opts.noBody ? null : exposed;
+  if (bodyBottom !== null) {
+    props.push(
+      make(`${id}-body`, {
+        at,
+        bottom: bodyBottom,
+        size: [width - 1.4, Math.max(0.4, top - 0.8 - bodyBottom), depth - 1.4],
+        // A curtain wall is a sheet of glass rather than a slab of concrete, and a city of the
+        // size this one is has towers that are all window.
+        model: opts.body ?? 'slab',
+        tints: opts.body === 'glass-slab' ? { glass: '#c8e2ee' } : tintSet(context),
+      }),
+    );
+  }
 
-  // Rooftop kit. Solar arrays on most roofs, and a tank on some.
+  // ------------------------------------------------------- what stands on the roof
+  //
+  // **The roof is a shared surface, so the things on it take turns.** Every piece of rooftop kit
+  // used to be dropped at an independent random point, which is why a chiller bank landed on the
+  // solar array, the helipad landed under a solar panel and the greenhouse grew through the roof
+  // storey - two hundred and forty of the city's six thousand roof props intersected something.
+  // A rectangle is *claimed* when a prop is placed on it, and nothing else may have it.
+  const taken: { x0: number; x1: number; z0: number; z1: number }[] = [];
+  const reserve = (x: number, z: number, w: number, d: number): void => {
+    taken.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 });
+  };
+  for (const rect of opts.reserved ?? []) reserve(rect.x, rect.z, rect.w, rect.d);
+  /** True when a `w` by `d` footprint at (x, z) is on the roof and clear of everything claimed. */
+  const fits = (x: number, z: number, w: number, d: number, margin = 0.5): boolean => {
+    if (x - w / 2 < at[0] - width / 2 + 0.6 || x + w / 2 > at[0] + width / 2 - 0.6) return false;
+    if (z - d / 2 < at[1] - depth / 2 + 0.6 || z + d / 2 > at[1] + depth / 2 - 0.6) return false;
+    for (const r of taken) {
+      if (x - w / 2 < r.x1 + margin && x + w / 2 > r.x0 - margin) {
+        if (z - d / 2 < r.z1 + margin && z + d / 2 > r.z0 - margin) return false;
+      }
+    }
+    return true;
+  };
+
+  // Solar in a neat row along the roof's -Z edge, claiming its strip before anything else.
   if (opts.solar !== false && width > 12 && depth > 10) {
     const panels = Math.max(1, Math.floor(width / 9));
     for (let index = 0; index < panels; index += 1) {
       const px = at[0] - width / 2 + 4.5 + index * 9;
       const pz = at[1] - depth / 2 + 3.2;
+      if (!fits(px, pz, 7, 3.6)) continue;
       props.push(
         make(`${id}-solar-${index}`, {
           at: [px, pz],
@@ -1176,45 +1368,77 @@ function roofKit(
           model: 'solar-panel',
         }),
       );
+      reserve(px, pz, 7, 3.6);
     }
   }
+  // The fixed kit, one to a corner, and only where the corner is still free.
   if (random() < 0.34 && width > 12) {
-    props.push(make(`${id}-tank`, { at: [at[0] + width / 2 - 3, at[1] + depth / 2 - 3], bottom: top, size: [3.2, 3.4, 3.2], model: 'water-tank' }));
+    const tx = at[0] + width / 2 - 3;
+    const tz = at[1] + depth / 2 - 3;
+    if (fits(tx, tz, 3.2, 3.2)) {
+      props.push(make(`${id}-tank`, { at: [tx, tz], bottom: top, size: [3.2, 3.4, 3.2], model: 'water-tank' }));
+      reserve(tx, tz, 3.2, 3.2);
+    }
   }
   if (random() < 0.4) {
-    props.push(make(`${id}-ac`, { at: [at[0] - width / 2 + 3, at[1] + depth / 2 - 3], bottom: top, size: [3, 1.6, 2.2], model: 'ac-unit' }));
+    const ax = at[0] - width / 2 + 3;
+    const az = at[1] + depth / 2 - 3;
+    if (fits(ax, az, 3, 2.2)) {
+      props.push(make(`${id}-ac`, { at: [ax, az], bottom: top, size: [3, 1.6, 2.2], model: 'ac-unit' }));
+      reserve(ax, az, 3, 2.2);
+    }
   }
   if (random() < 0.45) {
-    props.push(
-      make(`${id}-mast`, { at: [at[0], at[1] - depth / 2 + 2], bottom: top, size: [1, 11, 1], model: 'antenna-mast' }),
-    );
+    // On the +Z edge, opposite the solar row, so the two do not compete for the same strip.
+    const mx = at[0];
+    const mz = at[1] + depth / 2 - 2;
+    if (fits(mx, mz, 1, 1)) {
+      props.push(make(`${id}-mast`, { at: [mx, mz], bottom: top, size: [1, 11, 1], model: 'antenna-mast' }));
+      reserve(mx, mz, 1, 1);
+    }
   }
+  // **Where the windows and the signs go, decided once and in this order.** Both hang on the wall
+  // at the body's plane, so they must not share a strip of it - which they did, fifty-nine times,
+  // the moment the bands moved onto the wall where the signs already were. The band's range is
+  // worked out here, the signage hangs in the clear air above it, and a roof with room for neither
+  // gets no signage rather than signage buried in concrete.
+  const bodyHalfX = planeX;
+  const bodyHalfZ = planeZ;
+  const hasWindows = width > 22 && top - exposed > 10;
+  const windowBandBottom = hasWindows ? exposed + 6 + (top - 2 - (exposed + 6)) * 0.28 : 0;
+  const windowBandTop = windowBandBottom + 2.2;
+  const signFloor = hasWindows ? windowBandTop + 1 : exposed + 3;
+  const signCeiling = top - 1;
+  const signs = signCeiling - signFloor > 3.5 ? 1 + Math.floor(random() * 3) : 0;
+
   // Windows, and this is the graphics pass as much as the glazing: a surface that reflects
   // the sky needs sky to land on, and until now the only glass in the city was a solar
   // panel's face. Two bands - one on each face a street can see - so a dense grid of
   // buildings gleams the way a dense grid of buildings does, without a prop per window.
-  if (width > 22 && top - config.groundY > 10) {
+  if (hasWindows) {
     const lit = random() < 0.4;
     const tint = lit ? '#e9f6cf' : random() < 0.5 ? '#8fb4c8' : '#5f7c92';
-    const lowest = config.groundY + 6;
-    const room = top - 2 - lowest;
+    // **On the wall, not in it.** The band is placed against the plane the wall actually stands
+    // at, half its thickness proud - instead of at a fixed offset from the deck's edge, which is
+    // 0.7 m proud of the inset body and is the full footprint on a hall. A band measured from the
+    // deck either floated beside the wall or sat buried inside it.
     // One band rather than two: at two hundred and fifty-six buildings the second band was fifteen
     // thousand triangles for windows nobody counts, and the glass reads from the street on the
     // strength of the curtain-wall towers anyway.
     for (let band = 0; band < 1; band += 1) {
-      const bottom = lowest + room * (0.28 + 0.44 * band);
+      const bottom = windowBandBottom;
       props.push(
         make(`${id}-windows-z-${band}`, {
-          at: [at[0], at[1] + depth / 2 - 0.16],
+          at: [at[0], at[1] + planeZ + 0.17],
           bottom,
-          size: [width - 2, 2.2, 0.34],
+          size: [Math.max(2, width - 2), 2.2, 0.34],
           model: 'window-band',
           tints: { glass: tint },
         }),
         make(`${id}-windows-x-${band}`, {
-          at: [at[0] + width / 2 - 0.16, at[1]],
+          at: [at[0] + planeX + 0.17, at[1]],
           bottom,
-          size: [0.34, 2.2, depth - 2],
+          size: [0.34, 2.2, Math.max(2, depth - 2)],
           model: 'window-band',
           tints: { glass: tint },
         }),
@@ -1243,24 +1467,48 @@ function roofKit(
   // it. That is the whole reason the city can be bright *and* fast - V0.7.11 cut five hundred and
   // forty-five point lights down to twelve because each one cost every pixel on the screen, and
   // the brightness a city needs is bought with emissive surfaces instead.
-  const signs = 1 + Math.floor(random() * 3);
+  // **Hung on the building's own wall.** This loop used to name its own `width`, shadowing the
+  // roof's parameter of the same name - so `at[0] + width / 2` stepped two metres out from the
+  // building's *centre* instead of thirteen metres to its face. A hundred and forty-four signs stood
+  // inside their own building and eighty-four inside a neighbour. The sign's measurements are named
+  // for what they are now, and the wall is the building's - and the band its windows occupy is
+  // decided above, so the signage hangs in the clear air over it rather than through it.
   for (let index = 0; index < signs; index += 1) {
     const colour = BILLBOARD_COLOURS[Math.floor(random() * BILLBOARD_COLOURS.length)] as string;
-    const face = random() < 0.5 ? 'x' : 'z';
     const tall = random() < 0.35;
-    const height = tall ? 6 + random() * 10 : 2.6 + random() * 3;
-    const width = tall ? 1.6 + random() * 1.4 : 3 + random() * 6;
-    const bottom = config.groundY + 4 + random() * Math.max(4, top - config.groundY - 12);
-    // On a wall of the building, facing the street: half a metre proud, so it is a sign hung on
-    // a building rather than a stripe of paint.
-    const x = face === 'x' ? at[0] + width / 2 + 0.4 : at[0] + (random() - 0.5) * width * 2;
-    const z = face === 'z' ? at[1] + depth / 2 + 0.4 : at[1] + (random() - 0.5) * depth * 2;
+    const signHeight = tall ? 6 + random() * 10 : 2.6 + random() * 3;
+    const signWidth = tall ? 1.6 + random() * 1.4 : 3 + random() * 6;
     const model = tall ? 'neon-blade' : random() < 0.5 ? 'neon-bar' : 'neon-frame';
+
+    // **One face each, taken in turn.** The face and the place along it were both drawn at random,
+    // so a building's three signs could all land on one side and in the same square metre. Cycling
+    // +X, +Z, -X, -Z puts them round the building and guarantees no two share a face.
+    const face = index % 4;
+    const onX = face % 2 === 0;
+    const wallHalf = onX ? bodyHalfZ : bodyHalfX;
+    // Never longer than the wall it is hung on, and clear of the wall's middle - which is where the
+    // balcony, the ladders and the fire escape are.
+    const length = Math.min(signWidth, Math.max(1.2, wallHalf * 2 - 3));
+    const side = face < 2 ? 1 : -1;
+    const lateral = 0.45 * (index % 2 === 0 ? 1 : -1) * (wallHalf - length / 2);
+    const x = onX ? at[0] + side * (bodyHalfX + 0.25) : at[0] + lateral;
+    const z = onX ? at[1] + lateral : at[1] + side * (bodyHalfZ + 0.25);
+    // A band low to high across the exposed wall, never hanging through the parapet above it or
+    // the mass below it. `exposed` is what makes this true on an inset stage.
+    // Spread low to high across the clear wall, and drop the sign rather than hang it out of the
+    // building it is on.
+    const highest = signCeiling - signHeight;
+    if (highest < signFloor) {
+      context.count('sign-nowhere');
+      continue;
+    }
+    const bottom = Math.min(highest, signFloor + ((highest - signFloor) * (index + 0.5)) / signs);
+
     props.push(
       make(`${id}-sign-${index}`, {
         at: [x, z],
         bottom,
-        size: face === 'x' ? [0.5, height, width] : [width, height, 0.5],
+        size: onX ? [0.5, signHeight, length] : [length, signHeight, 0.5],
         model,
         tints: { neon: colour },
       }),
@@ -1281,11 +1529,53 @@ function roofKit(
     props.push(make(`${id}-${suffix}`, { at: [x, z], bottom, size, model, ...(tints ? { tints } : {}) }));
   };
 
-  /** A spot on the roof, off the parapet and away from the middle. */
-  const spot = (): readonly [number, number] => [
-    at[0] + (random() - 0.5) * Math.max(2, width * 0.66),
-    at[1] + (random() - 0.5) * Math.max(2, depth * 0.66),
-  ];
+  /**
+   * A free slot on the roof for a `w` by `d` piece, or `null` when there is no room.
+   *
+   * **Slots, not scatter.** Every piece of rooftop kit used to be dropped at an independent random
+   * point inside a wide rectangle, which put the chiller bank on the solar array, the helipad under
+   * a solar panel and the greenhouse through the roof storey. Here the roof is divided into an
+   * aligned grid of slots sized to the piece being placed, and the grid is walked from a per-roof
+   * rotation of its own order - so two roofs of the same size do not get the same arrangement, and
+   * no piece can ever land on another. Aligned because a roof of scattered clutter reads as noise;
+   * aligned because that is also what makes the guarantee cheap.
+   */
+  const findSpot = (w: number, d: number): readonly [number, number] | null => {
+    const pitchX = Math.max(w + 1.6, 3.2);
+    const pitchZ = Math.max(d + 1.6, 3.2);
+    const cols = Math.floor((width - 2) / pitchX);
+    const rows = Math.floor((depth - 2) / pitchZ);
+    if (cols < 1 || rows < 1) return null;
+    const slots: [number, number][] = [];
+    for (let iz = 0; iz < rows; iz += 1) {
+      for (let ix = 0; ix < cols; ix += 1) slots.push([ix, iz]);
+    }
+    const offset = Math.floor(random() * slots.length);
+    for (let step = 0; step < slots.length; step += 1) {
+      const [ix, iz] = slots[(offset + step) % slots.length]!;
+      const x = at[0] - width / 2 + 1 + pitchX * (ix + 0.5);
+      const z = at[1] - depth / 2 + 1 + pitchZ * (iz + 0.5);
+      if (fits(x, z, w, d)) return [x, z];
+    }
+    return null;
+  };
+
+  /** What each kind of rooftop furniture needs, so the grid can size a slot to it. */
+  const FOOTPRINT: Readonly<Record<string, readonly [number, number]>> = {
+    hut: [4.4, 3.8],
+    vent: [1.6, 1.6],
+    dish: [4.4, 3.4],
+    junction: [2.2, 1.4],
+    spool: [2.4, 1.8],
+    skylight: [3.6, 3.6],
+    barrier: [Math.min(width - 6, 8), 0.6],
+    tower: [4.4, 4.4],
+    chillers: [3 + 3 * 3.4, 2.4],
+    aerials: [7, 3],
+    helipad: [Math.min(width - 8, 20), Math.min(depth - 8, 20)],
+    greenhouse: [Math.min(width - 8, 14), Math.min(depth - 8, 8)],
+    crown: [6, 6],
+  };
 
   const wanted = dressed ? 4 + Math.floor(random() * 5) : 0;
   const pool = [
@@ -1306,7 +1596,20 @@ function roofKit(
   ];
   for (let index = 0; index < wanted && pool.length > 0; index += 1) {
     const pick = pool.splice(Math.floor(random() * pool.length), 1)[0]!;
-    const [px, pz] = spot();
+
+    // **The gangway is the exception, and not a rooftop piece at all** - it spans the street to the
+    // building next door, so it takes no slot on this roof and is placed by its own case below.
+    let px = 0;
+    let pz = 0;
+    if (pick !== 'gangway') {
+      const [w, d] = FOOTPRINT[pick] ?? [2, 2];
+      const slot = findSpot(w, d);
+      // No room left on this roof: skip the piece rather than drop it on top of one already here.
+      if (!slot) continue;
+      px = slot[0];
+      pz = slot[1];
+      reserve(px, pz, w, d);
+    }
     decor.push(pick);
 
     switch (pick) {
@@ -1320,7 +1623,9 @@ function roofKit(
         break;
       case 'dish':
         place(`roof-dish-${index}`, px, pz, top, [3.4, 3.4, 3.4], 'antenna-mast');
-        place(`roof-dish-face-${index}`, px + 1.4, pz, top + 3.2, [2, 2, 0.4], 'satellite-dish');
+        // **The face sits on top of its mast, not through it.** At 1.4 m to the side it overlapped
+        // the very mast it is mounted on, which is what sixty-two of the city's dish parts did.
+        place(`roof-dish-face-${index}`, px, pz, top + 3.5, [2, 2, 0.4], 'satellite-dish');
         break;
       case 'junction':
         place(`roof-junction-${index}`, px, pz, top, [2.2, 1.8, 1.4], 'junction-box');
@@ -1349,16 +1654,17 @@ function roofKit(
         break;
       }
       case 'chillers': {
+        // Left to right across the slot the bank claimed, so the row stays a row.
         const bank = 2 + Math.floor(random() * 3);
         for (let unit = 0; unit < bank; unit += 1) {
-          place(`roof-chiller-${index}-${unit}`, px + unit * 3.4, pz, top, [3, 1.7, 2.4], 'ac-unit');
+          place(`roof-chiller-${index}-${unit}`, px - (bank - 1) * 1.7 + unit * 3.4, pz, top, [3, 1.7, 2.4], 'ac-unit');
         }
         break;
       }
       case 'aerials': {
         const masts = 2 + Math.floor(random() * 2);
         for (let mast = 0; mast < masts; mast += 1) {
-          place(`roof-aerial-${index}-${mast}`, px + mast * 3, pz + mast, top, [1, 9 + random() * 9, 1], 'antenna-mast');
+          place(`roof-aerial-${index}-${mast}`, px - (masts - 1) * 1.5 + mast * 3, pz, top, [1, 9 + random() * 9, 1], 'antenna-mast');
         }
         break;
       }
@@ -1468,20 +1774,37 @@ function block(
   // A fifth of them are curtain wall - glass from the pavement to the parapet, which is what a
   // city of this size is mostly made of and what the reflective surfaces added in V0.7.4 were for.
   const curtainWall = random() < 0.2;
-  roofKit(context, id, [cx, cz], width, depth, top, {
-    body: curtainWall ? 'glass-slab' : undefined,
-  });
-  if (curtainWall) context.count('glass-tower');
-  record(context, { gx: context.gx, gz: context.gz, id, cx, cz, halfX: width / 2, halfZ: depth / 2, roof: top });
 
   // A third of the blocks carry a smaller storey on the roof: the roof of one is the
   // landing for the other, which is what turns a block into a route - and it is the
   // cheapest verticality in the whole city. It was four to nine metres up when V0.7 wrote
   // that sentence, which is not a landing: a jump gets a metre and a pull-up two and a
   // half, so this is two.
-  if (random() < 0.4 && width > 18) {
-    const upper = top + 1.7 + random() * 0.7;
-    roofKit(context, `${id}-upper`, [cx + 1, cz - 1], width * 0.52, depth * 0.5, upper, { solar: false });
+  //
+  // **Decided before the roof is furnished, not after.** The storey and the roofscape want the same
+  // square metres, and the storey used to be placed last - so it was built through whatever was
+  // already up there, which is how a solar panel ended up inside a roof storey. Its footprint is
+  // claimed first now, and the roof's furniture keeps out of it.
+  const hasUpper = random() < 0.4 && width > 18;
+  const upperAt: readonly [number, number] = [cx + 1, cz - 1];
+  const upperW = width * 0.52;
+  const upperD = depth * 0.5;
+  const upperTop = top + 1.7 + random() * 0.7;
+
+  roofKit(context, id, [cx, cz], width, depth, top, {
+    body: curtainWall ? 'glass-slab' : undefined,
+    ...(hasUpper ? { reserved: [{ x: upperAt[0], z: upperAt[1], w: upperW + 1, d: upperD + 1 }] } : {}),
+  });
+  if (curtainWall) context.count('glass-tower');
+  record(context, { gx: context.gx, gz: context.gz, id, cx, cz, halfX: width / 2, halfZ: depth / 2, roof: top });
+
+  if (hasUpper) {
+    // The storey stands on this roof, so only the one and a bit metres between the two roofs is
+    // exposed - which is why it gets no signage and no window band.
+    roofKit(context, `${id}-upper`, upperAt, upperW, upperD, upperTop, {
+      solar: false,
+      exposed: top,
+    });
   }
 
   ladderUp(context, `${id}-ladder`, cx - width / 2 - 0.3, cz, top);
@@ -1666,16 +1989,30 @@ function tower(
     // the reason the height rule never held: a block next to three short towers measured thirty
     // metres over their average. The roof goes on regardless; it is only the *setback* that can be
     // too narrow to be worth having.
-    roofKit(context, `${id}-cap`, [cx, cz], halfW * 0.7, halfD * 0.7, roof, { solar: false });
+    roofKit(context, `${id}-cap`, [cx, cz], halfW * 0.7, halfD * 0.7, roof, { solar: false, exposed: insideTop });
     context.count('tower-floor');
   } else {
-    roofKit(context, `${id}-setback`, [shedX, cz], shedHalf * 2, halfD * 2 - 0.4, roof, { solar: false });
+    // **The setback's own solar and tank are declared to the roof before it is furnished**, because
+    // they are the building's roof kit and the generic kit must keep off them - which is how a
+    // water tower ended up standing in the middle of the solar row.
+    const roofSolarAt: readonly [number, number] = [shedX, cz - halfD / 2];
+    const roofTankAt: readonly [number, number] = [shedX, cz + halfD / 2 - 3];
+    const hasRoofMast = random() < 0.5;
+    roofKit(context, `${id}-setback`, [shedX, cz], shedHalf * 2, halfD * 2 - 0.4, roof, {
+      solar: false,
+      exposed: insideTop,
+      reserved: [
+        { x: roofSolarAt[0], z: roofSolarAt[1], w: 7, d: 3.6 },
+        { x: roofTankAt[0], z: roofTankAt[1], w: 3.2, d: 3.2 },
+        ...(hasRoofMast ? [{ x: shedX, z: cz, w: 1.4, d: 1.4 }] : []),
+      ],
+    });
     // Solar and a tank on the setback's own roof, which is the building's roof.
     props.push(
-      make(`${id}-roof-solar`, { at: [shedX, cz - halfD / 2], bottom: roof, size: [7, 1.3, 3.6], model: 'solar-panel' }),
-      make(`${id}-roof-tank`, { at: [shedX, cz + halfD / 2 - 3], bottom: roof, size: [3.2, 3.4, 3.2], model: 'water-tank' }),
+      make(`${id}-roof-solar`, { at: roofSolarAt, bottom: roof, size: [7, 1.3, 3.6], model: 'solar-panel' }),
+      make(`${id}-roof-tank`, { at: roofTankAt, bottom: roof, size: [3.2, 3.4, 3.2], model: 'water-tank' }),
     );
-    if (random() < 0.5) {
+    if (hasRoofMast) {
       props.push(make(`${id}-roof-mast`, { at: [shedX, cz], bottom: roof, size: [1, 12, 1], model: 'antenna-mast' }));
     }
     // Up the setback's face from the shell's roof, so the top is a route rather than a
@@ -1686,7 +2023,12 @@ function tower(
     // is to be seen from somewhere.
     if (roof - config.groundY > 34 && random() < 0.8) {
       const facing = cz > 0 ? -1 : 1;
-      const z = cz + facing * (halfD - 0.3);
+      // **Bolted to the outside of the facade, not sunk into it.** The panel used to sit 0.3 m
+      // *inside* the tower's outer plane, which put it 0.4 to 0.55 m inside the face - and the
+      // setback's own signage hangs 0.4 to 0.9 m inside that same face, so the two met. A billboard
+      // is mounted on the wall it advertises from; out here it clears the sign with room to spare,
+      // and no draw from the seeded stream changes.
+      const z = cz + facing * (halfD + 0.3);
       props.push(
         make(`${id}-billboard`, {
           at: [shedX, z],
@@ -1783,8 +2125,13 @@ function constructionSite(
   const craneHeight = top + 22;
   context.props.push(
     make(`${id}-crane`, {
-      // Inside its own plot: a crane hung off the corner of the building it is building.
-      at: [cx + width / 6, cz + depth / 6],
+      // **Centred on the plot, because the jib is as wide as the building.** The model is a
+      // balanced L - the mast in the middle, the jib reaching one way and the counter-jib the other -
+      // so its box spans the crane's whole swing. Held at the plot's centre the swing is exactly the
+      // building's footprint, which is what the comment below asks for. It used to be held `width/6`
+      // off centre, which pushed the jib tip a third of a footprint past the wall: twenty-two cranes
+      // had their jibs inside the neighbouring building, up to four metres deep.
+      at: [cx, cz],
       bottom: floor,
       // As wide as the building under it, no wider: a jib that reaches over the street is
       // an overlapping building with a hook on it.
@@ -1799,12 +2146,18 @@ function constructionSite(
   );
   context.count('crane');
 
-  // Rubble and pallets at street level, so the site has a floor you can cross.
+  // Rubble and pallets on the site's own ground slab, so the site has a floor you can cross.
+  //
+  // **On the slab, and inside the plot.** These stood two metres *out in the street* at the street's
+  // own level, which reached 3.2 m past the wall while the scaffolding on the far side reaches 2.1 -
+  // and a street is only 4.5 m at its narrowest, so a site's rubble met the facing site's scaffold.
+  // They stand on the poured floor now, in a centred row: in the plot, off the street, and level
+  // with the surface they are on rather than half sunk into it.
   for (let index = 0; index < 4; index += 1) {
     props.push(
       make(`${id}-rubble-${index}`, {
-        at: [cx - width / 2 + 4 + index * 6, cz - depth / 2 - 2],
-        bottom: floor,
+        at: [cx + (index - 1.5) * 6, cz - depth / 2 + 3],
+        bottom: floor + 0.7,
         size: [2.4, 1.2 + random() * 1.6, 2.4],
         model: 'crate',
         tints: { rust: '#6b5a44' },
@@ -1881,8 +2234,17 @@ function hall(context: Context, cx: number, cz: number, footprint: number, band:
   props.push(make(`${id}-mezz`, { at: [cx - width / 4, cz], bottom: mezz, size: [width / 2, 0.7, depth - wall * 2], model: 'deck', kind: 'floor' }));
   laddersUp(context, `${id}-ladder`, cx - width / 2 + 1.4, cz - depth / 4, mezz, floor);
 
-  // The roof: the hall is also just another building from above.
-  roofKit(context, `${id}-roof`, [cx, cz], width, depth, floor + height + 0.7, { solar: true });
+  // The roof: the hall is also just another building from above. Its own walls run to the full
+  // footprint - unlike the inset body a block has - so it says where they are, and its windows and
+  // signage land on them rather than inside them.
+  roofKit(context, `${id}-roof`, [cx, cz], width, depth, floor + height + 0.7, {
+    solar: true,
+    wallHalfX: width / 2,
+    wallHalfZ: depth / 2,
+    // It already has four walls and an interior to walk around in; a solid body here is concrete
+    // poured over its own columns, mezzanine and floor.
+    noBody: true,
+  });
 
   // An interior light, so the volume reads.
   context.lights.push(
