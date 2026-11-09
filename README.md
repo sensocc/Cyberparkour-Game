@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.0.1` |
+| Version | `2.0.2` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1288 in 48 files |
+| Tests | 1294 in 49 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -60,6 +60,8 @@ Generated from one seed, so it is the same city every time a bug is found in it:
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
 
+**Every ladder in the city is climbed by a test.** V2.0.2 fixed the four faults that had made about three ladders in five unusable: the hand-over at the top compared the player's head against the section's face exactly, and a climb advances in 40 mm steps, so it was a condition that could never be true; a fire escape landing and a roof gangway were built across the climb column; and long ladders stood close enough to a wall that the roof deck above them capped the climb two metres under the top. A ladder now hands over on the step that would have reached its top, lets go if something genuinely blocks it, and the generator stands every one clear of the faces and the rooftop kit above it.
+
 ## Performance
 
 The interesting bugs in this project were all in the numbers, so it measures rather than argues:
@@ -87,9 +89,10 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1288 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1294 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
+- **Every ladder is climbed, not assumed.** The whole-city suite puts a player at the foot of each of the 368 ladder stacks, on whatever surface is really under them, and holds forward in the real collision world until they reach the top — plus a check that each ladder starts at the ground beneath it.
 - The physics is compared against itself: the collision grid is held to the linear scan it replaced, over the whole city.
 
 ## Layout

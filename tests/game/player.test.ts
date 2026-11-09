@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import { vec3 } from '../../src/core/vec3.js';
 import { overlaps } from '../../src/game/physics/aabb.js';
-import { CollisionWorld } from '../../src/game/physics/collision.js';
+import { COLLISION_SKIN, CollisionWorld } from '../../src/game/physics/collision.js';
 import {
   advanceHeadBob,
   createPlayerState,
@@ -528,6 +528,44 @@ describe('climbing', () => {
     expect(highest).toBeGreaterThan(27);
   });
 
+  it('climbs the top of a section the solver left a skin short of, rather than sticking on it', () => {
+    // **The millimetre that made two thirds of the city's ladders unusable.**
+    //
+    // The hand-over to a mantle compares the player's head against the section's upper face. The
+    // collision solver stops a body `COLLISION_SKIN` short of every surface, so a climb that runs
+    // into the top of its own section settles at `max.y - COLLISION_SKIN` - one millimetre below
+    // the height the hand-over asked for. `>=` against `max.y` was then never true, and the
+    // player reached the last rung of a twenty-metre ladder and hung there with the climb held.
+    //
+    // The geometry here is the state the solver actually produces, not the state it is asked for:
+    // the head starts exactly one skin below the section's top.
+    const LADDER_TOP = 8;
+    const ladder = collider('ladder', vec3(0.8, LADDER_TOP / 2, 0), vec3(0.6, LADDER_TOP, 1.2), 'climbable');
+    // **A ceiling immediately above the ladder's top.** This is what makes the hand-over the only
+    // way off the ladder: the climb has nowhere left to rise, so the solver parks the head a skin
+    // below the underside of the slab it cannot enter - which is exactly `max.y - COLLISION_SKIN`
+    // for the section. Without the ceiling, a step of upward velocity would carry the head past
+    // the top on its own and the test would pass whether or not the hand-over works.
+    const ceiling = collider('ceiling', vec3(0, LADDER_TOP + 2, 0), vec3(8, 4, 8));
+    const climbableIds = new Set(['ladder']);
+
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const options = optionsFor(world(FLOOR, ladder, ceiling), { climbableIds });
+    // Start with the head a skin below the top: exactly where the solver parks it.
+    state.position.y = LADDER_TOP - CONFIG.player.standHeight - COLLISION_SKIN;
+    state.climbId = 'ladder';
+    state.climbNormal.x = 1;
+
+    let mantled = false;
+    for (let step = 0; step < 120; step += 1) {
+      stepPlayer(state, FORWARD, STEP, options);
+      if (state.maneuver?.kind === 'mantle') mantled = true;
+      if (state.position.y >= LADDER_TOP - 0.05) break;
+    }
+
+    expect(mantled, 'the hand-over must fire from a skin below the top').toBe(true);
+  });
+
   it('climbs a stack of sections back down, and lets go at the bottom of it', () => {
     // The other half of the ladder: going down is walking the same sections in reverse, and the
     // release fires where there is no section below rather than wherever the player happens to be.
@@ -623,6 +661,38 @@ describe('climbing', () => {
     // Letting go is now a jump, not a release of the stick: neutral holds the rung.
     stepPlayer(state, STILL, STEP, climbOptions);
     expect(state.climbId).toBe('pipe');
+  });
+
+  it('lets go of a ladder that something blocks, instead of holding the rung for ever', () => {
+    // **The other half of "ladders act out".** A fire escape landing or a soffit built across a
+    // climb stops the body at that height. The climb used to carry on being *held* there: forward
+    // pressed, nothing happening, indefinitely - which reads as a broken ladder rather than a
+    // blocked one. Letting go is the honest answer, and it also gives the player their fall back.
+    const ladder = climbableAt('ladder', 6);
+    // A slab across the climb, chest height, with the ladder running through it.
+    const soffit = collider('soffit', vec3(0.6, 2.6, 0), vec3(1.6, 0.4, 1.6));
+    const collisionWorld = world(FLOOR, ladder, soffit);
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    let blockedAt: number | null = null;
+    for (let step = 0; step < 400; step += 1) {
+      const wasClimbing = state.climbId !== null;
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+      if (wasClimbing && state.climbId === null) {
+        blockedAt = state.position.y;
+        break;
+      }
+    }
+
+    expect(blockedAt, 'the climb must end at the obstruction, not run on underneath it').not.toBeNull();
+    // And it ends *below* the slab rather than teleporting through it.
+    expect(blockedAt as number).toBeLessThan(2.6);
+    // With the rung no longer held, gravity has the player again.
+    for (let step = 0; step < 60; step += 1) {
+      stepPlayer(state, STILL, STEP, climbOptions);
+    }
+    expect(state.position.y).toBeLessThan(blockedAt as number);
   });
 
   it('jumps off the ladder, out and up, instead of being stuck to it', () => {

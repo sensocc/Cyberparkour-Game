@@ -835,9 +835,21 @@ function stepClimbing(
   const feetY = state.position.y;
   // Reaching the top hands over to a mantle, so climbing a riser gets you onto
   // whatever it was carrying rather than leaving you pinned to its edge.
+  //
+  // **The head arrives in steps, so the comparison is a step wide.**
+  //
+  // A climb advances `climb.speed * dt` per step - 40 mm at 60 Hz - and the solver then stops the
+  // body a skin short of whatever it meets. So the highest the head ever gets on a section it has
+  // run out of room under is somewhere in the last 40 mm before the section's top, never at it:
+  // an exact `>=` against `max.y` was a condition that could not be satisfied, and the player
+  // reached the last rung of a twenty-metre ladder and hung there with the climb still held.
+  //
+  // Asking whether the *next* step would carry the head to the top is the same question without
+  // the magic number: it is true exactly when there is no more ladder to climb, and it is what the
+  // step that follows would have discovered anyway by being blocked by the top.
   if (
     input.forward > 0 &&
-    feetY + config.standHeight >= surface.box.max.y &&
+    feetY + config.standHeight + climb.speed * dt >= surface.box.max.y &&
     !climbContinuesAbove(world, surface, climbableIds)
   ) {
     const to = landingFeet(
@@ -895,6 +907,23 @@ function stepClimbing(
     const box = playerBox(state.position, config.radius, playerHeight(state, config));
     const move = world.move(box, { x: 0, y: climb.speed * dt, z: 0 }, state.velocity);
     adoptBox(state, box, config, move);
+
+    // **A ladder that is blocked lets go; it does not hold you.** Something built across the
+    // climb - a fire escape landing, a soffit - stops the body, and before this the climb simply
+    // carried on being *held* at that height: the player stood on the rung with forward pressed
+    // and nothing happened, for as long as they were willing to press it. Letting go is the
+    // honest answer to "there is no way up here", and it is what makes a blocked ladder read as
+    // blocked rather than broken.
+    //
+    // The hand-over above has already had its chance, so a blocked climb here really is stuck.
+    // The cooldown is what stops the fall from re-grabbing the same face on the next step.
+    if (move.hitCeiling) {
+      state.climbId = null;
+      state.climbCooldown = climb.releaseCooldownSeconds;
+      state.velocity.y = 0;
+      return outcome(move, { ended: 'climb' });
+    }
+
     // Climbing is a controlled ascent, not a fall.
     state.peakFallSpeed = 0;
     advanceHeadBob(state, options, dt, 0);

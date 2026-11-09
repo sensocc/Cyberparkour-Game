@@ -129,6 +129,18 @@ const STREET_MAX = 5.0;
 const UNEVEN = 0.5;
 
 /**
+ * How far a ladder stands off the wall it is bolted to, in metres.
+ *
+ * A climbing body is a box `2 * radius` across (0.7 m) centred on the ladder, so the ladder's
+ * distance from the face decides how much of that box is inside the building. At 0.3 m, five
+ * centimetres of the body was inside the roof deck's overhang - and the deck's underside capped
+ * every long climb about two metres under the top, which is exactly where the hand-over lives.
+ * Half the body plus a little clearance puts the body's inner face against the wall and leaves
+ * the climb column clear all the way up.
+ */
+const LADDER_STANDOFF = 0.45;
+
+/**
  * How tall a cell's buildings may be: **random, and no more than a lead over the neighbours.**
  *
  * V0.7.6 ramped the height across tiles, which made a smooth skyline and a *predictable* one -
@@ -1685,10 +1697,16 @@ function roofKit(
       case 'gangway': {
         // Over the street to the building next door: a walkway, not a bridge in the structural
         // sense - two posts and a deck 4.5 m long, which is exactly the street.
+        //
+        // **Slid along the facade, off the ladders' centre line.** A deck running out along X used
+        // to sit at the roof's own Z centre - which is exactly where both of the building's ladders
+        // are - and it hangs 0.4 m below the roof, so it capped the climb a body's height under the
+        // top: the hand-over could never fire and the player stopped two metres short. A gangway is
+        // a walkway anywhere along the edge; two metres off centre is still the edge.
         const along = random() < 0.5 ? 'x' : 'z';
         const length = context.street + 2.4;
         const x = along === 'x' ? at[0] + width / 2 + length / 2 - 1 : at[0];
-        const z = along === 'z' ? at[1] + depth / 2 + length / 2 - 1 : at[1];
+        const z = along === 'z' ? at[1] + depth / 2 + length / 2 - 1 : at[1] + 2.2;
         place(
           `roof-gangway-${index}`,
           x,
@@ -1807,32 +1825,45 @@ function block(
     });
   }
 
-  ladderUp(context, `${id}-ladder`, cx - width / 2 - 0.3, cz, top);
+  // **Proud of the wall by most of the player's own radius.** A climbing body is a box 0.7 m across
+  // centred on the ladder, so a ladder 0.3 m off the face left 5 cm of that box inside the roof deck
+  // that overhangs it - and the deck's underside capped the climb 2.6 m below the top, which is the
+  // whole hand-over. `LADDER_STANDOFF` was measured rather than guessed: 0.40 m still fails on some
+  // blocks and 0.42 m clears every one of them, so it sits at 0.45 for margin.
+  ladderUp(context, `${id}-ladder`, cx - width / 2 - LADDER_STANDOFF, cz, top);
   balcony(context, `${id}-balcony`, cx, cz - depth / 2 - 0.9, width * 0.6, top);
 
   // **And a second one, on the opposite face.** One ladder per building means the way back to the
   // roofs is on whichever side you are not: a player in the street behind it walks the whole block
   // round to get up. Two, and a building is climbable from either side - which is what "more ways
   // from the ground back to the roofs" means when the alternative is walking.
-  laddersUp(context, `${id}-ladder-back`, cx + width / 2 + 0.3, cz, top, config.groundY, 14);
+  laddersUp(context, `${id}-ladder-back`, cx + width / 2 + LADDER_STANDOFF, cz, top, config.groundY, 14);
 
   // A fire escape, on the same face as the front ladder so the landings it adds are *on* the way up
   // rather than a second climb beside it - which is a landing and a rail for two props instead of a
   // whole second ladder for eight. Two of them, on the buildings tall enough to be worth stopping
   // on: the city is thirteen thousand props and the difference between a detail and a cost is the
   // number of them.
+  //
+  // **Clear of the ladder's climb column.** The landings used to alternate either side of the
+  // ladder by 1.6 m, which put a 3 m deck's depth across the 0.7 m of air a climbing body needs:
+  // the body was stopped at the first landing twenty metres up, on every tall block in the city.
+  // They are still staggered - that is what makes a fire escape read as a flight of stairs rather
+  // than a pile of shelves - but both are now on the far side of the ladder, which leaves the
+  // column clear from the street to the roof.
   if (top - config.groundY > 24) {
+    const escapeZ = cz - 2.6;
     for (let index = 0; index < 2; index += 1) {
       const y = config.groundY + 9 + index * 8;
       context.props.push(
         make(`${id}-escape-${index}`, {
-          at: [cx - width / 2 - 0.7, cz + (index === 0 ? 1.6 : -1.6)],
+          at: [cx - width / 2 - 0.7, escapeZ],
           bottom: y,
           size: [3, 0.4, 3],
           model: 'deck',
         }),
         make(`${id}-escape-rail-${index}`, {
-          at: [cx - width / 2 - 0.7, cz + (index === 0 ? 0.2 : -0.2)],
+          at: [cx - width / 2 - 0.7, escapeZ + 1.6],
           bottom: y + 0.4,
           size: [3, 1, 0.3],
           model: 'barrier',
@@ -2015,9 +2046,12 @@ function tower(
     if (hasRoofMast) {
       props.push(make(`${id}-roof-mast`, { at: [shedX, cz], bottom: roof, size: [1, 12, 1], model: 'antenna-mast' }));
     }
-    // Up the setback's face from the shell's roof, so the top is a route rather than a
-    // place the lift happens to stop.
-    ladderUp(context, `${id}-setback-ladder`, shedX0 + 0.4, cz - halfD + 2, roof);
+    // Up the setback's face, so the top is a route rather than a place the lift happens to stop.
+    //
+    // **Outside the face, not inside it.** `roofKit` insets a stage's body 0.7 m from its deck, so
+    // the setback's wall plane is `shedX0 + 0.7`; this ladder used to sit at `shedX0 + 0.4`, which
+    // put its run 0.3 m inside the wall it was supposed to climb.
+    ladderUp(context, `${id}-setback-ladder`, shedX0 - LADDER_STANDOFF, cz - halfD + 2, roof);
 
     // Billboards on the tall ones, facing the old town, because the point of a billboard
     // is to be seen from somewhere.
@@ -2108,6 +2142,12 @@ function constructionSite(
   }
 
   // Scaffolding on one side, and a ladder up the scaffolding.
+  //
+  // **Outside the carcass, on the scaffold's own face.** The ladder used to stand at
+  // `side - 1.1`, which is the carcass's outer edge: half of a climbing body was inside the
+  // footprint, and every poured floor slab - three to five of them, one per stage - crossed the
+  // climb. The player got to the first slab and stopped. On the scaffold's outer face the column
+  // is clear from the street to the top, and the top of the scaffold is a surface to step onto.
   const side = cz + depth / 2 + 1.1;
   for (let index = 0; index < stages; index += 1) {
     props.push(
@@ -2119,7 +2159,7 @@ function constructionSite(
       }),
     );
   }
-  laddersUp(context, `${id}-ladder`, cx - width / 2 + 3, side - 1.1, top, floor);
+  laddersUp(context, `${id}-ladder`, cx - width / 2 + 3, side + 1.175, top, floor);
 
   // ...and a tower crane, because a site without one is a car park.
   const craneHeight = top + 22;
