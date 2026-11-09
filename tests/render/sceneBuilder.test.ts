@@ -19,7 +19,8 @@ import {
   updateMovingVisibility,
 } from '../../src/render/sceneBuilder.js';
 import { NO_ASSETS, type SceneAssets } from '../../src/render/types.js';
-import { DEMO_DISTRICT, type GltfPropModelId, type LevelDefinition } from '../../src/game/level/levelData.js';
+import { type GltfPropModelId, type LevelDefinition } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../fixtures/district.js';
 import { surfaceTextureIds } from '../../src/game/level/surfaces.js';
 import { isMountedModel } from '../../src/game/level/models.js';
 import { isElevatorGateOf, resolvePropParts } from '../../src/game/level/level.js';

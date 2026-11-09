@@ -61,7 +61,7 @@ export interface GameUiOptions {
 export const ABOUT_LINES: readonly string[] = [
   'A low-poly first-person parkour run across a kilometre of generated cyberpunk city.',
   'Sixteen by sixteen blocks of buildings, courtyards and streets, thirty-five metres above the road — crossed by mantling, pull-ups, climbing, vaulting, wall running, pipe climbing and well-timed landings.',
-  'Ninety lifts serve the towers, so the street is never a dead end: call one, pick a floor, and step out where you meant to be. Ladders, fire escapes and scaffolds do the same job for the patient.',
+  'Seventy-six lifts serve the towers, so the street is never a dead end: call one, pick a floor, and step out where you meant to be. Ladders, fire escapes and scaffolds do the same job for the patient.',
   'A courtyard cat wants ten shards. Find it first — nothing can be picked up until it has asked — then run the five checkpoints and bring them back to where the cat is sitting.',
   'Three time trials start at a gate and end at a gate, scored one to three stars. Somewhere there is also a phone, which is not one of the ten and is not on any list.',
   'You have a body: look down and you will see your own chest, arms and legs, and the sun casts your shadow onto the roof.',
@@ -194,7 +194,7 @@ export class GameUi {  readonly root: HTMLElement;
       this.versionLabel(),
       el('p', {
         className: 'title__blurb',
-        text: 'A first-person parkour run across a kilometre of generated cyberpunk city: a courtyard cat with ten shards to find, five checkpoints to run, three time trials, ninety lifts, and a street thirty-five metres below the rooftops. Mantle, vault, wall run and climb your way back up.',
+        text: 'A first-person parkour run across a kilometre of generated cyberpunk city: a courtyard cat with ten shards to find, five checkpoints to run, three time trials, seventy-six lifts, and a street thirty-five metres below the rooftops. Mantle, vault, wall run and climb your way back up.',
       }),
       this.menu([
         button('Play', {

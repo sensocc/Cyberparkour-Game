@@ -25,7 +25,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, fixedStep } from '../../src/core/config.js';
 import { buildCity } from '../../src/game/level/city.js';
 import { buildLevel, climbableIds } from '../../src/game/level/level.js';
-import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../fixtures/district.js';
 import type { PropDefinition } from '../../src/game/level/levelData.js';
 import { createPlayerState, stepPlayer, type PlayerState } from '../../src/game/player.js';
 

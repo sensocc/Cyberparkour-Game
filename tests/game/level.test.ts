@@ -15,10 +15,10 @@ import {
   type BuildLevelOptions,
 } from '../../src/game/level/level.js';
 import {
-  DEMO_DISTRICT,
   type LevelDefinition,
   type PropDefinition,
 } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../fixtures/district.js';
 import { standingSize } from '../../src/game/player.js';
 import { isMountedModel, modelById } from '../../src/game/level/models.js';
 import { surfaceById, ACOUSTIC_MATERIALS } from '../../src/game/level/surfaces.js';

@@ -14,9 +14,10 @@ import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { standingSize } from '../../src/game/player.js';
 import { buildCity, generateCity } from '../../src/game/level/city.js';
 import { buildScene, updateChunkVisibility } from '../../src/render/sceneBuilder.js';
-import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../fixtures/district.js';
 import { crossingGap, crossingRise } from '../../src/game/reach.js';
 import { buildLevel, propBounds } from '../../src/game/level/level.js';
+import { MAX_LIFT_FLOORS } from '../../src/input/bindings.js';
 
 const BUILD = {
   maxSubStep: DEFAULT_CONFIG.world.maxCollisionSubStep,
@@ -200,6 +201,27 @@ describe('the lifts the generator builds', () => {
             collider.box.max.z > box.min.z,
         );
         expect(blocked.map((collider) => collider.id), `${car.id} at ${floor}`).toEqual([]);
+      }
+    }
+  });
+
+  it('never gives a car more floors than the player has floor buttons', () => {
+    // **The bug this is for.** V2.0.2's city had five interior towers whose lifts served nine
+    // floors while the binding table shipped eight keys. The roof could be ridden to by hand and
+    // could not be *called*: the prompt listed a ninth floor and no key selected it, on the touch
+    // picker either. The generator now clamps to `MAX_LIFT_FLOORS`, and this reads the ceiling back
+    // off the built city rather than trusting the clamp - so the two cannot drift apart again.
+    //
+    // Checked over several seeds because the floor count comes from the cell's random height: the
+    // default seed is exactly the one that used to hit the limit.
+    for (const seed of [undefined, 1, 21, 4242]) {
+      const city = buildCity(DEMO_DISTRICT, seed === undefined ? {} : { seed });
+      for (const car of city.elevators ?? []) {
+        expect(car.floors.length, `${car.id} (seed ${seed ?? 'default'})`).toBeLessThanOrEqual(
+          MAX_LIFT_FLOORS,
+        );
+        // A name per floor, because the prompt and the touch picker both read them.
+        expect(car.names?.length, car.id).toBe(car.floors.length);
       }
     }
   });

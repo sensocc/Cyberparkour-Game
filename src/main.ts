@@ -35,7 +35,8 @@ import {
 import { createAudio, type AudioOutput } from './audio/engine.js';
 import { loadSfxSamples } from './audio/samples.js';
 import { Game } from './game/game.js';
-import { DEMO_DISTRICT, type LevelDefinition } from './game/level/levelData.js';
+import { CITY_ENVIRONMENT } from './game/level/environment.js';
+import type { LevelDefinition } from './game/level/levelData.js';
 import { InputState } from './input/inputState.js';
 import { TouchControls } from './input/touchControls.js';
 import { isCoarsePointer } from './core/device.js';
@@ -108,7 +109,20 @@ function createAudioBackend(): AudioOutput {
  * wait is behind a title screen rather than a blank page.
  */
 function buildWorld(): LevelDefinition {
-  return buildCity(DEMO_DISTRICT);
+  // **The level is its sky and its sun; the city generator supplies the rest.** That is literally
+  // all `buildCity` keeps from the level it is handed - props, spawn, checkpoints, pickups, finish,
+  // lifts, doors, smoke and kill plane are all replaced by what the generator places. V2.0.3 made
+  // that explicit, so the browser bundle no longer carries the hand-authored district the game
+  // stopped using in V0.7.
+  return buildCity({
+    id: 'neon-grid',
+    name: 'Neon Grid',
+    spawn: { position: { x: 0, y: 0, z: 0 }, yaw: 0, pitch: 0 },
+    killPlaneY: CITY_ENVIRONMENT.backdrop.baseY - 9,
+    environment: CITY_ENVIRONMENT,
+    props: [],
+    checkpoints: [],
+  });
 }
 
 function createShell(): Shell {

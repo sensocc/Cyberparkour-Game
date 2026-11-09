@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { vec3, type Vec3 } from '../../../src/core/vec3.js';
 import { aabbFromCenterSize, aabbFromFeet, overlaps, type AABB } from '../../../src/game/physics/aabb.js';
 import { buildCity } from '../../../src/game/level/city.js';
-import { DEMO_DISTRICT } from '../../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../../fixtures/district.js';
 import { buildLevel } from '../../../src/game/level/level.js';
 import { standingSize } from '../../../src/game/player.js';
 import { DEFAULT_CONFIG } from '../../../src/core/config.js';

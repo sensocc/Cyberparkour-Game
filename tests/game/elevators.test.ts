@@ -275,7 +275,7 @@ describe('time', () => {
 
 describe('the shipped district', () => {
   it('builds its elevators from the definitions the level declares', async () => {
-    const { DEMO_DISTRICT } = await import('../../src/game/level/levelData.js');
+    const { DEMO_DISTRICT } = await import('../fixtures/district.js');
     const { buildLevel } = await import('../../src/game/level/level.js');
     const built = buildLevel(DEMO_DISTRICT, {
       maxSubStep: DEFAULT_CONFIG.world.maxCollisionSubStep,

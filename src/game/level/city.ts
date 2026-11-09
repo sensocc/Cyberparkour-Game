@@ -26,6 +26,7 @@
  */
 
 import { createRandom } from '../../core/random.js';
+import { MAX_LIFT_FLOORS } from '../../input/bindings.js';
 
 import {
   liftTower,
@@ -1918,7 +1919,14 @@ function tower(
   // **As many storeys as fit under the cell's roof.** The shell has to end below the tower's roof or
   // the lift's floors come out unordered - and with the heights random, a cell whose roof is low is
   // a tower of one storey rather than a lift that goes up to a floor under its own roof.
-  const storeys = Math.max(1, Math.min(3, Math.floor((cellRoof - floor - 5) / storey)));
+  // **No car may serve more floors than the player has buttons for.** This lift serves the street,
+  // the `storeys - 1` intermediate levels, the shell top and the roof - `storeys + 2` floors. At
+  // three storeys that is five, well inside the row; the ceiling is stated so a later change to the
+  // storey count cannot quietly strand the roof the way the interior towers' did.
+  const storeys = Math.max(
+    1,
+    Math.min(3, MAX_LIFT_FLOORS - 2, Math.floor((cellRoof - floor - 5) / storey)),
+  );
   const insideTop = floor + storeys * storey;
   // Ten to eighteen metres over its cell: enough to be a tower, inside the twenty the rule
   // allows, and reachable by the lift the tower exists to carry.
@@ -2404,7 +2412,14 @@ function interiorTower(
   // neighbours averaging eight against its own thirty-eight, and measured thirty-one metres over
   // them. The clamp was in `roofTargets` and did exactly what it said; the archetypes were building
   // something else.
-  const levels = Math.max(3, Math.round(((band.roofs[0] ?? 20) - floor) / storey));
+  // **The rim of the button row, not a design choice.** An interior tower's car serves `levels + 1`
+  // floors: the loop below runs from 0 to `levels` inclusive, and the top of it is the roof. V2.0.2
+  // built exactly nine on a tall enough cell and shipped eight keys, so the *Roof* of five towers
+  // could be walked to and not called - the prompt listed it and no key selected it.
+  const levels = Math.max(
+    3,
+    Math.min(MAX_LIFT_FLOORS - 1, Math.round(((band.roofs[0] ?? 20) - floor) / storey)),
+  );
   const roof = floor + storey * levels;
   const id = `inside-${Math.round(cx)}-${Math.round(cz)}`;
   const tints = tintSet(context);

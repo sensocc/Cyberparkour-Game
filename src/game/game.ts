@@ -56,7 +56,7 @@ import {
   type RunSnapshot,
   type TimeStore,
 } from './run.js';
-import { DEMO_DISTRICT, type CollectibleDefinition, type LevelDefinition } from './level/levelData.js';
+import type { CollectibleDefinition, LevelDefinition } from './level/levelData.js';
 import {
   createPlayerState,
   eyePosition,
@@ -108,7 +108,16 @@ export interface GameOptions {
   readonly crashReporter: CrashReporter;
   readonly logBuffer?: LogBuffer;
   readonly config?: GameConfig;
-  readonly level?: LevelDefinition;
+  /**
+   * The level to play.
+   *
+   * Required, and required *of the caller* rather than defaulted to a built-in: the game used to
+   * fall back to the hand-authored district, which meant every production build carried a district
+   * the city generator then replaced wholesale. The one level that ships is assembled in `main.ts`
+   * from `CITY_ENVIRONMENT`; the tests that want the small authored level import it from
+   * `tests/fixtures/district.ts`.
+   */
+  readonly level: LevelDefinition;
   /**
    * Builds the renderer. Injected rather than imported so that this class - the
    * whole game state machine - stays free of WebGL and unit-testable.
@@ -327,7 +336,7 @@ export class Game {
   constructor(options: GameOptions) {
     this.options = options;
     this.config = options.config ?? DEFAULT_CONFIG;
-    this.definition = options.level ?? DEMO_DISTRICT;
+    this.definition = options.level;
     this.log = options.logBuffer;
     this.store = options.store;
     this.settings = normaliseSettings(options.settings ?? readSettings(options.store));

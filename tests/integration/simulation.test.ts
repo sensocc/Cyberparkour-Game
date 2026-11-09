@@ -23,7 +23,8 @@ import {
   propBounds,
   type BuiltLevel,
 } from '../../src/game/level/level.js';
-import { DEMO_DISTRICT, type PropDefinition } from '../../src/game/level/levelData.js';
+import { type PropDefinition } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../fixtures/district.js';
 import { ElevatorSystem, carryRider } from '../../src/game/level/elevators.js';
 import {
   createPlayerState,

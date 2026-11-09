@@ -16,7 +16,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 
 import { buildCity } from '../../src/game/level/city.js';
-import { DEMO_DISTRICT } from '../../src/game/level/levelData.js';
+import { DEMO_DISTRICT } from '../fixtures/district.js';
 import { buildLevel } from '../../src/game/level/level.js';
 import { CollisionWorld } from '../../src/game/physics/collision.js';
 import { aabbFromFeet } from '../../src/game/physics/aabb.js';

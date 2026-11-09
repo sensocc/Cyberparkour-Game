@@ -1,6 +1,6 @@
 # Cyberparkour
 
-A first-person parkour game in a procedurally generated cyberpunk city: a kilometre of rooftops to run across, ninety lifts, three time trials, and a courtyard cat with a quest for ten shards. The city is dressed with imported low-poly art — Kenney facades and street furniture, Quaternius rooftop machinery and idle citizens — under a brightened night sky, with recorded SFX under the jumps and landings.
+A first-person parkour game in a procedurally generated cyberpunk city: a kilometre of rooftops to run across, seventy-six lifts, three time trials, and a courtyard cat with a quest for ten shards. The city is dressed with imported low-poly art — Kenney facades and street furniture, Quaternius rooftop machinery and idle citizens — under a brightened night sky, with recorded SFX under the jumps and landings.
 
 TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser with WebGL 2 and Web Audio.
 
@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.0.2` |
+| Version | `2.0.3` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1294 in 49 files |
+| Tests | 1295 in 49 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -41,7 +41,7 @@ A pointer in the corner of the HUD tracks the quest — at the cat before it is 
 | Jump | `Space` |
 | Crouch / slide / roll | `Ctrl` |
 | Interact | `E` — talk to the cat, call a lift, open a door |
-| Floors 1–8 | `1`–`8` — pick a floor while riding a lift |
+| Floors 1–9 | `1`–`9` — pick a floor while riding a lift |
 | Pause | `Esc` |
 | Debug overlay | `F3` |
 
@@ -53,8 +53,8 @@ Generated from one seed, so it is the same city every time a bug is found in it:
 
 - A kilometre square, one building per cell, with streets sized so every neighbour is within a running jump.
 - Heights between twelve and fifty-eight metres above the street, capped at a few metres over the average of their neighbours.
-- Courtyards, glass towers, ~354 neon signs, rooftop furniture, and buildings you can walk into with their own lifts.
-- Ninety lifts, whose lowest floor is the street — the way back up when parkour cannot reach.
+- Courtyards, glass towers, ~240 neon signs, rooftop furniture, and buildings you can walk into with their own lifts.
+- Seventy-six lifts serving 442 floors between them, whose lowest floor is the street — the way back up when parkour cannot reach.
 
 ## Movement
 
@@ -68,9 +68,9 @@ The interesting bugs in this project were all in the numbers, so it measures rat
 
 | | |
 | --- | --- |
-| Draw calls in a street view | ~165 |
-| Triangles drawn | ~350k |
-| Point lights lit at once | 6, of 576 |
+| Draw calls in a street view | ~420 (171 chunk · ~250 moving) |
+| Triangles drawn | ~360k |
+| Point lights lit at once | 6, of 591 |
 | Building the city scene | ~0.5 s |
 | Bloom (high preset only) | ~1 ms of render |
 
@@ -89,7 +89,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1294 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1295 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Every ladder is climbed, not assumed.** The whole-city suite puts a player at the foot of each of the 368 ladder stacks, on whatever surface is really under them, and holds forward in the real collision world until they reach the top — plus a check that each ladder starts at the ground beneath it.
@@ -101,13 +101,14 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 src/
   core/       config, settings, math, version
   game/
-    level/    the city generator, the models, surfaces, the lifts, level validation
+    level/    the city generator, the models, surfaces, the lifts, level validation,
+              environment.ts (the night the city is set in)
     physics/  the AABB solver and its broadphase
     player.ts the player state; pose.ts what the body is doing
   render/     the scene builder, the view, the player rig
   ui/         screens, the HUD, the settings panel
 tools/        the texture generator
-tests/        unit, integration, and the invariants
+tests/        unit, integration, the invariants, and the authored district fixture
 ```
 
 ## License

@@ -19,8 +19,7 @@ export type KeyAction =
   | 'mute'
   | 'pause'
   | 'restart'
-  /** The lift's floor buttons. There are eight, which is more floors than any
-   *  building in the city has, and each one is rebindable like any other key. */
+  /** The lift's floor buttons, one per floor a car can serve. Each is rebindable. */
   | 'floor1'
   | 'floor2'
   | 'floor3'
@@ -28,7 +27,8 @@ export type KeyAction =
   | 'floor5'
   | 'floor6'
   | 'floor7'
-  | 'floor8';
+  | 'floor8'
+  | 'floor9';
 
 export type Bindings = Record<KeyAction, readonly string[]>;
 
@@ -59,6 +59,7 @@ export const DEFAULT_BINDINGS: Bindings = {
   floor6: ['Digit6'],
   floor7: ['Digit7'],
   floor8: ['Digit8'],
+  floor9: ['Digit9'],
 };
 
 /** The lift's floor buttons, in order. */
@@ -71,7 +72,19 @@ export const FLOOR_ACTIONS: readonly KeyAction[] = [
   'floor6',
   'floor7',
   'floor8',
+  'floor9',
 ];
+
+/**
+ * The most floors a lift may serve.
+ *
+ * **One number, two users.** This is how many floor buttons exist, and it is also the ceiling the
+ * city generator builds to - a car with more floors than there are buttons is a car whose top
+ * floor cannot be selected, which is exactly what five interior towers shipped with in V2.0.2: they
+ * had nine floors and there were eight keys. The generator clamps to this, and a test reads it back
+ * off the built city, so the two cannot drift apart again.
+ */
+export const MAX_LIFT_FLOORS: number = FLOOR_ACTIONS.length;
 
 /** Which floor a `floorN` action asks for, or null for anything else. */
 export function floorFromAction(action: KeyAction): number | null {
@@ -166,6 +179,7 @@ export const ACTION_LABELS: Record<KeyAction, string> = {
   floor6: 'Lift floor 6',
   floor7: 'Lift floor 7',
   floor8: 'Lift floor 8',
+  floor9: 'Lift floor 9',
 };
 
 /**
