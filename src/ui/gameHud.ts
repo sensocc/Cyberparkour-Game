@@ -108,7 +108,15 @@ export function describePickups(taken: number, total: number): string {
 }
 
 export class GameHud {
+  /**
+   * The full-screen HUD layer: the corner panel, and every overlay that is anchored to the screen.
+   *
+   * Carries the `data-*` state the stylesheet colours the panel by, so the panel and the clock
+   * cannot disagree about what is happening.
+   */
   readonly element: HTMLElement;
+  /** The corner readout itself, kept for tests and for anything that wants its box. */
+  readonly panel: HTMLElement;
   /**
    * The last snapshot drawn.
    *
@@ -160,15 +168,30 @@ export class GameHud {
     this.healthLabel = document.createElement('span');
     this.healthLabel.className = 'vitals__label';
 
+    // **The root is a full-screen layer, not the corner panel.**
+    //
+    // It used to *be* the panel - one `position:absolute` box at `left:20px; bottom:20px` - with
+    // the prompt, the hint, the trial clock and the call banner nested inside it. Those are
+    // absolute-positioned too, so their offsets resolved against that 216x77 box instead of the
+    // viewport: `left: 50%` on the prompt put it at the panel's centre (294 px left of the screen's
+    // on a phone, 592 px on a desktop), `right: 1.2rem` on the hint put it *inside* the panel, and
+    // the trial clock, anchored to `top: 5.2rem`, rendered off the bottom edge. The layer spans
+    // the viewport so every child's offsets mean what they say, and the panel keeps its corner.
     this.element = document.createElement('div');
-    // Deliberately *not* `.hud`: that class belongs to the debug overlay, and
-    // sharing it meant the debug panel's `top: 12px` beat this element's
-    // `bottom: 20px` and dropped the play HUD over the debug rows.
-    this.element.className = 'vitals';
+    // Deliberately *not* `.hud`: that class belongs to the debug overlay.
+    this.element.className = 'hud-layer';
+
+    /** The corner readout: health, checkpoints, clock. The only part that is a panel. */
+    const panel = document.createElement('div');
+    panel.className = 'vitals';
+
     const vitals = document.createElement('div');
     vitals.className = 'vitals__row';
     vitals.append(this.healthLabel, healthBar);
-    this.element.append(vitals);
+    panel.append(vitals);
+    this.element.append(panel);
+
+    // Screen-anchored overlays live on the layer, beside the panel rather than inside it.
     this.element.append(this.hint);
     this.element.append(this.trial);
     this.element.append(this.call);
@@ -177,7 +200,7 @@ export class GameHud {
     this.checkpointLabel.className = 'vitals__checkpoints';
     this.checkpointPips = document.createElement('span');
     this.checkpointPips.className = 'vitals__pips';
-    this.element.append(this.checkpointLabel, this.checkpointPips);
+    panel.append(this.checkpointLabel, this.checkpointPips);
 
     // The trial row: the clock on the left, the pickups on the right.
     this.timeLabel = document.createElement('span');
@@ -187,7 +210,7 @@ export class GameHud {
     const trial = document.createElement('div');
     trial.className = 'vitals__trial';
     trial.append(this.timeLabel, this.pickupLabel);
-    this.element.append(trial);
+    panel.append(trial);
 
     // The prompt sits in the middle of the screen rather than in the corner: it is
     // about what is *in front* of the player, and it is only there while it is true.
@@ -200,6 +223,7 @@ export class GameHud {
     this.prompt.append(this.promptTitle, this.promptDetail);
     this.prompt.hidden = true;
     this.element.append(this.prompt);
+    this.panel = panel;
   }
 
   update(snapshot: GameHudSnapshot): void {

@@ -1334,7 +1334,9 @@ describe('the V0.3 play HUD and checkpoints', () => {
     // V0.5: the clock starts stopped, and the pickups are counted.
     expect(vitals?.querySelector('.vitals__time')?.textContent).toBe('0:00.00');
     expect(vitals?.querySelector('.vitals__pickups')?.textContent).toBe('0 / 8');
-    expect((vitals as HTMLElement).dataset.running).toBe('false');
+    // The run state lives on the HUD layer, which is the box the stylesheet reads it from, rather
+    // than on the corner panel inside it.
+    expect(document.querySelector('.hud-layer')?.getAttribute('data-running')).toBe('false');
   });
 
   /**

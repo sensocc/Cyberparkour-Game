@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.0.3` |
+| Version | `2.0.4` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1295 in 49 files |
+| Tests | 1298 in 49 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -44,6 +44,8 @@ A pointer in the corner of the HUD tracks the quest — at the cat before it is 
 | Floors 1–9 | `1`–`9` — pick a floor while riding a lift |
 | Pause | `Esc` |
 | Debug overlay | `F3` |
+
+On a touch device the left thumb drives a stick, the right side turns the camera, and the four action buttons sit bottom-right — so the readouts move to the top corners and the joystick is never underneath anything it has to be read past.
 
 Wall running is a sprint into a wall at a shallow angle. Vaults, mantles, pull-ups and the landing roll happen on their own when the situation calls for them.
 
@@ -89,7 +91,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1295 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1298 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Every ladder is climbed, not assumed.** The whole-city suite puts a player at the foot of each of the 368 ladder stacks, on whatever surface is really under them, and holds forward in the real collision world until they reach the top — plus a check that each ladder starts at the ground beneath it.

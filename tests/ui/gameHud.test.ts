@@ -170,6 +170,56 @@ describe('GameHud', () => {
     hud.destroy();
   });
 
+  it('anchors every overlay to the screen rather than to the corner panel', () => {
+    // **The bug this is for.** The prompt, the pickup hint, the trial clock and the call banner used
+    // to be children of `.vitals` - a 216x77 panel at left/bottom 20px. Because they are
+    // absolutely positioned, their offsets resolved against that panel instead of the viewport: the
+    // prompt landed 294 px left of centre on a phone (592 px on a desktop), the hint rendered inside
+    // the panel instead of at the screen's edge, and the trial clock fell off the bottom.
+    //
+    // jsdom does not lay anything out, so this pins the *structure* that makes the layout correct:
+    // one full-screen layer, with the panel and the screen-anchored overlays as siblings under it.
+    const hud = mount();
+    hud.update(snapshot({ prompt: { kind: 'enter', title: 'ALLEY CAT', detail: 'Press E' } }));
+
+    expect(hud.element.className).toBe('hud-layer');
+    expect(hud.panel.className).toBe('vitals');
+
+    const overlay = (selector: string): Element | null => hud.element.querySelector(selector);
+
+    // The panel holds the readouts...
+    expect(hud.panel.querySelector('.vitals__label')).not.toBeNull();
+    expect(hud.panel.querySelector('.vitals__time')).not.toBeNull();
+
+    // ...and the overlays are siblings of it, not descendants, so they resolve against the layer.
+    for (const selector of ['.prompt', '.hint', '.trial', '.call']) {
+      const element = overlay(selector);
+      expect(element, selector).not.toBeNull();
+      expect(element?.parentElement, `${selector} must not be nested in the panel`).toBe(hud.element);
+      expect(hud.panel.contains(element as Node), `${selector} must not be inside .vitals`).toBe(false);
+    }
+
+    expect(overlay('.prompt')?.parentElement).toBe(hud.element);
+    hud.destroy();
+  });
+
+  it('puts nothing in a corner box that is itself the corner box', () => {
+    // The complement of the test above: no overlay may sit inside `.vitals` even indirectly, which is
+    // what a later "tidy-up" would reintroduce by moving the DOM back under the panel.
+    const hud = mount();
+    hud.update(snapshot({ prompt: { kind: 'call', title: 'LIFT AWAY', detail: 'Press E to call it' } }));
+
+    const descendants = [...(hud.panel.querySelectorAll('*') as unknown as Element[])].map(
+      (element) => element.className,
+    );
+    expect(descendants).not.toContain('prompt');
+    expect(descendants).not.toContain('hint');
+    expect(descendants).not.toContain('trial');
+    expect(descendants).not.toContain('call');
+
+    hud.destroy();
+  });
+
   it('says when the clock is running and when the finish is armed', () => {
     const hud = mount();
 

@@ -268,6 +268,13 @@ export class TouchControls {
     this.attached = true;
 
     this.target.append(this.element);
+    // **Tell the stylesheet a thumb layer exists.** The stick and the buttons are anchored to the
+    // bottom corners, which is exactly where the play HUD's panel and the pickup hint sit; on a
+    // phone that put the vitals under the stick (8,448 px² of overlap at 844x390) and the hint
+    // under the right-hand buttons. The marker is a class on the root so the CSS can move the HUD
+    // without either layer having to know the other's geometry - and it is removed on detach, so a
+    // torn-down session does not leave desktop layouts with phone margins.
+    this.target.classList.add('ui--touch');
     this.stickElement.addEventListener('pointerdown', this.handleStickDown);
     this.lookElement.addEventListener('pointerdown', this.handleLookDown);
     for (const button of this.buttons.values()) {
@@ -286,6 +293,7 @@ export class TouchControls {
     this.attached = false;
 
     this.element.remove();
+    this.target.classList.remove('ui--touch');
     this.stickElement.removeEventListener('pointerdown', this.handleStickDown);
     this.lookElement.removeEventListener('pointerdown', this.handleLookDown);
     for (const button of this.buttons.values()) {

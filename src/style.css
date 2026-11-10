@@ -860,7 +860,21 @@ body {
  * The play HUD, as opposed to the debug overlay (F3). It is deliberately quiet:
  * two readouts, bottom-left, no background panel - it has to sit over a dark
  * scene without becoming the thing you look at.
+ *
+ * **Two boxes, because they are anchored to two different things.** `hud-layer` spans the viewport
+ * and is where the screen-anchored overlays live (the prompt, the hint, the trial clock, the call
+ * banner); `.vitals` is the corner readout inside it. They used to be the same element, which made
+ * every overlay's absolute offsets resolve against a 216x77 box in the corner: the prompt sat 294 px
+ * off centre on a phone and 592 px on a desktop, the hint rendered inside the panel instead of at
+ * the screen's edge, and the trial clock fell off the bottom. Nesting is not a layout detail when
+ * the children are absolutely positioned - it *is* the containing block.
  */
+.hud-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .vitals {
   position: absolute;
   left: 20px;
@@ -904,11 +918,11 @@ body {
   transition: transform 120ms linear;
 }
 
-.vitals[data-health='hurt'] .vitals__fill {
+.hud-layer[data-health='hurt'] .vitals__fill {
   background: linear-gradient(90deg, #8a6320, #ffc14f);
 }
 
-.vitals[data-health='critical'] .vitals__fill {
+.hud-layer[data-health='critical'] .vitals__fill {
   background: linear-gradient(90deg, #7a1e2c, var(--accent-2));
 }
 
@@ -954,11 +968,11 @@ body {
   transition: color 160ms linear;
 }
 
-.vitals[data-running='true'] .vitals__time {
+.hud-layer[data-running='true'] .vitals__time {
   color: #eaf6ff;
 }
 
-.vitals[data-armed='true'] .vitals__time {
+.hud-layer[data-armed='true'] .vitals__time {
   color: #7dffd7;
   text-shadow: 0 0 10px rgba(79, 240, 200, 0.55);
 }
@@ -1024,7 +1038,14 @@ body {
 
 .call {
   position: absolute;
-  bottom: 5.5rem;
+  /*
+   * **Below the prompt, not through it.** The call banner sat at `bottom: 5.5rem` while the prompt
+   * sits at `bottom: 22%`, and on a short landscape phone 22% of 390 px is 86 px - less than 5.5rem
+   * plus the banner's own height - so the two overlapped by 3,000 px² the moment a call and a
+   * prompt were on screen together. Anchored to the bottom edge it stays clear of the prompt at
+   * every height, and clear of the thumbs because it is centred between them.
+   */
+  bottom: 1.25rem;
   left: 50%;
   transform: translateX(-50%);
   padding: 0.4rem 0.9rem;
@@ -1193,6 +1214,30 @@ body {
   flex-direction: column;
   gap: 8px;
   pointer-events: auto;
+}
+
+/*
+ * **Where the HUD goes when there is a thumb layer.**
+ *
+ * The stick owns the bottom-left and the button cluster owns the bottom-right, which is exactly
+ * where the corner readout and the pickup pointer used to live: measured at 844x390, the vitals sat
+ * under the stick by 8,448 px² and the hint under the right-hand buttons by 1,200 px². The controls
+ * are not movable - a D-pad in the middle of the screen is not a D-pad - so the HUD moves instead,
+ * into the two top corners, which a landscape phone has to spare.
+ *
+ * The offsets are deliberately independent of each other's heights: the hint hangs under the
+ * fullscreen toggle rather than under the readout, so a level with more checkpoints cannot push it
+ * down into the clock.
+ */
+.ui--touch .vitals {
+  top: 12px;
+  bottom: auto;
+}
+
+.ui--touch .hint {
+  top: 56px;
+  right: 14px;
+  bottom: auto;
 }
 
 /* The fullscreen toggle: top corner, away from the thumbs and the HUD. */

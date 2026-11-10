@@ -161,6 +161,21 @@ describe('TouchControls', () => {
     expect(input.consumeActions()).toEqual([]);
   });
 
+  it('marks the root while attached, so the stylesheet can move the HUD out of the thumbs\' way', () => {
+    // **The other half of the mobile overlap.** The stick owns the bottom-left and the buttons own
+    // the bottom-right, and the play HUD's panel and pickup hint were sitting in exactly those
+    // corners: 8,448 px² of stick-over-vitals and 1,200 px² of buttons-over-hint at 844x390. The
+    // layer cannot move its own controls (a D-pad in the middle is not a D-pad), so it advertises
+    // itself and the CSS relocates the HUD. The marker must come off on detach, or a torn-down
+    // session leaves a desktop layout with phone margins.
+    const { target, controls } = createHarness();
+
+    expect(target.classList.contains('ui--touch')).toBe(true);
+
+    controls.detach();
+    expect(target.classList.contains('ui--touch')).toBe(false);
+  });
+
   it('releases everything on detach', () => {
     const { input, controls, stick, button } = createHarness();
     stick.dispatchEvent(pointer('pointerdown', 1, 100, 100));
