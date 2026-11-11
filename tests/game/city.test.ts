@@ -67,7 +67,12 @@ describe('the layout', () => {
     for (const prop of parts.props) {
       // Buildings, not rooftop kit: an air-conditioning unit hung over the parapet of a
       // building at the boundary is not the city standing on the old town.
-      if (prop.model !== 'slab' || prop.size.y < 4) continue;
+      //
+      // **Decoration is identified by what it is, not by how tall it is.** This used to skip any
+      // slab shorter than four metres, which was a proxy for "imported furniture" and only worked
+      // while every model happened to be under that line. The measured sizes in `DRESSING` put
+      // four of them above it, so the test asks the real question instead.
+      if (prop.model !== 'slab' || prop.gltf !== undefined) continue;
       const minX = prop.position.x - prop.size.x / 2;
       const maxX = prop.position.x + prop.size.x / 2;
       const minZ = prop.position.z - prop.size.z / 2;

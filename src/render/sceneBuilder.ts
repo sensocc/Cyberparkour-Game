@@ -951,6 +951,17 @@ export function buildScene(
   const partInfo = new Map<string, { count: number; materials: THREE.Material[] }>();
   /** Meshes that move (or imported models that never joined a chunk), distance-culled one by one. */
   const moving: THREE.Mesh[] = [];
+  /**
+   * Each imported model's own bounding box, measured once per template.
+   *
+   * **A GLTF model's origin is not its base.** Four of the kits put their geometry below the
+   * origin - `cable-small` by 0.95 m in model space, which at its 3x scale drew it almost three
+   * metres *under* the roof it stood on - and three more by 0.28 to 0.36 m. Anchoring the instance
+   * at the prop's bottom face therefore buried part of every one of them. The real box is measured
+   * here, once, and the instance is lifted by its own `min.y` so the model stands on the surface
+   * rather than sinking into it.
+   */
+  const modelBounds = new Map<string, THREE.Box3>();
   /** Idle animation for the imported character props, stepped by the view. */
   const npcMixers: THREE.AnimationMixer[] = [];
 
@@ -967,11 +978,18 @@ export function buildScene(
       const hasSkin = template.scene.getObjectByProperty('isSkinnedMesh', true) !== undefined;
       // Characters need their own bones (skinned meshes), plain props can share the template.
       const instance = hasSkin ? SkeletonUtils.clone(template.scene) : template.scene.clone();
-      instance.position.set(
-        prop.position.x,
-        prop.position.y - prop.size.y / 2,
-        prop.position.z,
-      );
+
+      // **Stand the model on its own feet.** The prop's bottom face is where the generator decided
+      // this thing rests; the model's origin is only at that face if its art was made that way,
+      // and for several kits it was not. Lifting by the measured `min.y` (scaled) puts the drawn
+      // geometry exactly on the surface regardless of where the origin sits.
+      let bounds = modelBounds.get(gltfSpec.model);
+      if (!bounds) {
+        bounds = new THREE.Box3().setFromObject(template.scene);
+        modelBounds.set(gltfSpec.model, bounds);
+      }
+      const footY = prop.position.y - prop.size.y / 2 - bounds.min.y * gltfSpec.scale;
+      instance.position.set(prop.position.x, footY, prop.position.z);
       instance.scale.setScalar(gltfSpec.scale);
       instance.rotation.y = gltfSpec.yaw ?? 0;
       const cast = prop.castShadow ?? true;

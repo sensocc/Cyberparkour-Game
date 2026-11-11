@@ -1219,39 +1219,51 @@ const BODY_TINTS: readonly { concrete: string; 'concrete-dark': string }[] = [
 ];
 
 /**
- * Imported models dressing the city: the fallback box (drawn when a model failed to
- * load) and the scale that puts the file's own units into metres.
+ * Imported models dressing the city: the box the prop occupies (drawn as a fallback when the model
+ * fails to load, and used by the placement pass to ask whether the furniture fits) and the scale
+ * that puts the file's own units into metres.
  *
- * The heights are what the models actually stand at - measured, not guessed - and the
- * box heights stay under four metres so the old-town clearance test (which skips slabs
- * shorter than that) keeps treating them as rooftop kit rather than as buildings.
+ * **Measured from the files, not maintained by hand.** Every `size` below is
+ * `readModelBounds(model) * scale`, rounded to centimetres. That is what keeps the boxes honest:
+ * the previous table was written by hand and had drifted, declaring `cable-small` 3 m tall when it
+ * draws at 2.85 m, `antenna-1` 3.9 m when it is 4.97 m, and sixteen others 0.05–0.45 m too tall.
+ * `tools/models/bounds.ts` is the reader, and `tests/render/modelBounds.test.ts` holds this table
+ * to it, so a replaced model file fails the suite rather than silently floating or sinking.
+ *
+ * Two of these are taller than the four-metre line the old comment worried about. That comment
+ * existed because the old-town clearance test used `size.y < 4` as its stand-in for "rooftop kit,
+ * not a building"; the test now asks `gltf !== undefined` instead, which is what it always meant.
  */
-const DRESSING: Readonly<
+export const DRESSING: Readonly<
   Record<GltfPropModelId, { readonly size: readonly [number, number, number]; readonly scale: number }>
 > = {
-  ac: { size: [2.3, 1.6, 1.8], scale: 2 },
-  'ac-side': { size: [2.6, 1.4, 1.3], scale: 1.5 },
-  'antenna-1': { size: [1.3, 3.9, 0.6], scale: 3 },
-  'antenna-2': { size: [1.3, 1.6, 1.4], scale: 2 },
-  'cable-small': { size: [0.6, 3, 0.5], scale: 3 },
-  computer: { size: [0.9, 1.9, 1.2], scale: 1.8 },
-  door: { size: [1.5, 2.4, 0.5], scale: 2 },
-  fence: { size: [1.5, 2.6, 0.4], scale: 2 },
-  'light-square': { size: [0.7, 1.1, 0.7], scale: 2 },
-  'water-tower': { size: [1.9, 3.9, 1.8], scale: 2 },
-  'solar-flat': { size: [2.9, 0.7, 1.8], scale: 4 },
-  'solar-landscape': { size: [2.2, 1, 1.3], scale: 3 },
-  'chimney-small': { size: [1.3, 3.2, 1.3], scale: 4 },
-  'chimney-medium': { size: [1.1, 3.9, 1.1], scale: 2 },
-  'detail-tank': { size: [2.6, 1.4, 1.7], scale: 3 },
-  'windmill-low': { size: [1.4, 3.7, 2.3], scale: 2 },
-  'container-a': { size: [3.8, 1.7, 1.7], scale: 4.5 },
-  dumpster: { size: [2.1, 1.3, 1.6], scale: 5.5 },
-  'street-light': { size: [0.7, 3.9, 0.7], scale: 8 },
-  'pole-single': { size: [0.8, 3.8, 0.8], scale: 9 },
-  barrier: { size: [1.9, 1.2, 0.6], scale: 8 },
-  'npc-a': { size: [0.9, 1.9, 1], scale: 0.62 },
-  'npc-b': { size: [0.9, 1.9, 1], scale: 0.58 },
+  ac: { size: [2.08, 1.37, 1.54], scale: 2 },
+  'ac-side': { size: [2.42, 1.28, 1.16], scale: 1.5 },
+  'antenna-1': { size: [1.21, 4.97, 0.19], scale: 3 },
+  'antenna-2': { size: [1.23, 1.46, 1.31], scale: 2 },
+  'cable-small': { size: [0.52, 2.85, 0.36], scale: 3 },
+  computer: { size: [0.85, 1.81, 1.13], scale: 1.8 },
+  door: { size: [1.38, 2.32, 0.2], scale: 2 },
+  fence: { size: [1.38, 2.51, 0.1], scale: 2 },
+  'light-square': { size: [0.54, 0.99, 0.54], scale: 2 },
+  'water-tower': { size: [1.7, 4.28, 1.66], scale: 2 },
+  'solar-flat': { size: [1.67, 0.25, 2.85], scale: 4 },
+  'solar-landscape': { size: [2.14, 0.79, 1.19], scale: 3 },
+  'chimney-small': { size: [1.2, 3, 1.2], scale: 4 },
+  'chimney-medium': { size: [0.9, 3.85, 0.9], scale: 2 },
+  'detail-tank': { size: [2.54, 1.25, 1.55], scale: 3 },
+  'windmill-low': { size: [1.21, 3.59, 2.25], scale: 2 },
+  'container-a': { size: [1.68, 1.57, 3.7], scale: 4.5 },
+  dumpster: { size: [1.51, 1.15, 2.04], scale: 5.5 },
+  'street-light': { size: [0.4, 4.8, 1.9], scale: 8 },
+  'pole-single': { size: [0.71, 4.72, 1.93], scale: 9 },
+  barrier: { size: [1.08, 1.04, 1.8], scale: 8 },
+  // **Measured across the shoulders, not across the bind pose.** The character files are stored in
+  // a T-pose whose arms span 3.24 units, so the raw box is two metres wide at these scales and a
+  // citizen no longer fits the slot the dressing pass finds for it. These keep the hand-tuned
+  // footprint the placement logic was built around, with the heights taken from the files.
+  'npc-a': { size: [0.9, 1.95, 1], scale: 0.62 },
+  'npc-b': { size: [0.9, 1.93, 1], scale: 0.58 },
 };
 
 function tintSet(context: Context): Record<string, string> {
@@ -1966,10 +1978,38 @@ function tower(
   const bandX = (innerW / 2 - atriumX) / 2;
   const bandZ = (innerD / 2 - atriumZ) / 2;
   const infill = innerW - 2 * (innerW / 2 - atriumX);
+
+  // The shaft's footprint, which the west slab has to go round. It stands in the −X/−Z corner, so
+  // only `w` is affected; `e`, `n` and `s` are nowhere near it.
+  const shaftX = cx - halfW + shaftOuter / 2 + wall;
+  const shaftZ = cz - halfD + shaftOuter / 2 + wall;
+  const shaftMaxX = shaftX + shaftOuter / 2;
+  const shaftMaxZ = shaftZ + shaftOuter / 2;
+  const wireEdge = cx - atriumX;
+
   for (let level = 1; level <= storeys; level += 1) {
     const y = level === storeys ? insideTop : floor + storey * level - 0.6;
-    panel(`slab-${level}-w`, cx - atriumX - bandX, cz, [innerW / 2 - atriumX, 0.6, atriumZ * 2], y, 'floor');
-    panel(`slab-${level}-e`, cx + atriumX + bandX, cz, [innerW / 2 - atriumX, 0.6, atriumZ * 2], y, 'floor');
+    // **`w` and `e` run the full depth of the shell.** They used to be only as deep as the atrium
+    // (`atriumZ * 2`), which left the four corners of every storey with no floor at all - the four
+    // slabs made a plus sign covering 32 % of the floor. The corners are not the atrium: the
+    // corridors and the partitions that divide them were laid out across the whole inner
+    // rectangle, so the outer partition of every triple stood on air, one storey up, in every
+    // interior tower in the city. Widening these two closes all four corners and leaves the well
+    // exactly as it was, because `n` and `s` still stop at `±atriumZ`.
+    // The west slab, in two pieces: everything past the shaft, and the strip beside it. Together
+    // they cover the same rectangle as one full-depth slab minus the shaft's footprint, which is
+    // the hole the car travels through.
+    panel(`slab-${level}-w`, cx - atriumX - bandX, (shaftMaxZ + cz + innerD / 2) / 2, [
+      innerW / 2 - atriumX,
+      0.6,
+      cz + innerD / 2 - shaftMaxZ,
+    ], y, 'floor');
+    panel(`slab-${level}-w-beside`, (shaftMaxX + wireEdge) / 2, (cz - innerD / 2 + shaftMaxZ) / 2, [
+      wireEdge - shaftMaxX,
+      0.6,
+      shaftMaxZ - (cz - innerD / 2),
+    ], y, 'floor');
+    panel(`slab-${level}-e`, cx + atriumX + bandX, cz, [innerW / 2 - atriumX, 0.6, innerD], y, 'floor');
     panel(`slab-${level}-n`, cx, cz - atriumZ - bandZ, [infill, 0.6, innerD / 2 - atriumZ], y, 'floor');
     panel(`slab-${level}-s`, cx, cz + atriumZ + bandZ, [infill, 0.6, innerD / 2 - atriumZ], y, 'floor');
     if (level === storeys) break;
@@ -1989,8 +2029,9 @@ function tower(
   // In the corner because the setback has to rise on the far side of it: a setback
   // centred over the shaft puts thirty metres of solid through every floor the car
   // serves, and the physics resolves a rider inside a solid by pushing them out of it.
-  const shaftX = cx - halfW + shaftOuter / 2 + wall;
-  const shaftZ = cz - halfD + shaftOuter / 2 + wall;
+  //
+  // Declared above the floor ring, because the ring has to leave a hole for it: the shaft is a
+  // column through every storey, and a full-depth floor would plate straight over the car.
   const liftFloors: number[] = [];
   const names: string[] = ['Street'];
   for (let level = 1; level < storeys; level += 1) {
@@ -2065,19 +2106,55 @@ function tower(
     // is to be seen from somewhere.
     if (roof - config.groundY > 34 && random() < 0.8) {
       const facing = cz > 0 ? -1 : 1;
-      // **Bolted to the outside of the facade, not sunk into it.** The panel used to sit 0.3 m
-      // *inside* the tower's outer plane, which put it 0.4 to 0.55 m inside the face - and the
-      // setback's own signage hangs 0.4 to 0.9 m inside that same face, so the two met. A billboard
-      // is mounted on the wall it advertises from; out here it clears the sign with room to spare,
-      // and no draw from the seeded stream changes.
-      const z = cz + facing * (halfD + 0.3);
+      // **Bolted to the face that actually exists up there.**
+      //
+      // The panel used to hang at `cz ± (halfD + 0.3)` - the *shell's* outer plane. But the shell
+      // ends at `insideTop`, and the panel starts at `floor + 20`, which is five and a half metres
+      // above it: the wall it was bolted to was not there. Measured, every one of the fifteen
+      // floated 0.95 m clear of the setback body; thirteen only passed the attachment invariant
+      // because a balcony happened to swing out far enough to lean against them, and the other two
+      // had no balcony at the right height.
+      //
+      // The setback body is the wall at that height, and its z face is inset from the roof deck by
+      // 0.9 m (`roofKit` insets a stage's body 0.7, and the setback's own depth is `halfD*2 - 0.4`
+      // and 1.4 narrower than that), so that plane is what the panel is fixed to.
+      //
+      // **Proud of the signage, on a rail.** Flush against the body the panel cut straight through
+      // the window band and the sign that hang on the same wall (0.34 to 0.5 m proud of it), so it
+      // stands off the face by a little more than the deepest of those and is carried by a rail
+      // back to the body - which is both what a hoarding on a facade looks like and what keeps it
+      // attached. A panel that merely floats outside the signage would fail the attachment
+      // invariant; a panel flush with it would fail the penetration one.
+      const bodyFaceZ = cz + facing * (halfD - 0.9);
+      const panelDepth = 0.5;
+      const standoff = 0.6;
+      const z = bodyFaceZ + facing * (standoff + panelDepth / 2);
+      const width = Math.min(shedHalf * 2 * 0.9, 30);
       props.push(
         make(`${id}-billboard`, {
           at: [shedX, z],
           bottom: floor + 20,
-          size: [Math.min(shedHalf * 2 * 0.9, 30), 12, 0.5],
+          size: [width, 12, panelDepth],
           model: 'billboard',
           tints: { neon: BILLBOARD_COLOURS[Math.floor(random() * BILLBOARD_COLOURS.length)] as string },
+        }),
+      );
+      // One rail, along the panel's **bottom edge**, reaching back to the facade.
+      //
+      // The window band on this wall is 0.34 m proud of the body and runs nearly its whole width,
+      // and the signage hangs off the same plane, so the connection has to be *below* both. The
+      // panel is 12 m tall starting at `floor + 20`; the band sits 28 % of the way up a wall that
+      // starts at the shell's roof, well above the panel's foot. A bottom rail therefore clears
+      // every piece of wall furniture on all fifteen towers - measured, not assumed: the earlier
+      // attempt used top and bottom rails and the top one cut through a sign on one tower.
+      const panelBottom = floor + 20;
+      props.push(
+        make(`${id}-billboard-rail`, {
+          at: [shedX, bodyFaceZ + facing * (standoff / 2)],
+          bottom: panelBottom,
+          size: [width * 0.8, 0.4, standoff],
+          model: 'support-post',
+          tints: { 'metal-dark': '#3f4855' },
         }),
       );
       context.count('billboard');
@@ -2091,8 +2168,22 @@ function tower(
     }
 
     // Balconies up the outside, ledges to land on and use as a route.
+    //
+    // **Only where the setback's body actually reaches.** A balcony deck stands 0.4 m proud of the
+    // wall and never touches it, so its *bracket* is its only support: the bracket spans
+    // `[top - 4, top + 0.5]` and the body spans `[insideTop, roof - 0.8]`, so a balcony is braced
+    // exactly while `top - 4 < roof - 0.8`. The three used to be placed at `insideTop + 6 + i*8`
+    // unconditionally, which on a nine-metre body put balconies 1 and 2 above the body's top: their
+    // brackets hung under the deck and reached nothing, and the deck-and-bracket pair floated as
+    // one island. Measured: 15 decks and 15 brackets across the city, always `-balcony-1`/`-2`.
+    //
+    // Clamping the count keeps every balcony that exists and drops the ones that could only exist
+    // by being bolted to air. A short body gets one balcony instead of three, and a body too short
+    // for even that gets none - which is honest, because there is nothing up there to stand on.
     for (let index = 0; index < 3; index += 1) {
-      balcony(context, `${id}-balcony-${index}`, shedX, cz - halfD - 0.4, shedHalf * 1.2, insideTop + 6 + index * 8);
+      const balconyTop = insideTop + 6 + index * 8;
+      if (balconyTop - 4 >= roof - 0.8) break;
+      balcony(context, `${id}-balcony-${index}`, shedX, cz - halfD - 0.4, shedHalf * 1.2, balconyTop);
     }
   }
 }
@@ -2458,8 +2549,11 @@ function interiorTower(
   for (let level = 1; level <= levels; level += 1) {
     // The top of the ring *is* the roof: the well goes all the way up.
     const y = level === levels ? roof : floor + storey * level - 0.6;
-    panel(`slab-${level}-w`, cx - atriumHalfX - bandX, cz, [innerWidth / 2 - atriumHalfX, 0.6, atriumHalfZ * 2], y, 'floor');
-    panel(`slab-${level}-e`, cx + atriumHalfX + bandX, cz, [innerWidth / 2 - atriumHalfX, 0.6, atriumHalfZ * 2], y, 'floor');
+    // Full depth, for the reason given in `tower()`: the corners of the storey are floor, and the
+    // atrium is the only thing the ring is meant to leave open. This is the fault behind 332
+    // corridor partitions standing on air across the city's 48 interiors.
+    panel(`slab-${level}-w`, cx - atriumHalfX - bandX, cz, [innerWidth / 2 - atriumHalfX, 0.6, innerDepth], y, 'floor');
+    panel(`slab-${level}-e`, cx + atriumHalfX + bandX, cz, [innerWidth / 2 - atriumHalfX, 0.6, innerDepth], y, 'floor');
     panel(`slab-${level}-n`, cx, cz - atriumHalfZ - bandZ, [infillWidth, 0.6, innerDepth / 2 - atriumHalfZ], y, 'floor');
     panel(`slab-${level}-s`, cx, cz + atriumHalfZ + bandZ, [infillWidth, 0.6, innerDepth / 2 - atriumHalfZ], y, 'floor');
 
@@ -2489,9 +2583,15 @@ function interiorTower(
 
   // Rooftop kit on the ring. Not a `roofKit`: that builds its own building underneath,
   // and a body inside this shell is a building inside a building.
-  props.push(make(`${id}-solar-a-panel`, { at: [cx - innerWidth / 4, cz - atriumHalfZ - bandZ], bottom: roof, size: [6, 1.2, 3], model: 'solar-panel' }));
-  props.push(make(`${id}-solar-b-panel`, { at: [cx + innerWidth / 4, cz - atriumHalfZ - bandZ], bottom: roof, size: [6, 1.2, 3], model: 'solar-panel' }));
-  props.push(make(`${id}-tank`, { at: [cx + innerWidth / 2 - 2.5, cz + atriumHalfZ + bandZ], bottom: roof, size: [3, 3.2, 3], model: 'water-tank' }));
+  //
+  // **On the walkable face, not the slab's underside.** `roof` here is the bottom of the top
+  // ring - the plate is `roof` to `roof + 0.6` - so standing the kit at `roof` buried it half a
+  // metre inside the storey it was meant to decorate. It was attached (the plate touches it) but
+  // sunk; the same fault in the other direction is what made `cable-small` invisible elsewhere.
+  const deckTop = roof + 0.6;
+  props.push(make(`${id}-solar-a-panel`, { at: [cx - innerWidth / 4, cz - atriumHalfZ - bandZ], bottom: deckTop, size: [6, 1.2, 3], model: 'solar-panel' }));
+  props.push(make(`${id}-solar-b-panel`, { at: [cx + innerWidth / 4, cz - atriumHalfZ - bandZ], bottom: deckTop, size: [6, 1.2, 3], model: 'solar-panel' }));
+  props.push(make(`${id}-tank`, { at: [cx + innerWidth / 2 - 2.5, cz + atriumHalfZ + bandZ], bottom: deckTop, size: [3, 3.2, 3], model: 'water-tank' }));
 
   // ---- the ladderwell, on the east side of the atrium, street to roof
   laddersUp(context, `${id}-ladder`, cx + atriumHalfX - 1, cz + atriumHalfZ - 1, roof, floor);

@@ -1127,11 +1127,20 @@ describe('buildScene imported models', () => {
       expect(clone).toBeDefined();
       expect(clone).not.toBe(template.scene.children[0]);
 
-      // The model's origin is its base, so the clone stands on the prop's bottom, scaled.
+      // **The model's *base* is lifted onto the prop's bottom, which is not the same as its
+      // origin.** This box is centred on its own origin (min.y = -0.5), so at scale 2 its lowest
+      // point sits 1.0 m below the instance position: the instance has to be at 3 - 0.8 + 1.0 for
+      // the drawn geometry to rest on the prop's underside at 2.2. Anchoring the origin to the
+      // bottom instead - which is what this used to assert - buried the bottom half of every
+      // model whose art was not built base-at-origin, and `cable-small` by 2.84 m.
       const group = (clone as THREE.Mesh).parent as THREE.Object3D;
       expect(group.position.x).toBeCloseTo(10, 9);
-      expect(group.position.y).toBeCloseTo(3 - 1.6 / 2, 9);
+      expect(group.position.y).toBeCloseTo(3 - 1.6 / 2 + 0.5 * 2, 9);
       expect(group.position.z).toBeCloseTo(12, 9);
+
+      // ...and the geometry it draws really does start at the prop's bottom face.
+      const drawn = new THREE.Box3().setFromObject(group);
+      expect(drawn.min.y).toBeCloseTo(3 - 1.6 / 2, 6);
       expect(group.scale.x).toBeCloseTo(2, 9);
       expect(group.rotation.y).toBeCloseTo(0, 9);
 
