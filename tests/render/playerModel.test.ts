@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import { describePose, emptyPose, type PlayerPose } from '../../src/game/pose.js';
-import { createPlayerState, gaitPhaseAt, stepPlayer } from '../../src/game/player.js';
+import { createPlayerState, eyePosition, gaitPhaseAt, stepPlayer } from '../../src/game/player.js';
 import { collider, input, optionsFor, spawnAt, world } from '../helpers/player.js';
 import { vec3 } from '../../src/core/vec3.js';
 import * as THREE from 'three';
@@ -639,6 +639,75 @@ describe('the target filter', () => {
       }
       // One reversal at most: the approach may settle, but it must not ring.
       expect(reversals).toBeLessThanOrEqual(1);
+    } finally {
+      body.dispose();
+    }
+  });
+});
+
+describe('the crouch', () => {
+  // Two faults were reported together and both came from the crouch being handled in more than one
+  // place: the knees folded backwards, and the camera descended faster than the body so it spent
+  // the transition inside the chest. These tests pin the geometry and the lockstep separately.
+
+  it('bends the knees forward, with the feet underneath the hips', () => {
+    // **Forward in this rig is -Z.** A joint rotates about +X, so a positive thigh angle swings the
+    // knee forward and a negative shin angle brings the foot back under the hip. Both signs were
+    // inverted, which put the knee 0.43 m *behind* the hip - the "knees bend backward" report.
+    const body = build();
+    try {
+      settle(body, pose({ crouchAmount: 1 }));
+      body.root.updateMatrixWorld(true);
+
+      const hip = new THREE.Vector3();
+      const knee = new THREE.Vector3();
+      const foot = new THREE.Vector3();
+      body.legLeft.root.getWorldPosition(hip);
+      body.legLeft.mid.getWorldPosition(knee);
+      body.legLeft.end.getWorldPosition(foot);
+
+      // The knee leads the hip, in the direction the body faces.
+      expect(knee.z).toBeLessThan(hip.z - 0.15);
+      // ...and the foot has come back under the hip rather than swinging out in front of it.
+      expect(Math.abs(foot.z - hip.z)).toBeLessThan(0.1);
+      expect(foot.y).toBeGreaterThan(-0.05);
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('keeps the camera the same distance above the shoulder all the way down', () => {
+    // **The bug this is for.** `eyeHeight` was a step function, so the camera's crouch target fell
+    // 0.70 m in a single frame while the body's hips eased over about a fifth of a second - and the
+    // camera spring's `Math.min` clamp forced it down to that step immediately. Measured, the eye
+    // reached 0.44 m *below* the shoulder mid-crouch, i.e. inside the chest.
+    //
+    // The invariants are: the gap never becomes negative, and it does not change much on the way.
+    const floor = collider('floor', vec3(0, -0.5, 0), vec3(600, 1, 600), 'floor');
+    const options = optionsFor(world(floor));
+    const state = createPlayerState(spawnAt(0, 0.001, 0, 0), CONFIG);
+    const body = build();
+    try {
+      for (let frame = 0; frame < 60; frame += 1) stepPlayer(state, input(), STEP, options);
+
+      const shoulderOffset = SHOULDER_Y - HIPS_Y;
+      let lowest = Number.POSITIVE_INFINITY;
+      let highest = Number.NEGATIVE_INFINITY;
+      for (let frame = 0; frame < 90; frame += 1) {
+        stepPlayer(state, input({ crouch: true }), STEP, options);
+        posePlayerBody(body, describePose(state, CONFIG, undefined, state.bobPhase), CONFIG, STEP);
+        const shoulder = body.hips.position.y + shoulderOffset + state.position.y;
+        const gap = eyePosition(state, CONFIG).y - shoulder;
+        lowest = Math.min(lowest, gap);
+        highest = Math.max(highest, gap);
+      }
+
+      // The eye is above the shoulder throughout - never inside the chest.
+      expect(lowest).toBeGreaterThan(0.1);
+      // ...and the two move together, so the gap barely changes.
+      expect(highest - lowest).toBeLessThan(0.06);
+      // It did arrive: the crouch is fully applied by the end.
+      expect(state.crouchAmount).toBeGreaterThan(0.99);
     } finally {
       body.dispose();
     }

@@ -25,7 +25,7 @@
  */
 
 import type { GameConfig, PlayerConfig, RollConfig, SlideConfig } from '../core/config.js';
-import { clamp, damp } from '../core/math.js';
+import { clamp, clamp01, damp } from '../core/math.js';
 import { deriveMotionState, type MotionState } from './movement.js';
 import {
   applySafetyFloor,
@@ -156,8 +156,20 @@ export interface PlayerState {
   groundId: string | null;
   /** Acoustic material underfoot, for surface-aware footsteps. */
   groundSurface: string | null;
-  /** True while the player is crouched. */
+  /** True while the player is crouched. Gameplay: the collision box, the speed, the stance. */
   crouching: boolean;
+  /**
+   * How far into the crouch the *body and the camera* are, 0..1, eased.
+   *
+   * **Why this is separate from `crouching`.** `crouching` is a boolean and it flips in one step,
+   * which is right for the collision box and the movement speed - a crouch must take effect the
+   * moment it is asked for, or you clip a low ceiling. But the eye height and the body's hips were
+   * reading that same boolean, so both targets jumped 0.70 m in a single frame and then chased it
+   * at different rates (the camera spring at 20/s, the hips at 11/s). Measured, the eye ended up
+   * 0.44 m *below* the shoulder mid-crouch - the camera inside the chest. One eased value, read by
+   * both, is what keeps them in step: the box stays instant, the presentation interpolates.
+   */
+  crouchAmount: number;
   alive: boolean;
   /** Seconds since the player died; drives the respawn delay. */
   deadFor: number;
@@ -319,6 +331,7 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     groundId: null,
     groundSurface: null,
     crouching: false,
+    crouchAmount: 0,
     alive: true,
     deadFor: 0,
     deaths: 0,
@@ -381,8 +394,22 @@ export function playerHeight(state: PlayerState, config: PlayerConfig): number {
 }
 
 export function eyeHeight(state: PlayerState, config: PlayerConfig): number {
-  return isLowProfile(state) ? config.crouchEyeHeight : config.standEyeHeight;
+  // **Eased, not switched.** The eye is what the player sees, and a stance that changed the camera
+  // height in one frame is a jolt. `crouchAmount` is advanced once per step towards whatever
+  // `isLowProfile` currently says, so a crouch, a stand and a roll all lower and raise the camera at
+  // the same rate - and the body reads the same number, so the two cannot disagree.
+  const amount = clamp01(state.crouchAmount);
+  return config.standEyeHeight + (config.crouchEyeHeight - config.standEyeHeight) * amount;
 }
+
+/**
+ * How quickly the body and the camera settle into a change of stance, in 1/s.
+ *
+ * Fast enough that a crouch still feels immediate - 90 % of the way in about 0.16 s - and slow
+ * enough that the eye and the hips, which spring at different rates, never get far enough apart
+ * for the camera to end up inside the body's chest.
+ */
+const CROUCH_SETTLE_RATE = 14;
 
 export function stance(state: PlayerState): Stance {
   if (state.maneuver?.lowProfile === true) return 'rolling';
@@ -430,6 +457,7 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.groundId = null;
   state.groundSurface = null;
   state.crouching = false;
+  state.crouchAmount = 0;
   state.alive = true;
   state.deadFor = 0;
   state.deathCause = null;
@@ -492,6 +520,16 @@ export function stepPlayer(
   if (state.wallCooldown > 0) state.wallCooldown = Math.max(0, state.wallCooldown - dt);
   if (state.pipeCooldown > 0) state.pipeCooldown = Math.max(0, state.pipeCooldown - dt);
   if (state.climbCooldown > 0) state.climbCooldown = Math.max(0, state.climbCooldown - dt);
+
+  // The presentation of the stance, eased from whatever `isLowProfile` says *now* - so a crouch, a
+  // stand and a low roll all move the body at one rate. The collision box is untouched: that stays
+  // a boolean and flips in this same step.
+  state.crouchAmount = damp(
+    state.crouchAmount,
+    isLowProfile(state) ? 1 : 0,
+    1 - Math.exp(-CROUCH_SETTLE_RATE),
+    dt,
+  );
 
   // While dead the player keeps falling - so the death reads as a fall rather
   // than a freeze - but no input is accepted and the death cannot re-trigger.
@@ -1269,7 +1307,13 @@ function stepLocomotion(
     started = 'pipe-grab';
   }
 
-  advanceHeadBob(state, options, dt, state.grounded ? lengthXZ(state.velocity) : 0);
+  // **Distance, not speed.** `advanceHeadBob` divides this by the stride length to get a phase, so
+  // it has to be metres travelled this step. It was being handed `lengthXZ(velocity)` - metres per
+  // *second* - which at a 7.5 m/s walk is 7.36 radians of phase per step: more than a full cycle
+  // between two frames, so the gait aliased into a 70 Hz shudder instead of a 1.2 Hz stride. The
+  // parameter is named `travelled` and documented as distance; the call site was the thing that
+  // disagreed with it.
+  advanceHeadBob(state, options, dt, state.grounded ? lengthXZ(state.velocity) * dt : 0);
 
   if (options.killPlaneY !== undefined && state.alive && state.position.y <= options.killPlaneY) {
     killPlayer(state, 'fell');

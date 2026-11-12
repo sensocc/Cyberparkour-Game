@@ -159,28 +159,53 @@ class Joints {
    * stability, which is the right trade in a render path that must never twitch.
    */
   private readonly target = new Float32Array(JOINT_SLOTS * 4);
+  /** The pre-smoothed height component applied outside each joint's spring. */
+  private readonly offsets = new Float32Array(JOINT_SLOTS * 4);
   /** Which slot a group owns, assigned on first use. */
   private readonly slots = new WeakMap<THREE.Object3D, number>();
   private nextSlot = 0;
   /** Written by `integrate` and read by its caller, so nothing here allocates. */
   private value = 0;
 
-  /** Turns a joint about one axis, towards `target` radians. */
+  /**
+   * Turns a joint about one axis, towards `target` radians.
+   *
+   * `offset` is applied outside the spring, exactly as `height`'s is: the spring smooths only the
+   * part it is given, and the offset is added afterwards. The crouch fold uses it so that the hip,
+   * the thigh and the shin are all driven by the same eased value and stay geometrically consistent
+   * mid-transition - when the fold was left inside the spring the hip outran the knee and the feet
+   * passed 0.4 m through the floor.
+   */
   rotation(
     object: THREE.Object3D,
     axis: 'x' | 'y' | 'z',
     target: number,
     rate: number,
     dt: number,
+    offset = 0,
   ): void {
-    this.integrate(this.slotFor(object) + (axis === 'x' ? 0 : axis === 'y' ? 1 : 2), object.rotation[axis], target, rate, dt);
-    object.rotation[axis] = this.value;
+    const slot = this.slotFor(object) + (axis === 'x' ? 0 : axis === 'y' ? 1 : 2);
+    // `rotation[axis]` already carries last frame's offset, so take it off before integrating.
+    this.integrate(slot, object.rotation[axis] - this.offsets[slot]!, target, rate, dt);
+    this.offsets[slot] = offset;
+    object.rotation[axis] = this.value + offset;
   }
 
-  /** Moves a joint up or down, for the one that travels instead of turning. */
-  height(object: THREE.Object3D, target: number, rate: number, dt: number): void {
-    this.integrate(this.slotFor(object) + 3, object.position.y, target, rate, dt);
-    object.position.y = this.value;
+  /**
+   * Moves a joint up or down, for the one that travels instead of turning.
+   *
+   * `offset` is a component applied *outside* the spring: the spring only ever smooths the part of
+   * the target it is given, and the offset is added afterwards without becoming the spring's own
+   * position. That matters for the hips, because the crouch is already eased upstream and must not
+   * be smoothed a second time - two cascaded filters put the hips 0.2 m behind the camera, which is
+   * how the camera ended up inside the chest.
+   */
+  height(object: THREE.Object3D, target: number, rate: number, dt: number, offset = 0): void {
+    const slot = this.slotFor(object) + 3;
+    // `position.y` already carries last frame's offset, so take it back off before integrating.
+    this.integrate(slot, object.position.y - this.offsets[slot]!, target, rate, dt);
+    this.offsets[slot] = offset;
+    object.position.y = this.value + offset;
   }
 
   /** The base index of a group's four velocities, assigning one the first time it is seen. */
@@ -438,8 +463,17 @@ export function posePlayerBody(
   // box, with a 0.1 m near plane that does not clip it away. Matching the camera is the fix that
   // changes no gameplay: the box, the eye and the body all describe the same crouch.
   const eyeDrop = config.player.standEyeHeight - config.player.crouchEyeHeight;
-  const hipsTarget = HIPS_Y - crouch * eyeDrop - bob * 0.022 * stride;
-  body.joints.height(body.hips, hipsTarget, JOINT_RATE.hips, step);
+  // **The spring smooths the bob only; the crouch is applied outside it.** `pose.crouchAmount` is
+  // already eased once in the simulation, and the camera reads that same eased number, so running
+  // it through this spring as well would make the hips lag the eye by the spring's own response
+  // time - measured at 0.2 m, the camera inside the chest for a third of a second. One filter in
+  // front of both is in step; two are not.
+  //
+  // The crouch offset is kept in a variable because the legs need the hip's *actual* height to work
+  // out how far to fold, and the spring's own state is not that number.
+  const crouchOffset = -crouch * eyeDrop;
+  const hipsTarget = HIPS_Y - bob * 0.022 * stride;
+  body.joints.height(body.hips, hipsTarget, JOINT_RATE.hips, step, crouchOffset);
 
   // **And the legs fold to keep the feet on the ground.** A hip that drops 0.70 m with straight legs
   // puts the feet 0.22 m through the floor - measured - so the fold is derived from the hip height
@@ -447,7 +481,13 @@ export function posePlayerBody(
   // at `(THIGH + SHIN) * cos(a)`, so `a = acos(hips / (THIGH + SHIN))`. At standing height that is
   // zero (the ratio clamps to 1), and at a full crouch it is about 74 degrees - a deep squat, which
   // is what a 0.70 m crouch is.
-  const legFold = Math.acos(clamp(hipsTarget / (THIGH + SHIN), -1, 1));
+  //
+  // **The hip height here is the *drawn* one, crouch offset included.** It has to be: the fold exists
+  // to put the feet back under a hip that has already moved, so deriving it from the rest height
+  // would fold nothing and drive the feet through the floor - which is exactly what happened when
+  // the crouch was first moved outside the spring and this line still read `hipsTarget`.
+  const drawnHipHeight = body.hips.position.y;
+  const legFold = Math.acos(clamp(drawnHipHeight / (THIGH + SHIN), -1, 1));
 
   // A forward lean through the whole body. A roll curls the torso up as well: the
   // camera is inside the body for the whole of it, so what is visible is the chest
@@ -490,6 +530,12 @@ function applyLeg(
   let upper = 0;
   let lower = 0;
   let end = 0;
+  // The crouch fold is applied *outside* the spring, like the hip's own crouch offset. Left inside,
+  // it lagged the hip during a transition: the hip is offset directly while the thigh and shin chase
+  // their targets at rates 15 and 18, so mid-crouch the leg was momentarily 0.4 m too long and the
+  // feet passed through the floor. Outside, the fold is exactly the fold the drawn hip height implies.
+  let foldUpper = 0;
+  let foldLower = 0;
 
   switch (pose.legAction) {
     case 'stride': {
@@ -497,8 +543,15 @@ function applyLeg(
       // only ever bends one way.
       // The crouch fold is *added* to the stride rather than replacing it, so a crouched player
       // still walks: the thigh swings about the folded pose and the shin keeps the foot down.
-      upper = Math.sin(phase) * sign * swing - legFold;
-      lower = -Math.max(0, Math.cos(phase) * sign) * knee + 2 * legFold;
+      //
+      // **The signs point forward.** A joint rotates about +X, and forward in this rig is -Z, so a
+      // *positive* thigh angle swings the knee forward and a *negative* shin angle brings the foot
+      // back under the hip. Both were inverted when the fold was introduced, which put the knee
+      // 0.43 m behind the hip and folded it the wrong way - the "knees bend backward" report.
+      upper = Math.sin(phase) * sign * swing;
+      lower = -Math.max(0, Math.cos(phase) * sign) * knee;
+      foldUpper = legFold;
+      foldLower = -2 * legFold;
       // The foot rolls: toe down as it leaves the ground, heel first as it lands.
       end = Math.max(0, Math.cos(phase) * sign) * 0.42 - Math.max(0, -Math.cos(phase) * sign) * 0.18;
       break;
@@ -531,8 +584,8 @@ function applyLeg(
     }
   }
 
-  body.joints.rotation(leg.root, 'x', upper, JOINT_RATE.upper, step);
-  body.joints.rotation(leg.mid, 'x', lower, JOINT_RATE.lower, step);
+  body.joints.rotation(leg.root, 'x', upper, JOINT_RATE.upper, step, foldUpper);
+  body.joints.rotation(leg.mid, 'x', lower, JOINT_RATE.lower, step, foldLower);
   body.joints.rotation(leg.end, 'x', end, JOINT_RATE.end, step);
 }
 

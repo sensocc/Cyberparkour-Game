@@ -102,12 +102,25 @@ describe('moving', () => {
 
 describe('stances', () => {
   it('crouches and folds the body forward', () => {
+    // The pose reads the *eased* `crouchAmount`, so the body and the camera travel together. Setting
+    // the boolean alone is the gameplay half of a crouch; the amount is what the limbs follow, and
+    // the simulation advances it once per step.
     const state = onDeck();
     state.crouching = true;
+    state.crouchAmount = 1;
     const pose = poseOf(state);
     expect(pose.crouchAmount).toBe(1);
     expect(pose.stance).toBe('crouched');
     expect(pose.lean).toBeGreaterThan(0.3);
+  });
+
+  it('follows the eased crouch amount, not the boolean', () => {
+    // Half-way into a crouch the body should be half-way down, which is the thing that lets the eye
+    // and the hips stay in step while the stance changes.
+    const state = onDeck();
+    state.crouching = true;
+    state.crouchAmount = 0.5;
+    expect(poseOf(state).crouchAmount).toBe(0.5);
   });
 
   it('folds furthest when sliding, which is a crouch at speed', () => {

@@ -14,6 +14,7 @@
  */
 
 import type { GameConfig } from '../core/config.js';
+import { clamp01 } from '../core/math.js';
 
 import {
   horizontalSpeed,
@@ -149,7 +150,12 @@ export function describePose(
 ): PlayerPose {
   const maneuver = state.maneuver?.kind ?? null;
   const piping = state.pipeId !== null;
-  const crouchAmount = state.crouching ? 1 : 0;
+  // **The eased value, not the boolean.** `state.crouching` is what the *collision box* uses and it
+  // flips in one step; the pose is presentation, and it reads the same `crouchAmount` the camera
+  // does. Both limbs and eye then travel together instead of the camera snapping down 0.70 m while
+  // the hips are still catching up - which put the eye inside the chest for about a third of a
+  // second every time the player crouched.
+  const crouchAmount = clamp01(state.crouchAmount);
   const speedFraction = Math.min(1, horizontalSpeed(state) / Math.max(1e-6, config.player.sprintSpeed));
 
   out.gaitPhase = gaitPhase;

@@ -1126,22 +1126,32 @@ describe('Game locomotion abilities', () => {
     expect(landed.position.y).toBeCloseTo(0.001, 3);
   });
 
-  it('crouches on Ctrl, changing the stance and the camera height', () => {
+  it('crouches on Ctrl, changing the stance at once and the camera as it eases', () => {
     const harness = createHarness();
     harness.game.start();
     stepFrames(harness, 60);
 
     const standingEye = harness.views[0]?.frames.at(-1)?.eye.y ?? 0;
+    const drop = DEFAULT_CONFIG.player.standEyeHeight - DEFAULT_CONFIG.player.crouchEyeHeight;
 
     harness.input.keyDown('ControlLeft');
     stepFrames(harness, 5);
 
+    // The stance - the gameplay half, which sizes the collision box - changes immediately.
     expect(harness.game.snapshot().player.stance).toBe('crouched');
-    const crouchedEye = harness.views[0]?.frames.at(-1)?.eye.y ?? 0;
-    expect(standingEye - crouchedEye).toBeCloseTo(
-      DEFAULT_CONFIG.player.standEyeHeight - DEFAULT_CONFIG.player.crouchEyeHeight,
-      3,
-    );
+    // The camera eases down instead of snapping, so after five frames it is part of the way there.
+    // (This test used to assert the full 0.70 m in five frames, which was the snap: the eye jumped
+    // the whole way in one frame while the body's hips took about a fifth of a second to follow,
+    // and the camera spent that time inside the chest.)
+    const partway = harness.views[0]?.frames.at(-1)?.eye.y ?? 0;
+    const eased = standingEye - partway;
+    expect(eased).toBeGreaterThan(0.2);
+    expect(eased).toBeLessThan(drop);
+
+    // Given time to arrive, it is the crouch height exactly.
+    stepFrames(harness, 60);
+    const settled = harness.views[0]?.frames.at(-1)?.eye.y ?? 0;
+    expect(standingEye - settled).toBeCloseTo(drop, 3);
 
     // Releasing stands back up.
     harness.input.keyUp('ControlLeft');

@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.1.0` |
+| Version | `2.1.1` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1318 in 51 files |
+| Tests | 1322 in 51 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -64,6 +64,8 @@ Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the land
 
 **The body is procedural, and the animation is measured.** There is no skeleton and no animation file: every angle is a target that a critically damped spring travels to, and the gait phase advances by *distance travelled* rather than by time, so the walk cannot slide against the ground. V2.1.0 fixed four faults in that system — the phone pose was overwritten before it was drawn, the shadow map ignored every pose change that was not one of five scalars, the crouched camera sat 8 cm inside the chest, and the pose branched on four move kinds that could never occur. It also filters each joint's target through an exponential approach, which cut the worst transition jerk by 53 % (a walk into a vault, 0.141 → 0.066 rad/frame) for 33 ms of extra response.
 
+V2.1.1 fixed three more, all reported from playing it. The walk shook because `advanceHeadBob` was handed the player's *speed* where it wanted *distance* — at a 7.5 m/s walk that is 7.36 radians of gait phase per step, more than a full cycle between frames, so the stride aliased into a shudder; it now reads 1.17 Hz, exactly speed ÷ stride. The crouched knees bent backwards because the fold was pushed through an inverted sign, putting the knee 0.43 m behind the hip; the fold's signs now match the rig's convention that forward is −Z, and the foot stays on the floor. And the camera sank faster than the body because the eye read the instant `crouching` boolean while the hips followed an eased value; both read the same eased `crouchAmount` now, so the eye holds exactly 0.250 m above the shoulder for the whole transition in both directions.
+
 **Every ladder in the city is climbed by a test.** V2.0.2 fixed the four faults that had made about three ladders in five unusable: the hand-over at the top compared the player's head against the section's face exactly, and a climb advances in 40 mm steps, so it was a condition that could never be true; a fire escape landing and a roof gangway were built across the climb column; and long ladders stood close enough to a wall that the roof deck above them capped the climb two metres under the top. A ladder now hands over on the step that would have reached its top, lets go if something genuinely blocks it, and the generator stands every one clear of the faces and the rooftop kit above it.
 
 ## Performance
@@ -93,7 +95,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1318 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1322 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

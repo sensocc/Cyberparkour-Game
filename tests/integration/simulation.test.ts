@@ -667,7 +667,10 @@ describe('crash-report snapshot', () => {
   it('reports the eye height for the current stance', () => {
     const { player } = createSimulation();
     expect(eyeHeight(player, PLAYER)).toBe(PLAYER.standEyeHeight);
+    // The stance is the boolean; the *height* follows the eased amount, which the simulation
+    // advances. Both are needed to describe a crouch, and they deliberately differ for a moment.
     player.crouching = true;
+    player.crouchAmount = 1;
     expect(eyeHeight(player, PLAYER)).toBe(PLAYER.crouchEyeHeight);
   });
 });

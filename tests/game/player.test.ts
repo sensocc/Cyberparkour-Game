@@ -95,15 +95,25 @@ describe('createPlayerState', () => {
 });
 
 describe('stance helpers', () => {
-  it('shortens the box and drops the camera when crouched', () => {
+  it('shortens the box at once and drops the camera as the crouch eases in', () => {
+    // **The box and the camera are deliberately not the same signal.** The box is gameplay: it has
+    // to shrink in the step the crouch is asked for, or a player clips the ceiling they ducked
+    // under. The camera is presentation, and it follows `crouchAmount`, which the simulation eases
+    // towards the stance - otherwise the eye snaps 0.70 m in one frame while the body's hips take
+    // about a fifth of a second, and the camera spends that time inside the chest.
     const state = createPlayerState(ON_DECK, CONFIG);
     expect(playerHeight(state, PLAYER)).toBe(PLAYER.standHeight);
     expect(eyeHeight(state, PLAYER)).toBe(PLAYER.standEyeHeight);
 
     state.crouching = true;
     expect(playerHeight(state, PLAYER)).toBe(PLAYER.crouchHeight);
-    expect(eyeHeight(state, PLAYER)).toBe(PLAYER.crouchEyeHeight);
     expect(stance(state)).toBe('crouched');
+    // Nothing has stepped yet, so the camera has not started to move.
+    expect(eyeHeight(state, PLAYER)).toBe(PLAYER.standEyeHeight);
+
+    // Once the eased amount arrives, it is the crouch height exactly.
+    state.crouchAmount = 1;
+    expect(eyeHeight(state, PLAYER)).toBe(PLAYER.crouchEyeHeight);
   });
 
   it('standingSize describes the largest footprint, for level validation', () => {
@@ -947,6 +957,28 @@ describe('head bob', () => {
     state.bobAmount = 0;
     const still = eyePosition(state, CONFIG);
     expect(still.y - state.position.y).toBeCloseTo(PLAYER.standEyeHeight, 6);
+  });
+
+  it('advances the gait by distance, so the stride is not aliased past Nyquist', () => {
+    // **The bug this is for.** `advanceHeadBob` takes *metres travelled* and divides it by the
+    // stride length to get a phase; the call site was handing it `lengthXZ(velocity)` - metres per
+    // *second*. At a 7.5 m/s walk that is (7.5 / 6.4) * 2pi = 7.36 radians of phase per step: more
+    // than a full cycle between two frames. A gait sampled faster than half a cycle per frame does
+    // not read as a gait at all - it aliases into a ~70 Hz shudder, which is the "violently shaking
+    // while walking" report.
+    //
+    // The bound is Nyquist: a phase advance under pi per frame cannot alias.
+    const state = createPlayerState(ON_DECK, CONFIG);
+    const options = optionsFor(world(FLOOR));
+    for (let frame = 0; frame < 90; frame += 1) stepPlayer(state, FORWARD, STEP, options);
+
+    expect(horizontalSpeed(state)).toBeGreaterThan(1);
+    expect(state.bobPhaseStep).toBeLessThan(Math.PI);
+
+    const cyclesPerSecond = state.bobPhaseStep / (Math.PI * 2) / STEP;
+    // A person walks at roughly one to two strides a second; sprinting is a little quicker.
+    expect(cyclesPerSecond).toBeGreaterThan(0.5);
+    expect(cyclesPerSecond).toBeLessThan(4);
   });
 
   it('advanceHeadBob does nothing for a stationary grounded player', () => {
