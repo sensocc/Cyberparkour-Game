@@ -20,8 +20,8 @@ import {
   locomotion,
   stance,
   type Locomotion,
-  type ManeuverKind,
   type PlayerState,
+  type ScriptedMove,
   type Stance,
 } from './player.js';
 
@@ -58,8 +58,18 @@ export interface PlayerPose {
   grounded: boolean;
   alive: boolean;
   sliding: boolean;
-  /** The scripted move in progress, if any. */
-  maneuver: ManeuverKind | null;
+  /**
+   * The scripted move in progress, if any.
+   *
+   * **`ScriptedMove`, not `ManeuverKind`.** The two used to be the same union, which conflated two
+   * different things: `ManeuverKind` is the set of *events* the simulation reports (a slide starts,
+   * a wall-run ends) and all eleven are legitimate there; `state.maneuver.kind` is the scripted path
+   * currently being interpolated, and only five are ever constructed. Typing this as the wider union
+   * made `pose.ts` branch on `'climb'`, `'slide'`, `'hang'` and `'wall-run'` - four conditions that
+   * could never be true, and which hid the fact that a ladder climb and a walking stride could be
+   * combined into a pose no body should make.
+   */
+  maneuver: ScriptedMove | null;
   /** How far through that move, 0..1. */
   maneuverProgress: number;
   /** Which side a wall is on, for the lean: -1 left, 1 right, 0 head-on. */
@@ -72,6 +82,29 @@ export interface PlayerPose {
   legAction: LegAction;
   /** Forward lean of the torso in radians, for a sprint. */
   lean: number;
+}
+
+/**
+ * A cheap fingerprint of everything that changes the body's *shape*.
+ *
+ * **Why this exists.** The view decides whether the shadow map needs redrawing by asking "did the
+ * body change shape since the last frame", and it used to answer that by comparing five hand-picked
+ * scalars. The body's silhouette is also changed by `armAction`, `legAction`, `wallSide`,
+ * `pipeDirection` and `stance` - so a player grabbing a ledge went from swinging arms and striding
+ * legs to straight arms and trailing legs, and the shadow kept the old pose until something else
+ * happened to move.
+ *
+ * A list of fields to compare is a list that rots the moment a field is added, so the list lives
+ * here, next to the fields, and the view compares one string. `gaitPhase` is included because the
+ * stride's phase moves the legs even when the amount does not.
+ */
+export function poseSignature(pose: PlayerPose): string {
+  return (
+    `${pose.armAction}|${pose.legAction}|${pose.stance}|${pose.locomotion}|` +
+    `${pose.wallSide}|${pose.pipeDirection}|${pose.maneuver ?? '-'}|` +
+    `${pose.crouchAmount.toFixed(4)}|${pose.strideAmount.toFixed(4)}|` +
+    `${pose.gaitPhase.toFixed(4)}|${pose.lean.toFixed(4)}|${pose.maneuverProgress.toFixed(4)}`
+  );
 }
 
 /** A pose with every field at rest. */
@@ -150,25 +183,27 @@ export function describePose(
   return out;
 }
 
-function armActionFor(state: PlayerState, maneuver: ManeuverKind | null, piping: boolean): ArmAction {
+function armActionFor(state: PlayerState, maneuver: ScriptedMove | null, piping: boolean): ArmAction {
   if (!state.alive) return 'relaxed';
   if (state.hangId !== null) return 'hanging';
   if (piping) return 'reach';
-  if (maneuver === 'climb') return 'reach';
-  if (maneuver === 'mantle' || maneuver === 'pull-up' || maneuver === 'vault' || maneuver === 'kong-vault') {
-    return 'reach';
-  }
+  // Every scripted move but the roll reaches: a mantle, a pull-up, a vault and a Kong vault are all
+  // "hands forward and up". The roll tucks instead, because the body is going over itself.
   if (maneuver === 'roll') return 'tucked';
+  if (maneuver !== null) return 'reach';
   if (state.climbId !== null) return 'overhead';
   return 'swing';
 }
 
-function legActionFor(state: PlayerState, maneuver: ManeuverKind | null, piping: boolean): LegAction {
+function legActionFor(state: PlayerState, maneuver: ScriptedMove | null, piping: boolean): LegAction {
   if (!state.alive) return 'hang';
   if (piping || state.hangId !== null) return 'hang';
-  if (maneuver === 'roll') return 'tuck';
-  if (maneuver === 'mantle' || maneuver === 'pull-up') return 'tuck';
-  if (maneuver === 'vault' || maneuver === 'kong-vault') return 'tuck';
+  // Every scripted move tucks the legs: they are all a body going up and over something.
+  if (maneuver !== null) return 'tuck';
+  // **A ladder is not a walk.** This used to fall through to `stride` whenever the player was
+  // grounded, so a player on a ladder with their feet on the bottom rung got arms straight up and
+  // legs walking - a combination no body makes. Climbing is checked before the grounded case now.
+  if (state.climbId !== null) return 'hang';
   if (!state.grounded) return state.wallId !== null ? 'brace' : 'hang';
   return 'stride';
 }

@@ -15,7 +15,7 @@ import {
   type ManeuverMove,
   type ScriptedMove,
 } from '../../src/game/player.js';
-import { describePose, emptyPose, type PlayerPose } from '../../src/game/pose.js';
+import { describePose, emptyPose, poseSignature, type PlayerPose } from '../../src/game/pose.js';
 import type { SpawnPoint } from '../../src/game/level/levelData.js';
 
 const CONFIG = DEFAULT_CONFIG;
@@ -169,6 +169,18 @@ describe('the arms', () => {
     expect(poseOf(climbing).legAction).toBe('hang');
   });
 
+  it('does not walk the legs while climbing a ladder with the feet on a rung', () => {
+    // **The bug this is for.** `legActionFor` checked `grounded` last, so a player on a ladder whose
+    // feet were on the bottom rung got arms straight up and legs *striding* - a combination no body
+    // makes. The existing ladder test set `grounded = false`, which is why it never saw this.
+    const climbing = onDeck();
+    climbing.grounded = true;
+    climbing.climbId = 'ladder';
+    const pose = poseOf(climbing);
+    expect(pose.armAction).toBe('overhead');
+    expect(pose.legAction).not.toBe('stride');
+  });
+
   it('hangs from a ledge with straight arms', () => {
     const state = onDeck();
     state.grounded = false;
@@ -271,4 +283,81 @@ describe('the gait phase between simulation steps', () => {
     state.bobPhaseStep = 0;
     expect(gaitPhaseAt(state, 1)).toBeCloseTo(state.bobPhase, 6);
   });
+});
+
+describe('the pose signature', () => {
+  // **The shadow gate's question, asked in one place.** The view redraws the shadow map when the
+  // body's shape changes, and it used to answer that by comparing five hand-picked scalars. The
+  // silhouette is also changed by the arm and leg actions, the stance, which side a wall is on and
+  // which way a pipe is being worked - so a player grabbing a ledge changed pose completely and the
+  // shadow kept the old one. The signature covers every field that moves a limb.
+
+  it('changes when only the arm action changes', () => {
+    const a = poseSignature({ ...emptyPose(), armAction: 'swing' });
+    const b = poseSignature({ ...emptyPose(), armAction: 'hanging' });
+    expect(a).not.toBe(b);
+  });
+
+  it('changes when only the leg action changes', () => {
+    expect(poseSignature({ ...emptyPose(), legAction: 'stride' })).not.toBe(
+      poseSignature({ ...emptyPose(), legAction: 'hang' }),
+    );
+  });
+
+  it('changes for every field that moves a limb', () => {
+    const base = emptyPose();
+    const variants: Partial<PlayerPose>[] = [
+      { armAction: 'reach' },
+      { legAction: 'tuck' },
+      { stance: 'rolling' },
+      { locomotion: 'climbing' },
+      { wallSide: 1 },
+      { pipeDirection: -1 },
+      { maneuver: 'vault' },
+      { crouchAmount: 0.5 },
+      { strideAmount: 0.5 },
+      { gaitPhase: 1 },
+      { lean: 0.2 },
+      { maneuverProgress: 0.5 },
+    ];
+    const seen = new Set([poseSignature(base)]);
+    for (const variant of variants) {
+      const signature = poseSignature({ ...base, ...variant });
+      expect(seen.has(signature), JSON.stringify(variant)).toBe(false);
+      seen.add(signature);
+    }
+  });
+
+  it('is stable for a pose that has not changed', () => {
+    const pose = { ...emptyPose(), gaitPhase: 1.234, strideAmount: 0.7 };
+    expect(poseSignature(pose)).toBe(poseSignature({ ...pose }));
+  });
+});
+
+describe('every scripted move', () => {
+  // **"Reachable" is not the same as "intended".** The pose used to be typed against the wider
+  // `ManeuverKind` union, so it branched on four kinds that are events rather than moves and could
+  // never occur. Typing it as `ScriptedMove` makes the compiler prove the branches are live; this
+  // table says what each live branch should *produce*, so a future move cannot quietly inherit the
+  // wrong limbs.
+  const MOVES: readonly ScriptedMove[] = ['mantle', 'pull-up', 'roll', 'vault', 'kong-vault'];
+
+  for (const move of MOVES) {
+    it(`poses ${move} with the limbs that move implies`, () => {
+      const state = onDeck();
+      state.grounded = false;
+      state.maneuver = maneuver(move);
+      const pose = poseOf(state);
+
+      expect(pose.maneuver).toBe(move);
+      if (move === 'roll') {
+        // A roll is the one move that tucks the arms: the body goes over itself.
+        expect(pose.armAction).toBe('tucked');
+      } else {
+        // Everything else reaches - hands forward and up, over or onto something.
+        expect(pose.armAction).toBe('reach');
+      }
+      expect(pose.legAction).toBe('tuck');
+    });
+  }
 });

@@ -1645,6 +1645,25 @@ describe('the V0.5 run: pickups, the finish and the clock', () => {
     expect(harness.ui.secretAnnounced, 'the announcement').toBe(true);
   });
 
+  it('actually raises the arm for the phone call, rather than only setting a flag', () => {
+    // **The bug this is for.** `updateEffects` derived the pose and set `armAction = 'phone'`, and
+    // then `renderFrame` derived the pose *again* into the same object - which overwrote the
+    // override before it was ever drawn. The call fired, the toast appeared, the secret screen
+    // came up, and the arm never moved. The state was tested; the pose was not.
+    const harness = createHarness({ level: PHONE_LEVEL });
+    startGame(harness);
+    stepFrames(harness, 2);
+
+    expect(harness.game.calling, 'the call is happening').toBe(true);
+    const during = harness.views.at(-1)?.bodies.at(-1)?.pose.armAction;
+    expect(during, 'the arm must be up while the call is happening').toBe('phone');
+
+    // ...and it comes back down when the call ends.
+    for (let frame = 0; frame < 400; frame += 1) stepFrames(harness, 1);
+    expect(harness.game.calling).toBe(false);
+    expect(harness.views.at(-1)?.bodies.at(-1)?.pose.armAction).not.toBe('phone');
+  });
+
   it('asks for as many shards as the level has, rather than a number in a sentence', () => {
     // The cat used to say "the eight shards" over a level with ten in it, which is the kind of thing
     // a player notices in the first minute and no test does unless it is written down.

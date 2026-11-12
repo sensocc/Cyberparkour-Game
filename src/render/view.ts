@@ -14,7 +14,7 @@ import { clamp01 } from '../core/math.js';
 import type { ReadonlyVec3 } from '../core/vec3.js';
 import type { Orientation } from '../game/look.js';
 import { GATE_FACE_SUFFIXES, type LevelDefinition } from '../game/level/levelData.js';
-import type { PlayerPose } from '../game/pose.js';
+import { poseSignature, type PlayerPose } from '../game/pose.js';
 import { applyAnisotropy } from './assets.js';
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from './playerModel.js';
 import {
@@ -196,15 +196,15 @@ export class GameView implements GameViewLike {
    */
   private shadowDirty = false;
   /**
-   * The body pose scalars the shadow gate last saw, so a change to any of them is a change to the
-   * body's shape and therefore its shadow. Kept as five numbers rather than a pose reference: a
-   * fresh pose object arrives every frame, and `Object.is` on the *fields* is what decides.
+   * The body pose the shadow gate last saw, as a fingerprint of everything that changes its shape.
+   *
+   * **A signature, not a list of fields.** This used to be five hand-picked scalars, which missed
+   * `armAction`, `legAction`, `wallSide`, `pipeDirection` and `stance` - so a player grabbing a
+   * ledge changed from swinging arms and striding legs to straight arms and trailing legs, and the
+   * shadow kept the old pose. `poseSignature` lives next to the fields it covers, so adding a field
+   * to the pose cannot silently leave the shadow behind.
    */
-  private bodyCrouch = Number.NaN;
-  private bodyStride = Number.NaN;
-  private bodyPhase = Number.NaN;
-  private bodyLean = Number.NaN;
-  private bodyProgress = Number.NaN;
+  private bodySignature = '';
   /** When the last frame was drawn, for the view's own frame-time estimate. */
   private lastFrameAt = 0;
   /**
@@ -664,23 +664,16 @@ export class GameView implements GameViewLike {
     // player is truly idle, so comparing them - feet, yaw, and the handful of pose scalars that
     // change the body's shape - is exactly "did the shadow change", and it is what lets the map
     // stop redrawing for a body that is standing still.
+    const signature = poseSignature(pose);
     const shapeChanged =
       root.position.x !== feet.x ||
       root.position.y !== feet.y ||
       root.position.z !== feet.z ||
       root.rotation.y !== yaw ||
-      this.bodyCrouch !== pose.crouchAmount ||
-      this.bodyStride !== pose.strideAmount ||
-      this.bodyPhase !== pose.gaitPhase ||
-      this.bodyLean !== pose.lean ||
-      this.bodyProgress !== pose.maneuverProgress;
+      this.bodySignature !== signature;
     if (shapeChanged) {
       this.shadowDirty = true;
-      this.bodyCrouch = pose.crouchAmount;
-      this.bodyStride = pose.strideAmount;
-      this.bodyPhase = pose.gaitPhase;
-      this.bodyLean = pose.lean;
-      this.bodyProgress = pose.maneuverProgress;
+      this.bodySignature = signature;
     }
     root.position.set(feet.x, feet.y, feet.z);
     root.rotation.y = yaw;

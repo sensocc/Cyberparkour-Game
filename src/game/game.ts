@@ -1166,6 +1166,8 @@ export class Game {
     });
 
     if (this.perfEnabled) this.perfMark();
+    // Once, before anything reads it: the camera's lean and the body's limbs are the same pose.
+    this.derivePose();
     this.updateEffects(simulated);
     this.effectsSeconds += simulated;
     this.updateAudio(simulated);
@@ -1535,13 +1537,35 @@ export class Game {
    * effects follow a wall run or a slide for as long as it lasts without anybody
    * having to say when it started and stopped.
    */
-  private updateEffects(dt: number): void {
-    // The pose is derived first: the camera's lean is one of the things it says.
-    describePose(this.player, this.config, this.scratchPose, gaitPhaseAt(this.player, this.accumulator.alpha));
+  /**
+   * Derives this frame's pose, once.
+   *
+   * The single writer of `scratchPose`. Everything that needs the pose - the camera's lean, the
+   * body's limbs, the shadow's dirty check - reads the object this fills, so there is exactly one
+   * place a pose can be changed and no way for two derivations to disagree.
+   *
+   * The phone override lives here rather than at a call site for the same reason: it is a fact
+   * about the pose, and a fact applied after the fact is a fact that gets overwritten.
+   */
+  private derivePose(): PlayerPose {
+    const pose = describePose(
+      this.player,
+      this.config,
+      this.scratchPose,
+      gaitPhaseAt(this.player, this.accumulator.alpha),
+    );
     // The phone: an arm comes up and stays up. It is the one scripted pose in the game, and it is
     // applied *over* whatever the movement asked for rather than instead of it, so the player can
     // still walk while they are on the call.
-    if (this.calling) this.scratchPose.armAction = 'phone';
+    if (this.calling) pose.armAction = 'phone';
+    return pose;
+  }
+
+  private updateEffects(dt: number): void {
+    // **The pose is derived once per frame, by `derivePose`, and read here.** It used to be derived
+    // here *and* again in `renderFrame`, into the same object - which meant the phone override
+    // applied below was overwritten before it was ever drawn, and the one scripted pose in the game
+    // never played. One writer, one reader, and the camera and the body cannot disagree.
     const sample = this.scratchSample;
     const speed = Math.hypot(this.player.velocity.x, this.player.velocity.z);
     sample.speedFraction = speed / Math.max(1e-6, this.config.player.sprintSpeed);
@@ -1677,13 +1701,10 @@ export class Game {
     this.view.setFov(this.settings.fov + frame.fov);
 
     // The body goes where the *interpolated* player is, not where the last
-    // simulation step left them, or it would jitter against the camera.
-    this.view.setPlayerBody(
-      feet,
-      this.player.yaw,
-      describePose(this.player, this.config, this.scratchPose, gaitPhase),
-      dt,
-    );
+    // simulation step left them, or it would jitter against the camera. The pose is the one
+    // `derivePose` filled this frame - not a second derivation, which is what used to wipe the
+    // phone override before it was drawn.
+    this.view.setPlayerBody(feet, this.player.yaw, this.scratchPose, dt);
 
     const renderStarted = this.perfEnabled ? performance.now() : 0;
     this.view.render(this.scratchEye, this.scratchOrientation);

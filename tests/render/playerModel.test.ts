@@ -14,9 +14,15 @@ import { describePose, emptyPose, type PlayerPose } from '../../src/game/pose.js
 import { createPlayerState, gaitPhaseAt, stepPlayer } from '../../src/game/player.js';
 import { collider, input, optionsFor, spawnAt, world } from '../helpers/player.js';
 import { vec3 } from '../../src/core/vec3.js';
+import * as THREE from 'three';
+
 import { buildPlayerBody, posePlayerBody, type PlayerBody } from '../../src/render/playerModel.js';
 
 const CONFIG = DEFAULT_CONFIG;
+
+/** The rig's own shoulder height, mirrored from `playerModel.ts` for the stance invariant. */
+const SHOULDER_Y = 1.4;
+const HIPS_Y = 0.94;
 
 function pose(overrides: Partial<PlayerPose> = {}): PlayerPose {
   return { ...emptyPose(), ...overrides };
@@ -134,14 +140,62 @@ describe('the stride', () => {
 });
 
 describe('the poses that are not a walk', () => {
-  it('drops the hips when crouching', () => {
+  it('drops the hips by exactly as much as the camera drops', () => {
+    // The bound here used to be `> crouchHeight * 0.4` (0.44 m), which encoded the *old* crouch
+    // depth - the one that left the camera inside the chest. The contract is not a bound, it is an
+    // equality: the body crouches as far as the eye and the collision box do, so all three describe
+    // the same stance.
     const body = build();
     try {
       settle(body, pose());
       const standing = body.hips.position.y;
       settle(body, pose({ crouchAmount: 1 }));
-      expect(body.hips.position.y).toBeLessThan(standing);
-      expect(body.hips.position.y).toBeGreaterThan(CONFIG.player.crouchHeight * 0.4);
+      const crouched = body.hips.position.y;
+
+      const eyeDrop = CONFIG.player.standEyeHeight - CONFIG.player.crouchEyeHeight;
+      expect(standing - crouched).toBeCloseTo(eyeDrop, 2);
+      // ...and the box agrees with both: a 1.8 m stand less the same drop is the crouch height.
+      expect(CONFIG.player.standHeight - eyeDrop).toBeCloseTo(CONFIG.player.crouchHeight, 2);
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('keeps the eye the same distance above the shoulder in both stances', () => {
+    // **The bug this is for.** The camera dropped 0.70 m when crouching and the body's hips only
+    // 0.37 m, so the crouched eye ended up 8 cm *below* the shoulder - inside the chest box, with a
+    // 0.1 m near plane that does not clip it away. The old test above only asserted a loose lower
+    // bound on the hips, which passed at 0.572 and never compared the body to the camera at all.
+    //
+    // The invariant is the relationship, not either number: whatever the crouch is, the eye must
+    // sit the same distance above the shoulder standing and crouched.
+    const body = build();
+    try {
+      const shoulderOffset = SHOULDER_Y - HIPS_Y;
+      settle(body, pose());
+      const standingGap = CONFIG.player.standEyeHeight - (body.hips.position.y + shoulderOffset);
+      settle(body, pose({ crouchAmount: 1 }));
+      const crouchedGap = CONFIG.player.crouchEyeHeight - (body.hips.position.y + shoulderOffset);
+
+      expect(crouchedGap).toBeCloseTo(standingGap, 2);
+      // ...and it is a positive gap: the eye is above the shoulder, not inside the chest.
+      expect(crouchedGap).toBeGreaterThan(0.1);
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('keeps the crouched feet on the ground rather than through it', () => {
+    // A hip that drops 0.70 m with straight legs puts the feet 0.22 m below the floor - measured.
+    // The fold is derived from the hip height, so the feet stay planted at any crouch.
+    const body = build();
+    try {
+      settle(body, pose({ crouchAmount: 1 }));
+      body.root.updateMatrixWorld(true);
+      const foot = new THREE.Vector3();
+      body.legLeft.end.getWorldPosition(foot);
+      expect(foot.y).toBeGreaterThan(-0.05);
+      expect(foot.y).toBeLessThan(0.12);
     } finally {
       body.dispose();
     }
@@ -499,6 +553,92 @@ describe('where a joint keeps its velocity', () => {
         posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, STEP);
       }
       expect(body.legLeft.root.rotation.x).toBeCloseTo(settled, 6);
+    } finally {
+      body.dispose();
+    }
+  });
+});
+
+describe('the target filter', () => {
+  // **The jerk this is for.** A spring makes a joint's *position* continuous but not its
+  // acceleration: when the pose switches from a walk to a vault the target jumps by a radian in one
+  // frame, and `a = w^2 (target - x)` jumps with it. Measured on the arm root at a walk-to-vault
+  // transition, the velocity went from 0 to -0.139 rad/frame in a single frame. The target is now
+  // approached exponentially, so the joint follows something continuous in position *and* velocity.
+
+  it('turns a step change of target into a smooth acceleration, not a snap', () => {
+    // Walk for a second, then switch to a vault pose in one frame - the worst case the game has.
+    //
+    // **Measured at the transition frame, not as a maximum over the sequence.** A max over the whole
+    // run is dominated by the ordinary walk cycle (0.083 rad/frame unfiltered), which is *below* the
+    // snap it is meant to catch - so a bound on the max cannot tell the two apart. The velocity jump
+    // on the frame the target changes is the signal: 0.139 rad/frame unfiltered, 0.026 filtered.
+    const frames: PlayerPose[] = [];
+    let phase = 0;
+    for (let index = 0; index < 60; index += 1) {
+      phase += 0.2;
+      frames.push(pose({ gaitPhase: phase, strideAmount: 1, speedFraction: 1 }));
+    }
+    for (let index = 0; index < 26; index += 1) {
+      frames.push(
+        pose({
+          gaitPhase: phase,
+          armAction: 'reach',
+          legAction: 'tuck',
+          maneuver: 'vault',
+          maneuverProgress: index / 26,
+          strideAmount: 0.2,
+        }),
+      );
+    }
+
+    const body = buildPlayerBody();
+    try {
+      let previous = body.armLeft.root.rotation.x;
+      let previousVelocity = 0;
+      let atTransition = 0;
+      for (let index = 0; index < frames.length; index += 1) {
+        posePlayerBody(body, frames[index] as PlayerPose, CONFIG, STEP);
+        const value = body.armLeft.root.rotation.x;
+        const velocity = value - previous;
+        // Frame 60 is the first vault frame: the target changed between 59 and 60.
+        if (index === 60) atTransition = Math.abs(velocity - previousVelocity);
+        previousVelocity = velocity;
+        previous = value;
+      }
+      expect(atTransition).toBeLessThan(0.06);
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('cannot oscillate, because an exponential approach has no velocity to overshoot', () => {
+    // A *spring* on the target was tried first and was unstable at the rates needed: the foot joint
+    // settled into a period-2 oscillation of 0.117 rad/frame, worse than the jerk it was meant to
+    // remove. An exponential approach is monotonic by construction, so this asserts the property
+    // that made it the right choice rather than a number.
+    const body = buildPlayerBody();
+    try {
+      settle(body, pose({ legAction: 'stride', strideAmount: 1, gaitPhase: 1 }));
+      const start = body.legLeft.end.rotation.x;
+      // A hard step to a very different target.
+      const target = pose({ legAction: 'tuck', maneuver: 'vault', maneuverProgress: 0 });
+      let previous = start;
+      let reversals = 0;
+      let direction = 0;
+      for (let frame = 0; frame < 120; frame += 1) {
+        posePlayerBody(body, target, CONFIG, STEP);
+        const value = body.legLeft.end.rotation.x;
+        const step = value - previous;
+        if (Math.abs(step) > 1e-6) {
+          const sign = Math.sign(step);
+          if (direction !== 0 && sign !== direction) reversals += 1;
+          direction = sign;
+        }
+        previous = value;
+      }
+      // One reversal at most: the approach may settle, but it must not ring.
+      expect(reversals).toBeLessThanOrEqual(1);
     } finally {
       body.dispose();
     }
