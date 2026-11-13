@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.2.0` |
+| Version | `2.2.1` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1322 in 51 files |
+| Tests | 1323 in 51 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -61,6 +61,8 @@ Generated from one seed, so it is the same city every time a bug is found in it:
 
 **Every roof is reachable, not every neighbour jumpable.** V2.2.0 relaxes the rule the grid was built on: a street wider than a running jump is crossed by a gangway, a skybridge or a ladder, all of which the generator builds. Keeping every street inside the jump is exactly what made every footprint the same size, so the streets now vary and the narrow ones — the majority — are still jumpable.
 
+**The run starts in the city, not on the landmark.** V2.2.1 moved the spawn off the skyscrapers: V2.2.0 picked the tallest roof near the centre, which is by definition a landmark, and a landmark is the one building in the map that is meant to be *reached* rather than started on. The spawn is now the highest ordinary roof in the central ring, so the skyline is something to climb.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -98,7 +100,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1322 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1323 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

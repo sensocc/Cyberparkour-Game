@@ -845,6 +845,21 @@ describe('the run, which is on the roofs', () => {
     expect(() => buildLevel(city, BUILD)).not.toThrow();
   });
 
+  it('does not start the player on a skyscraper', () => {
+    // **The spawn is the city, not the landmark.** V2.2.0 picked the tallest roof near the centre,
+    // which is by definition a skyscraper - and a landmark is the one building in the map that is
+    // meant to be *reached* rather than started on. The spawn is now the highest ordinary roof in
+    // the ring, so the skyline is something to climb.
+    //
+    // The cell is derived the same way the generator derives it, and the landmark list comes from
+    // the generator rather than being inferred from height: a test that guesses which buildings
+    // are landmarks is measuring its own guess.
+    const pitch = 62;
+    const cellOf = (value: number): number => Math.floor((value + 500) / pitch);
+    const spawnCell = `${cellOf(city.spawn.position.x)}|${cellOf(city.spawn.position.z)}`;
+    expect(generateCity().landmarks).not.toContain(spawnCell);
+  });
+
   it('puts every checkpoint and pickup on a roof, and the finish on the ground with the cat', () => {
     for (const point of [...city.checkpoints, ...(city.collectibles ?? [])]) {
       // The phone is a secret and hides on the roof furthest from the spawn like the rest, so it is

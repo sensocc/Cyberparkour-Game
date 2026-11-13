@@ -866,15 +866,31 @@ export function generateCity(options: CityOptions = {}): CityParts {
     const entry = roofs[Math.min(roofs.length - 1, Math.max(0, Math.round(fraction * (roofs.length - 1))))]!;
     return { id, position: { x: entry.spot.x, y: entry.spot.y + 0.02, z: entry.spot.z } };
   };
-  // **The spawn is a high roof near the middle, not the middle of a sorted list.** The list is
-  // ordered by `x + z`, so its midpoint is a diagonal position rather than the centre of the map -
-  // and with a skyline that now falls towards the edge, that midpoint can be a low-rise on the
-  // outskirts. The run should start in the city, so the origin is the tallest roof within a
-  // quarter of the map's radius of the centre.
+  // **The spawn is a high roof near the middle - but never a skyscraper.**
+  //
+  // The list is ordered by `x + z`, so its midpoint is a diagonal position rather than the centre
+  // of the map, and with a skyline that falls towards the edge that midpoint can be a low-rise on
+  // the outskirts. The run should start in the city, so the origin is a high roof within a quarter
+  // of the map's radius of the centre.
+  //
+  // **Not the tallest one, though.** V2.2.0 picked the tallest roof in that ring, which is exactly
+  // a landmark - and a landmark is the one building in the city that is meant to be *reached*
+  // rather than started on. The spawn is the highest roof in the ring that is not a skyscraper's
+  // cell, so the run begins in the city and the skyline is something to climb.
+  const cellOf = (value: number): number => Math.floor((value + GRID_SPAN / 2) / config.pitch);
+  const isSkyscraper = (entry: (typeof roofs)[number]): boolean =>
+    skyscrapers.has(cellKey(cellOf(entry.spot.x), cellOf(entry.spot.z)));
+  const nearCentre = roofs.filter(
+    (entry) => Math.hypot(entry.spot.x, entry.spot.z) < GRID_SPAN * 0.25,
+  );
   const origin =
-    roofs
-      .filter((entry) => Math.hypot(entry.spot.x, entry.spot.z) < GRID_SPAN * 0.25)
-      .sort((a, b) => b.spot.y - a.spot.y)[0] ?? roofs[Math.min(roofs.length - 1, Math.round(roofs.length / 2))]!;
+    nearCentre
+      .filter((entry) => !isSkyscraper(entry))
+      .sort((a, b) => b.spot.y - a.spot.y)[0] ??
+    // A city with no ordinary roof near the middle is not a city this generator can make, but a
+    // fallback that cannot land on a landmark is still the right shape: any roof at all.
+    roofs.filter((entry) => !isSkyscraper(entry))[0] ??
+    roofs[Math.min(roofs.length - 1, Math.round(roofs.length / 2))]!;
 
   // ------------------------------------------------------------- the cat, and the finish
   //
