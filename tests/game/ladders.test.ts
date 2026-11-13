@@ -179,7 +179,12 @@ function climb(
 
   // Climb speed is 2.4 m/s, so a forty-metre ladder is a thousand steps. The ceiling here is the
   // longest ladder in the city plus room to overshoot; the loop leaves as soon as the top is met.
-  for (let step = 0; step < 1600; step += 1) {
+  //
+  // **Sized to the tallest building, not to the old skyline.** 1600 steps is 64 m of climb, which
+  // was the longest ladder when the city topped out at 58 m. V2.2.0's skyscrapers reach 114 m, so
+  // the budget ran out mid-climb and nine ladders "failed" at exactly 64 m - a test artefact, not
+  // a blocked column. 4000 steps is 160 m, comfortably past the tallest thing in the map.
+  for (let step = 0; step < 4000; step += 1) {
     stepPlayer(state, input, STEP, options);
     highest = Math.max(highest, state.position.y);
     if (state.climbId !== null) grabbed = true;

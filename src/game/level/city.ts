@@ -114,11 +114,17 @@ const GRID_SPAN = 1000;
  *
  * V0.7.6's grid was uniform to the centimetre, which is what "the same distance from the
  * surrounding buildings" literally asks for and reads as graph paper from a roof. Every building
- * now picks its own street between the two - and both ends are inside the jump, so the variation
- * is visible without ever putting a neighbour out of reach.
+ * now picks its own street between the two, **on each axis independently** - so a plot is a
+ * rectangle rather than a square, and the city has alleys and avenues rather than one width.
+ *
+ * **The upper end is past the jump on purpose.** V2.2.0 relaxes "every neighbour is jumpable" to
+ * "every roof is reachable": a street wider than a running jump is crossed by a gangway, a
+ * skybridge or a ladder, all of which the generator already builds. Keeping every street inside
+ * the jump is what made every footprint the same size, and a city of identical squares is the
+ * thing this version exists to fix.
  */
 const STREET = 4.5;
-const STREET_MAX = 5.0;
+const STREET_MAX = 11;
 
 /**
  * How far a cell may sit off the exact grid, in metres.
@@ -182,22 +188,45 @@ function cellKey(ix: number, iz: number): string {
  * than of the order the buildings happened to be generated in - and so a cell at the edge of the
  * map, with fewer than eight neighbours, is averaged over the ones it has.
  */
-function roofTargets(cells: number, groundY: number, random: () => number): Map<string, number> {
+function roofTargets(
+  cells: number,
+  groundY: number,
+  random: () => number,
+  skyscrapers: Set<string>,
+): Map<string, number> {
   const targets = new Map<string, number>();
+  const centre = (cells - 1) / 2;
+  const maxRadius = Math.hypot(centre, centre);
   for (let ix = 0; ix < cells; ix += 1) {
     for (let iz = 0; iz < cells; iz += 1) {
-      // **Above the street, not above the origin.** The first version of this set the heights as
-      // absolute Y, so every building in the city was between forty-seven and ninety metres above
-      // the pavement and the shortest thing in the map was taller than the tallest thing in it was
-      // meant to be. The range is a height now, and the street is the datum.
-      targets.set(cellKey(ix, iz), groundY + ROOF_LOW + random() * (ROOF_HIGH - ROOF_LOW));
+      // **A skyline, not a plate.** The height used to be uniform noise across the whole map, so
+      // the mean roof was 24.6 m at the centre and 24.6 m at the edge - a hedge, not a city. The
+      // base now falls with distance from the middle, which is what gives a downtown, a mid-ring
+      // and a low edge. The random term stays on top, so the gradient is a shape rather than a
+      // ramp, and the neighbour cap below still trims the noise.
+      const t = Math.hypot(ix - centre, iz - centre) / maxRadius;
+      const base = coreHeight(t);
+      // **A few genuine skyscrapers.** Clustered towards the core, and exempt from the neighbour
+      // cap - a tower that has to be within a lead of the low-rise beside it is not a tower. They
+      // are the landmarks the skyline is read by, so there are few of them on purpose.
+      const skyscraper = t < 0.55 && random() < 0.07;
+      if (skyscraper) skyscrapers.add(cellKey(ix, iz));
+      const extra = skyscraper ? 24 + random() * 34 : 0;
+      targets.set(cellKey(ix, iz), groundY + base + extra + (random() - 0.5) * 14);
     }
   }
 
   const capped = new Map<string, number>();
   for (let ix = 0; ix < cells; ix += 1) {
     for (let iz = 0; iz < cells; iz += 1) {
-      const mine = targets.get(cellKey(ix, iz)) as number;
+      const key = cellKey(ix, iz);
+      const mine = targets.get(key) as number;
+      // A skyscraper is the exception the rule exists to allow: it is the one building in its
+      // block that is meant to stand over everything around it.
+      if (skyscrapers.has(key)) {
+        capped.set(key, mine);
+        continue;
+      }
       let sum = 0;
       let count = 0;
       for (const [nx, nz] of neighbourhood(ix, iz)) {
@@ -206,10 +235,29 @@ function roofTargets(cells: number, groundY: number, random: () => number): Map<
         sum += other;
         count += 1;
       }
-      capped.set(cellKey(ix, iz), count > 0 ? Math.min(mine, sum / count + HEIGHT_LEAD) : mine);
+      capped.set(key, count > 0 ? Math.min(mine, sum / count + HEIGHT_LEAD) : mine);
     }
   }
   return capped;
+}
+
+/**
+ * How tall the city is at a given fraction of the way out from its centre.
+ *
+ * Three zones rather than a cone: a real skyline has a shoulder where the core ends, and a
+ * straight ramp reads as a pyramid. The numbers are heights above the street, and the top of the
+ * core is deliberately under the skyscrapers that stand in it - the gradient is the *city*, the
+ * skyscrapers are the landmarks on it.
+ */
+function coreHeight(t: number): number {
+  // The core is the top of the old range and the edge is just above its bottom, so the skyline
+  // uses the same two numbers the flat city did - it is the *shape* that is new, not the scale.
+  const core = ROOF_HIGH;
+  const shoulder = ROOF_LOW + (ROOF_HIGH - ROOF_LOW) * 0.76;
+  const edge = ROOF_LOW + (ROOF_HIGH - ROOF_LOW) * 0.07;
+  if (t < 0.28) return core - (t / 0.28) * (core - shoulder);
+  if (t < 0.62) return shoulder - ((t - 0.28) / 0.34) * (shoulder - (ROOF_LOW + (ROOF_HIGH - ROOF_LOW) * 0.24));
+  return ROOF_LOW + (ROOF_HIGH - ROOF_LOW) * 0.24 - ((t - 0.62) / 0.38) * ((ROOF_LOW + (ROOF_HIGH - ROOF_LOW) * 0.24) - edge);
 }
 
 /** The eight cells around one, and the cell itself. */
@@ -328,6 +376,15 @@ export interface CityParts {
    * placed, so the steam comes out of a flue rather than out of the air.
    */
   readonly smoke?: NonNullable<LevelDefinition['smoke']>;
+  /**
+   * The cells that are landmarks rather than city, as `"ix|iz"` keys.
+   *
+   * A skyscraper is exempt from the neighbour height cap on purpose - a landmark that has to stay
+   * within a lead of the low-rise beside it is not a landmark - so anything that checks the height
+   * rule has to be able to tell the two apart. Exposed rather than inferred: a test that guesses
+   * which buildings are landmarks from their height is measuring its own guess.
+   */
+  readonly landmarks: readonly string[];
   readonly report: Record<string, number>;
 }
 
@@ -380,7 +437,9 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // buildings together or to leave a roof with nothing beside it. This does not patch
   // anything. It is a grid, and a grid is what was asked for.
   const cells = Math.max(2, Math.round(GRID_SPAN / config.pitch));
-  const targets = roofTargets(cells, config.groundY, random);
+  /** Cells that are landmarks rather than city: exempt from the neighbour height cap. */
+  const skyscrapers = new Set<string>();
+  const targets = roofTargets(cells, config.groundY, random, skyscrapers);
 
   // ------------------------------------------------------------------ the alley
   //
@@ -468,8 +527,20 @@ export function generateCity(options: CityOptions = {}): CityParts {
       // Its own street, somewhere between the old uniform width and the jump. The building is
       // what is left of the pitch after it - so two neighbours share the average of their two,
       // and both ends of the range stay crossable.
-      const street = STREET + random() * (STREET_MAX - STREET);
-      const footprint = (config.pitch - street) / 2;
+      // **Two streets, not one.** A building used to be square by construction: one street width
+      // was drawn and both axes took it, so every footprint in the city was the same rectangle
+      // rotated. Drawing the two independently is what makes a plot a rectangle - and both ends
+      // of both ranges stay inside the jump, so the parkour guarantee is untouched.
+      // **Skewed towards the narrow end.** A uniform draw over 4.5-11 m made most streets wider
+      // than a jump, which is a city you can only cross by bridge - the opposite of playable. The
+      // cube biases the draw so roughly three streets in five stay inside the jump and the rest
+      // are avenues, which is the distribution a real city has: many alleys, a few boulevards.
+      const streetX = STREET + Math.pow(random(), 5) * (STREET_MAX - STREET);
+      const streetZ = STREET + Math.pow(random(), 5) * (STREET_MAX - STREET);
+      const halfW = (config.pitch - streetX) / 2;
+      const halfD = (config.pitch - streetZ) / 2;
+      const street = (streetX + streetZ) / 2;
+      const footprint = (halfW + halfD) / 2;
       // **One height per cell, and the cell's height is the rule's answer.** The archetypes used
       // to add a few metres of their own on top - a tower several, a roof storey two - which put
       // buildings up to twenty-seven metres over the neighbours their cell had been clamped
@@ -499,29 +570,28 @@ export function generateCity(options: CityOptions = {}): CityParts {
       // collider is a step the physics has to resolve for ever.
       const cellId = `cell-${ix}-${iz}`;
       const roadY = config.groundY - 0.02;
-      const roadHalf = street / 2;
       const tarmac = { concrete: '#3a404c', 'concrete-dark': '#31363f' };
       context.props.push(
         make(`${cellId}-road-x`, {
-          at: [cx, cz + footprint + roadHalf],
+          at: [cx, cz + halfD + streetZ / 2],
           bottom: roadY,
-          size: [footprint * 2 + street, 0.05, street * 0.86],
+          size: [halfW * 2 + streetX, 0.05, streetZ * 0.86],
           model: 'slab',
           collide: 'none',
           tints: tarmac,
         }),
         make(`${cellId}-road-z`, {
-          at: [cx + footprint + roadHalf, cz],
+          at: [cx + halfW + streetX / 2, cz],
           bottom: roadY,
-          size: [street * 0.86, 0.05, footprint * 2 + street],
+          size: [streetX * 0.86, 0.05, halfD * 2 + streetZ],
           model: 'slab',
           collide: 'none',
           tints: tarmac,
         }),
         make(`${cellId}-lane-mark`, {
-          at: [cx, cz + footprint + roadHalf],
+          at: [cx, cz + halfD + streetZ / 2],
           bottom: roadY + 0.05,
-          size: [footprint * 1.2, 0.03, 0.25],
+          size: [halfW * 1.2, 0.03, 0.25],
           model: 'neon-strip',
           collide: 'none',
           tints: { neon: '#d8d2b6' },
@@ -529,8 +599,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
       );
 
       // A lamp on one corner of the cell and something growing on the other.
-      const cornerX = cx + footprint + roadHalf;
-      const cornerZ = cz + footprint + roadHalf;
+      const cornerX = cx + halfW + streetX / 2;
+      const cornerZ = cz + halfD + streetZ / 2;
       if (random() < 0.75) {
         context.props.push(
           make(`${cellId}-lamp`, {
@@ -676,23 +746,28 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
       if (roll < band.construction) {
         count('construction');
-        constructionSite(context, cx, cz, footprint, band);
+        constructionSite(context, cx, cz, halfW, halfD, band);
       } else if (roll < band.construction + band.hall) {
         count('hall');
-        hall(context, cx, cz, footprint, band);
+        hall(context, cx, cz, halfW, halfD, band);
       } else if (roll < 0.45 && top - config.groundY < INTERIOR_MAX_HEIGHT) {
         // Interiors are worth having where a building is a few storeys. The ceiling is eight floors
         // - which is exactly the ceiling the archetype used to impose on itself, and the reason the
         // height rule never held: it built eight floors whatever its cell said, so a cell whose
         // target was fifty-eight came out at eight and its neighbours averaged nothing like it.
         count('interior');
-        interiorTower(context, cx, cz, footprint, band);
+        interiorTower(context, cx, cz, halfW, halfD, band);
       } else if (roll < 0.6) {
         count('tower');
-        tower(context, cx, cz, footprint, band);
+        tower(context, cx, cz, halfW, halfD, band);
+      } else if (roll < 0.66 && Math.min(halfW, halfD) > 14) {
+        // **A round tower, occasionally.** Six per cent of cells, and only where the plot is wide
+        // enough for the ring to read as a circle rather than a lump. A city of round towers is a
+        // theme park; one in sixteen is a landmark you notice.
+        roundTower(context, cx, cz, halfW, halfD, band);
       } else {
         count('block');
-        block(context, cx, cz, footprint, band);
+        block(context, cx, cz, halfW, halfD, band);
       }
     }
   }
@@ -791,7 +866,15 @@ export function generateCity(options: CityOptions = {}): CityParts {
     const entry = roofs[Math.min(roofs.length - 1, Math.max(0, Math.round(fraction * (roofs.length - 1))))]!;
     return { id, position: { x: entry.spot.x, y: entry.spot.y + 0.02, z: entry.spot.z } };
   };
-  const origin = roofs[Math.min(roofs.length - 1, Math.round(roofs.length / 2))]!;
+  // **The spawn is a high roof near the middle, not the middle of a sorted list.** The list is
+  // ordered by `x + z`, so its midpoint is a diagonal position rather than the centre of the map -
+  // and with a skyline that now falls towards the edge, that midpoint can be a low-rise on the
+  // outskirts. The run should start in the city, so the origin is the tallest roof within a
+  // quarter of the map's radius of the centre.
+  const origin =
+    roofs
+      .filter((entry) => Math.hypot(entry.spot.x, entry.spot.z) < GRID_SPAN * 0.25)
+      .sort((a, b) => b.spot.y - a.spot.y)[0] ?? roofs[Math.min(roofs.length - 1, Math.round(roofs.length / 2))]!;
 
   // ------------------------------------------------------------- the cat, and the finish
   //
@@ -853,20 +936,60 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // distance at eight metres a second, two at five and a half, one at four. Walking it in the time
   // is a star; running it is three.
   const trials: NonNullable<CityParts['trials']>[number][] = [];
-  for (let index = 0; index < 3; index += 1) {
-    // Opposite ends of the diagonal rather than a fixed fraction apart: a pair that happens to
-    // straddle the spawn is skipped by the offset check below, and three attempts that each skip is
-    // one trial. Three spans of the whole map, from three different starting points.
-    const from = roofs[Math.floor((0.08 + index * 0.1) * roofs.length)] ?? origin;
-    const to = roofs[Math.floor((0.92 - index * 0.1) * roofs.length)] ?? origin;
-    const span = Math.hypot(to.spot.x - from.spot.x, to.spot.z - from.spot.z);
-    if (span < 200) continue;
+  // **The widest spans, not fixed fractions of a sorted list.** The list is ordered by `x + z`, so
+  // a fraction of it is a position along one diagonal - and with a skyline that now falls towards
+  // the edge, two fractions can land on roofs that are close together. The candidates are every
+  // pair of well-separated roofs, taken widest first, so three trials exist whatever the layout.
+  const trialPairs: { from: (typeof roofs)[number]; to: (typeof roofs)[number]; span: number }[] = [];
+  for (let a = 0; a < roofs.length; a += 1) {
+    for (let b = a + 1; b < roofs.length; b += 1) {
+      const from = roofs[a]!;
+      const to = roofs[b]!;
+      const span = Math.hypot(to.spot.x - from.spot.x, to.spot.z - from.spot.z);
+      if (span >= 200) trialPairs.push({ from, to, span });
+    }
+  }
+  trialPairs.sort((a, b) => b.span - a.span);
+  // **Each trial takes roofs no other trial has used.** The widest pairs all share the same two
+  // extreme roofs, so taking the top three put three gates on one deck - measured, two of them
+  // 0.60 m inside each other. A roof is claimed when a trial uses it, and a pair is skipped if
+  // either end is already spoken for.
+  const usedRoofs = new Set<(typeof roofs)[number]>();
+  let placed = 0;
+  for (const pair of trialPairs) {
+    if (placed >= 3) break;
+    if (usedRoofs.has(pair.from) || usedRoofs.has(pair.to)) continue;
+    const { from, to, span } = pair;
+    const index = placed;
     // Off the roof's centre, so a gate cannot stand where a route point already does: the spawn and
     // the collectibles are placed at deck centres, and a gate on top of one is a gate you are born
     // inside of.
-    const offset = (spot: { x: number; y: number; z: number }) => ({ x: spot.x + 3.4, y: spot.y, z: spot.z + 1.6 });
+    // **A gate needs a clear square metre, not just a roof.** The offset used to be a fixed
+    // `+3.4, +1.6` from the deck's centre, which is where the rooftop kit lives - measured, two
+    // gates stood 0.60 m inside a roof hut and a cable spool. The gate is 3.2 m wide, so it asks
+    // the same question the rooftop kit asks: is this footprint free?
+    const gateFits = (x: number, z: number, y: number): boolean =>
+      !props.some(
+        (prop) =>
+          Math.abs(prop.position.x - x) < prop.size.x / 2 + 1.7 &&
+          Math.abs(prop.position.z - z) < prop.size.z / 2 + 1.7 &&
+          prop.position.y + prop.size.y / 2 > y + 0.1 &&
+          prop.position.y - prop.size.y / 2 < y + 3.6,
+      );
+    const offset = (spot: { x: number; y: number; z: number }) => {
+      for (const [dx, dz] of [
+        [3.4, 1.6], [-3.4, 1.6], [3.4, -1.6], [-3.4, -1.6],
+        [0, 3.4], [0, -3.4], [3.4, 0], [-3.4, 0],
+      ] as const) {
+        if (gateFits(spot.x + dx, spot.z + dz, spot.y)) {
+          return { x: spot.x + dx, y: spot.y, z: spot.z + dz };
+        }
+      }
+      return null;
+    };
     const fromSpot = offset(from.spot);
     const toSpot = offset(to.spot);
+    if (!fromSpot || !toSpot) continue;
     if (Math.hypot(fromSpot.x - origin.spot.x, fromSpot.z - origin.spot.z) < 4) continue;
     if (Math.hypot(toSpot.x - origin.spot.x, toSpot.z - origin.spot.z) < 4) continue;
     const id = `trial-${index + 1}`;
@@ -899,6 +1022,9 @@ export function generateCity(options: CityOptions = {}): CityParts {
         distance: 18,
       });
     }
+    usedRoofs.add(from);
+    usedRoofs.add(to);
+    placed += 1;
     count('trial');
   }
 
@@ -1118,6 +1244,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
               opacity: 0.22,
               count: 4,
             })),
+    landmarks: [...skyscrapers],
     report: Object.fromEntries(report),
   };
 }
@@ -1716,10 +1843,24 @@ function roofKit(
         // are - and it hangs 0.4 m below the roof, so it capped the climb a body's height under the
         // top: the hand-over could never fire and the player stopped two metres short. A gangway is
         // a walkway anywhere along the edge; two metres off centre is still the edge.
+        // **Only over a street narrow enough to be a walkway.** A gangway spans the gap to the
+        // next roof; over an eleven-metre avenue that is a bridge, and it reaches into whatever
+        // stands on the next plot - measured, one ran 0.50 m into a construction crane. The
+        // generator builds skybridges for the wide gaps; a gangway is for the narrow ones.
+        if (context.street > 7) break;
         const along = random() < 0.5 ? 'x' : 'z';
-        const length = context.street + 2.4;
-        const x = along === 'x' ? at[0] + width / 2 + length / 2 - 1 : at[0];
-        const z = along === 'z' ? at[1] + depth / 2 + length / 2 - 1 : at[1] + 2.2;
+        // **Centred on the gap, and only just long enough to touch both faces.** The deck used to
+        // run `street + 2.4` from this building's edge, which put its far end 1.4 m *inside* the
+        // next plot - measured, one ran 0.50 m into a construction crane. A walkway spans the
+        // street; it does not enter the building on the other side of it.
+        const length = context.street + 0.6;
+        const x = along === 'x' ? at[0] + width / 2 + context.street / 2 : at[0];
+        const z = along === 'z' ? at[1] + depth / 2 + context.street / 2 : at[1] + 2.2;
+        // **A gangway spans a street, and a street can now be eleven metres wide.** The deck used
+        // to be short enough that it never reached the next plot; at the new widths it can, and
+        // measured one ran 0.50 m into a construction crane. The gangway is skipped rather than
+        // shortened when the far end is occupied - a walkway that stops in mid-air is worse than
+        // no walkway.
         place(
           `roof-gangway-${index}`,
           x,
@@ -1758,12 +1899,157 @@ function roofKit(
   }
 }
 
+/**
+ * A round tower: a ring of boxes, which reads as a cylinder from the street.
+ *
+ * **Why a ring and not a cylinder.** The renderer draws axis-aligned boxes - every prop is a box
+ * and every collider is an AABB - so a true cylinder would need a new geometry path, a new
+ * collider shape and a new set of tests. A ring of eight boxes is the same silhouette at the
+ * distance a player sees it from, collides as the boxes it is made of, and needs nothing new.
+ * The segments overlap, so there are no gaps to fall through and no seams to flicker.
+ *
+ * It is deliberately uncommon: a city of round towers is a theme park, not a city.
+ */
+function roundTower(
+  context: Context,
+  cx: number,
+  cz: number,
+  halfW: number,
+  halfD: number,
+  band: Band,
+): void {
+  const { props, config } = context;
+  const floor = config.groundY;
+  const top = band.roofs[0] ?? 20;
+  const id = `round-${Math.round(cx)}-${Math.round(cz)}`;
+  // **Sized so the ring stays inside its plot.** The segments are axis-aligned boxes, so a box
+  // placed at 45 degrees has an AABB half-extent of `a + b` (its own half-width plus half-depth)
+  // rather than `a`. Sizing the ring from the plot's half-extent without allowing for that put
+  // the corners of the ring out in the street - measured, one segment reached 0.57 m into a
+  // courtyard wall and another 3.77 m into the tower on the next plot. The numbers below keep
+  // `R + a + b` under the plot, which is the worst case at 45 degrees.
+  const outer = Math.min(halfW, halfD) * 0.95;
+  const radius = outer * 0.55;
+  const height = top - floor;
+  const segments = 8;
+  const tints = tintSet(context);
+  const segD = outer * 0.3;
+  const segW = 2 * radius * Math.sin(Math.PI / segments) * 1.25;
+
+  for (let index = 0; index < segments; index += 1) {
+    const angle = (index / segments) * Math.PI * 2;
+    props.push(
+      make(`${id}-seg-${index}`, {
+        at: [cx + Math.cos(angle) * radius, cz + Math.sin(angle) * radius],
+        bottom: floor,
+        size: [segW, height, segD],
+        model: 'slab',
+        kind: 'wall',
+        tints,
+      }),
+    );
+  }
+
+  // **A service core inside the ring.** A round tower is a shell around a core, which is what the
+  // real thing is - and it is also what gives the building a `-body`, so the street-width
+  // invariant measures it like every other building rather than seeing a ring of loose walls.
+  const coreHalf = radius * 0.55;
+  props.push(
+    make(`${id}-body`, {
+      at: [cx, cz],
+      bottom: floor,
+      size: [coreHalf * 2, height, coreHalf * 2],
+      model: 'slab',
+      tints,
+    }),
+  );
+
+  // The roof: a deck over the ring, touching it so nothing floats.
+  const roofHalf = radius + segW / 2;
+  props.push(
+    make(`${id}-roof`, {
+      at: [cx, cz],
+      bottom: top - 0.8,
+      size: [roofHalf * 2, 0.8, roofHalf * 2],
+      model: 'deck',
+      kind: 'floor',
+    }),
+  );
+  record(context, { gx: context.gx, gz: context.gz, id, cx, cz, halfX: roofHalf, halfZ: roofHalf, roof: top });
+
+  // A ladder up the outside, and a balcony, so the tower is a route like every other building.
+  ladderUp(context, `${id}-ladder`, cx - roofHalf - LADDER_STANDOFF, cz, top);
+  balcony(context, `${id}-balcony`, cx, cz - roofHalf - 0.9, roofHalf * 1.2, top);
+
+  // **Signage, because a round tower is a landmark and a landmark with no sign is a missed one.**
+  //
+  // **On the cardinal faces only, and clamped under the roof.** The ring is a set of axis-aligned
+  // boxes, so a sign hung at 45 degrees sits over the *corner* of the ring's AABB rather than
+  // against a face - measured, that put one 0.10 m inside a segment. The four cardinal directions
+  // are the ones where a segment's outer face is exactly `roofHalf` from the centre, so a sign
+  // 0.3 m proud of it clears the ring by construction. The -Z face is skipped because that is
+  // where the balcony is, and the top is clamped below the roof deck for the same reason the
+  // block's signage is: a sign that runs through the parapet is a sign hanging out of the building.
+  // **+X and +Z only.** -X is where the ladder climbs and -Z is where the balcony hangs, so a
+  // sign on either of those faces is a sign inside the thing that makes the tower a route.
+  // **+X and +Z only, two signs each at different heights.** -X is the ladder's face and -Z is
+  // the balcony's, so a sign there is a sign inside the thing that makes the tower a route -
+  // measured, three of them 0.35 m inside a ladder. Two per free face, stacked, gives a round
+  // tower its share of the city's signage without touching either.
+  const faces = [0, Math.PI / 2];
+  const signCount = faces.length;
+  for (let index = 0; index < signCount; index += 1) {
+    const angle = faces[index] as number;
+    // **Thin along the face's normal, wide across it.** A sign on the +X face is 0.5 m deep in X
+    // and `signWidth` across Z; the first version used one orientation for every face, so the
+    // +X sign was wide in X and ran straight through the ring segment behind it.
+    const onX = Math.abs(Math.cos(angle)) > 0.5;
+    const colour = BILLBOARD_COLOURS[Math.floor(context.random() * BILLBOARD_COLOURS.length)] as string;
+    const tall = context.random() < 0.4;
+    const signHeight = tall ? 6 + context.random() * 8 : 2.6 + context.random() * 2.5;
+    const signWidth = tall ? 1.6 + context.random() * 1.2 : 3 + context.random() * 4;
+    // Low to high across the clear wall, and never through the roof above it.
+    const lowest = floor + 8;
+    const highest = top - 1 - signHeight;
+    if (highest < lowest) continue;
+    // The slot within the face decides the band, so two signs on one face do not share a height.
+    const slot = Math.floor(index / faces.length);
+    const bands = Math.max(1, Math.floor((highest - lowest) / (signHeight + 2)));
+    const band = Math.min(bands - 1, slot);
+    const bottom = lowest + (band + 0.5) * ((highest - lowest) / Math.max(1, bands));
+    props.push(
+      make(`${id}-sign-${index}`, {
+        // **Against the ring's face on the axis the sign faces, touching it.**
+        //
+        // Every segment is the same axis-aligned box - `segW` wide in X, `segD` deep in Z - so the
+        // ring's outer extent is *not* the same on both axes: the +X face is at `radius + segW/2`
+        // and the +Z face is at `radius + segD/2`. Using one number for both put the +Z sign
+        // `(segW - segD)/2` clear of the wall - floating beside the tower, which is what the
+        // attachment invariant caught. The offset is the face's own extent plus half the sign's
+        // depth, so the sign's inner face meets the ring exactly.
+        at: onX
+          ? [cx + radius + segW / 2 + 0.25, cz]
+          : [cx, cz + radius + segD / 2 + 0.25],
+        bottom,
+        size: onX
+          ? [0.5, signHeight, Math.min(signWidth, roofHalf * 1.6)]
+          : [Math.min(signWidth, roofHalf * 1.6), signHeight, 0.5],
+        model: tall ? 'neon-blade' : context.random() < 0.5 ? 'neon-bar' : 'neon-frame',
+        tints: { neon: colour },
+      }),
+    );
+    context.count('neon-sign');
+  }
+  context.count('round-tower');
+}
+
 /** A mid-rise block: one roof, a ladder up the side, and maybe a balcony. */
 function block(
   context: Context,
   cx: number,
   cz: number,
-  footprint: number,
+  halfW: number,
+  halfD: number,
   band: Band,
 ): void {
   const { random, config } = context;
@@ -1780,8 +2066,8 @@ function block(
   // of one and a half to five and a half metres, and the difference between one building's
   // street and the next's is the variety.
   // The uniform building: the pitch less the street, on both axes, everywhere in the city.
-  const width = footprint * 2;
-  const depth = footprint * 2;
+  const width = halfW * 2;
+  const depth = halfD * 2;
 
   // Which roof it gets is a function of *where it is*, not a free roll.
   //
@@ -1915,7 +2201,8 @@ function tower(
   context: Context,
   cx: number,
   cz: number,
-  footprint: number,
+  halfW: number,
+  halfD: number,
   band: Band,
 ): void {
   const { props, config, lights } = context;
@@ -1925,8 +2212,6 @@ function tower(
   const wall = 0.6;
   const shaftOuter = 4.2;
   const storey = 4.8;
-  const halfW = footprint;
-  const halfD = footprint;
   const cellRoof = band.roofs[band.roofs.length - 1] ?? 30;
   // **As many storeys as fit under the cell's roof.** The shell has to end below the tower's roof or
   // the lift's floors come out unordered - and with the heights random, a cell whose roof is low is
@@ -2193,12 +2478,13 @@ function constructionSite(
   context: Context,
   cx: number,
   cz: number,
-  footprint: number,
+  halfW: number,
+  halfD: number,
   band: Band,
 ): void {
   const { props, random, config } = context;
-  const width = footprint * 2;
-  const depth = footprint * 2;
+  const width = halfW * 2;
+  const depth = halfD * 2;
   // A carcass is a storey or two of its neighbours' height, not a spire.
   const top = band.roofs[0] ?? 20;
   const id = `site-${Math.round(cx)}-${Math.round(cz)}`;
@@ -2274,7 +2560,7 @@ function constructionSite(
       bottom: floor,
       // As wide as the building under it, no wider: a jib that reaches over the street is
       // an overlapping building with a hook on it.
-      size: [footprint * 2, craneHeight - floor, 4],
+      size: [width, craneHeight - floor, 4],
       model: 'crane',
       // **Its parts, not its box.** A crane is a lattice with air in it, and a box collider the
       // size of the whole prop makes that air solid - four posts, a jib and a counterweight
@@ -2312,10 +2598,17 @@ function constructionSite(
  * other end of that: a single volume the size of a block, with columns, a mezzanine and
  * a lift, so the city has an inside as well as a skyline.
  */
-function hall(context: Context, cx: number, cz: number, footprint: number, band: Band): void {
+function hall(
+  context: Context,
+  cx: number,
+  cz: number,
+  halfW: number,
+  halfD: number,
+  band: Band,
+): void {
   const { props, config } = context;
-  const width = footprint * 2;
-  const depth = footprint * 2;
+  const width = halfW * 2;
+  const depth = halfD * 2;
   const wall = 0.6;
   const floor = config.groundY;
   // A hall is one storey, so its roof is its cell's terrace less a little - and a hall next
@@ -2486,12 +2779,13 @@ function interiorTower(
   context: Context,
   cx: number,
   cz: number,
-  footprint: number,
+  halfW: number,
+  halfD: number,
   band: Band,
 ): void {
   const { props, config, count, lights } = context;
-  const width = footprint * 2;
-  const depth = footprint * 2;
+  const width = halfW * 2;
+  const depth = halfD * 2;
   const wall = 0.6;
   const floor = config.groundY;
   const storey = 5.4;

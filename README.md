@@ -8,7 +8,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.1.1` |
+| Version | `2.2.0` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1322 in 51 files |
 | Coverage | ~91% of statements |
@@ -53,10 +53,13 @@ Wall running is a sprint into a wall at a shallow angle. Vaults, mantles, pull-u
 
 Generated from one seed, so it is the same city every time a bug is found in it:
 
-- A kilometre square, one building per cell, with streets sized so every neighbour is within a running jump.
-- Heights between twelve and fifty-eight metres above the street, capped at a few metres over the average of their neighbours.
-- Courtyards, glass towers, ~240 neon signs, rooftop furniture, and buildings you can walk into with their own lifts.
-- Seventy-six lifts serving 442 floors between them, whose lowest floor is the street — the way back up when parkour cannot reach.
+- A kilometre square, one building per cell, with streets from 3.9 m to 9.4 m — alleys and avenues rather than one width.
+- **A skyline, not a plate.** Roofs fall from a 51 m mean at the centre to 15 m at the edge, and eleven landmark skyscrapers stand up to 114 m over the city.
+- **Footprints that are not all squares.** Width and depth are drawn independently, so there are 32 distinct aspect ratios and only 20 % of buildings are square; thirteen are round towers, built as a ring of overlapping boxes.
+- Courtyards, glass towers, 234 neon signs, rooftop furniture, and buildings you can walk into with their own lifts.
+- Eighty-four lifts serving 424 floors between them, whose lowest floor is the street — the way back up when parkour cannot reach.
+
+**Every roof is reachable, not every neighbour jumpable.** V2.2.0 relaxes the rule the grid was built on: a street wider than a running jump is crossed by a gangway, a skybridge or a ladder, all of which the generator builds. Keeping every street inside the jump is exactly what made every footprint the same size, so the streets now vary and the narrow ones — the majority — are still jumpable.
 
 ## Movement
 
