@@ -866,27 +866,41 @@ export function generateCity(options: CityOptions = {}): CityParts {
     const entry = roofs[Math.min(roofs.length - 1, Math.max(0, Math.round(fraction * (roofs.length - 1))))]!;
     return { id, position: { x: entry.spot.x, y: entry.spot.y + 0.02, z: entry.spot.z } };
   };
-  // **The spawn is a high roof near the middle - but never a skyscraper.**
+  // **The spawn is an ordinary roof near the middle - not a landmark, and not the tallest.**
   //
   // The list is ordered by `x + z`, so its midpoint is a diagonal position rather than the centre
   // of the map, and with a skyline that falls towards the edge that midpoint can be a low-rise on
-  // the outskirts. The run should start in the city, so the origin is a high roof within a quarter
-  // of the map's radius of the centre.
+  // the outskirts. The run should start in the city, so the origin is drawn from the roofs within
+  // a quarter of the map's radius of the centre.
   //
-  // **Not the tallest one, though.** V2.2.0 picked the tallest roof in that ring, which is exactly
-  // a landmark - and a landmark is the one building in the city that is meant to be *reached*
-  // rather than started on. The spawn is the highest roof in the ring that is not a skyscraper's
-  // cell, so the run begins in the city and the skyline is something to climb.
+  // **Two separate faults, and the second one is why this is not "the tallest".**
+  //
+  // V2.2.0 picked the tallest roof in that ring, which is by definition a landmark - and a
+  // landmark is the one building in the city that is meant to be *reached* rather than started on.
+  // V2.2.1 excluded the landmark *cells* but still took the tallest of what was left, which came
+  // out at 57 m: the 96th percentile of the city, with only ten roofs taller. Excluding the
+  // landmarks and then picking the next-tallest is the same mistake one step down - the player
+  // still starts on top of a tower and the skyline is still below them.
+  //
+  // So the spawn is the roof **closest to the city's median height**, drawn from the central ring.
+  // That is what "an ordinary building" means here, and it is a property of the output rather than
+  // a number somebody picked: the run starts at the height the city mostly is, and everything
+  // taller is something to climb to.
+  //
+  // **The median is the whole city's, not the ring's.** The ring is the tall core - its own median
+  // is 47.5 m, the 87th percentile of the map - so anchoring to it still put the player on a
+  // tower. The city-wide median is 23.3 m, which is what an ordinary roof actually is.
   const cellOf = (value: number): number => Math.floor((value + GRID_SPAN / 2) / config.pitch);
   const isSkyscraper = (entry: (typeof roofs)[number]): boolean =>
     skyscrapers.has(cellKey(cellOf(entry.spot.x), cellOf(entry.spot.z)));
   const nearCentre = roofs.filter(
     (entry) => Math.hypot(entry.spot.x, entry.spot.z) < GRID_SPAN * 0.25,
   );
+  const ordinary = nearCentre.filter((entry) => !isSkyscraper(entry));
+  const cityHeights = roofs.map((entry) => entry.spot.y).sort((a, b) => a - b);
+  const median = cityHeights[Math.floor(cityHeights.length / 2)] ?? 0;
   const origin =
-    nearCentre
-      .filter((entry) => !isSkyscraper(entry))
-      .sort((a, b) => b.spot.y - a.spot.y)[0] ??
+    [...ordinary].sort((a, b) => Math.abs(a.spot.y - median) - Math.abs(b.spot.y - median))[0] ??
     // A city with no ordinary roof near the middle is not a city this generator can make, but a
     // fallback that cannot land on a landmark is still the right shape: any roof at all.
     roofs.filter((entry) => !isSkyscraper(entry))[0] ??

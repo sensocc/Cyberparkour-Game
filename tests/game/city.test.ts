@@ -848,8 +848,7 @@ describe('the run, which is on the roofs', () => {
   it('does not start the player on a skyscraper', () => {
     // **The spawn is the city, not the landmark.** V2.2.0 picked the tallest roof near the centre,
     // which is by definition a skyscraper - and a landmark is the one building in the map that is
-    // meant to be *reached* rather than started on. The spawn is now the highest ordinary roof in
-    // the ring, so the skyline is something to climb.
+    // meant to be *reached* rather than started on.
     //
     // The cell is derived the same way the generator derives it, and the landmark list comes from
     // the generator rather than being inferred from height: a test that guesses which buildings
@@ -858,6 +857,40 @@ describe('the run, which is on the roofs', () => {
     const cellOf = (value: number): number => Math.floor((value + 500) / pitch);
     const spawnCell = `${cellOf(city.spawn.position.x)}|${cellOf(city.spawn.position.z)}`;
     expect(generateCity().landmarks).not.toContain(spawnCell);
+  });
+
+  it('starts the player on an ordinary roof, not merely a non-landmark one', () => {
+    // **The bug this is for.** V2.2.1 excluded the landmark *cells* and then took the tallest of
+    // what was left - which came out at 57 m, the 96th percentile of the city, with only ten roofs
+    // taller. Excluding the landmarks and then picking the next-tallest is the same mistake one
+    // step down: the player still starts on top of a tower and the skyline is still below them.
+    //
+    // The invariant is a *percentile*, not a height: the spawn must sit in the middle of the
+    // city's roofs, so that most of the skyline is above it and there is something to climb. A
+    // fixed height would be a number somebody picked; a percentile is a property of the output.
+    const roofs = city.props
+      .filter(
+        (prop) =>
+          prop.kind === 'floor' &&
+          prop.model === 'deck' &&
+          prop.size.x > 14 &&
+          prop.size.z > 14 &&
+          prop.position.y + prop.size.y / 2 > ground + 8,
+      )
+      .map((prop) => prop.position.y + prop.size.y / 2)
+      .sort((a, b) => a - b);
+    expect(roofs.length).toBeGreaterThan(100);
+
+    const spawnY = city.spawn.position.y;
+    const below = roofs.filter((top) => top < spawnY).length;
+    const percentile = below / roofs.length;
+
+    // Middle of the distribution: not the ground, not the skyline. The band is generous because
+    // the exact roof is whichever is closest to the median, and the median is a real building.
+    expect(percentile, 'the spawn is not a low-rise').toBeGreaterThan(0.3);
+    expect(percentile, 'the spawn is not a tower').toBeLessThan(0.75);
+    // ...and there is a skyline above it, which is the point of starting in the city.
+    expect(roofs.filter((top) => top > spawnY).length, 'roofs above the spawn').toBeGreaterThan(40);
   });
 
   it('puts every checkpoint and pickup on a roof, and the finish on the ground with the cat', () => {
