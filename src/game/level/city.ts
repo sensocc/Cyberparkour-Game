@@ -805,6 +805,13 @@ export function generateCity(options: CityOptions = {}): CityParts {
   // A roof deck is the surface itself, so a point at a deck's centre is a point *on* it - and
   // the one thing a deck cannot tell you is whether something is standing on top of it, which
   // is what the clearance check is for.
+  //
+  // **A mezzanine is not a roof.** A hall's mezzanine is a `deck` of exactly the size and height
+  // this filter asks for, so it was collected as a roof - and the run, the checkpoints, the
+  // pickups and the spawn were all placed from this list. Measured, 33 of the city's 216
+  // roof-sized decks are mezzanines, and every one of them has the hall's roof above it: a spawn
+  // on one is a spawn *inside* a building, which is what "spawns on one of the building's floors"
+  // was. The dressing pass already excluded them by name; the run did not.
   const roofDecks = props
     .filter(
       (prop) =>
@@ -812,7 +819,8 @@ export function generateCity(options: CityOptions = {}): CityParts {
         prop.model === 'deck' &&
         prop.size.x > 14 &&
         prop.size.z > 14 &&
-        prop.position.y + prop.size.y / 2 > config.groundY + 8,
+        prop.position.y + prop.size.y / 2 > config.groundY + 8 &&
+        !/-mezz$/.test(prop.id),
     )
     .map((prop) => ({
       id: prop.id,
@@ -1176,8 +1184,9 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
   // **Roofs, which means a surface with the sky over it.** A hall's mezzanine is a `deck` too, and
   // is the same size as a roof - so the pass dressed it, and put rooftop machinery inside the hall.
-  // Only the roof a building actually wears is a roof.
-  const dressedDecks = roofDecks.filter((deck) => !/-mezz$/.test(deck.id));
+  // `roofDecks` excludes mezzanines at the source now (the run needed the same rule), so this is
+  // the same list; it stays named because the dressing pass is what the comment is about.
+  const dressedDecks = roofDecks;
 
   // Roofs get machinery on a row along one edge - never the centre, which is where the run lives.
   for (const [index, deck] of dressedDecks.entries()) {

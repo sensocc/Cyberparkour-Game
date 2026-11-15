@@ -893,6 +893,32 @@ describe('the run, which is on the roofs', () => {
     expect(roofs.filter((top) => top > spawnY).length, 'roofs above the spawn').toBeGreaterThan(40);
   });
 
+  it('starts the player on a roof with the sky over it, not on an interior floor', () => {
+    // **The bug this is for.** A hall's mezzanine is a `deck` of exactly the size and height the
+    // roof filter asks for, so it was collected as a roof - and the spawn, the checkpoints and the
+    // pickups were all placed from that list. Measured, 33 of the city's 216 roof-sized decks were
+    // mezzanines, and every one had the hall's roof above it: the player spawned *inside* a
+    // building, on one of its floors.
+    //
+    // The invariant is the one a player would state: nothing solid is over your head when you
+    // start. That is what "on a roof" means, and it is checked against the geometry rather than
+    // against the id, so a future archetype with an interior deck cannot reintroduce it.
+    const spawn = city.spawn.position;
+    const overhead = city.props.filter((prop) => {
+      if (prop.collide === 'none') return false;
+      const top = prop.position.y + prop.size.y / 2;
+      const bottom = prop.position.y - prop.size.y / 2;
+      // Above the player's head, and low enough to be a ceiling rather than a distant tower.
+      if (top <= spawn.y + 0.5) return false;
+      if (bottom > spawn.y + 3) return false;
+      return (
+        Math.abs(prop.position.x - spawn.x) < prop.size.x / 2 + 0.4 &&
+        Math.abs(prop.position.z - spawn.z) < prop.size.z / 2 + 0.4
+      );
+    });
+    expect(overhead.map((prop) => prop.id)).toEqual([]);
+  });
+
   it('puts every checkpoint and pickup on a roof, and the finish on the ground with the cat', () => {
     for (const point of [...city.checkpoints, ...(city.collectibles ?? [])]) {
       // The phone is a secret and hides on the roof furthest from the spawn like the rest, so it is
