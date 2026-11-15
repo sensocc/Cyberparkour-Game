@@ -59,8 +59,23 @@ function part(
   };
 }
 
+/**
+ * How far a trim band stands proud of the surface it trims, in normalised units.
+ *
+ * **A band with no overhang is a band that z-fights.** `band()` spans the whole footprint, so a
+ * band at `overhang = 0` has its side faces exactly coplanar with the body's - two surfaces at one
+ * depth, and the depth test picks a winner per pixel that changes as the camera moves. That is the
+ * flicker at the top and bottom rims of every building: the base band of a `slab` body, the lip of
+ * a `deck` roof, the sill and lintel of a `glass-slab` curtain wall.
+ *
+ * The value is normalised, so it scales with the prop: 0.004 is 22 cm on a 56 m tower and 1.2 cm
+ * on a 3 m crate. Small enough to read as a trim rather than a ledge, large enough to beat the
+ * depth buffer at any distance the city is viewed from.
+ */
+const TRIM = 0.004;
+
 /** A band across the whole footprint, for trims and flanges. */
-function band(from: number, to: number, surface: string, overhang = 0): ModelPart {
+function band(from: number, to: number, surface: string, overhang = TRIM): ModelPart {
   return part([-overhang, from, -overhang], [1 + overhang, to, 1 + overhang], surface);
 }
 
@@ -83,7 +98,7 @@ const slab: ModelDefinition = {
   parts: [
     part([0, 0, 0], [1, 1, 1], 'concrete'),
     band(0.9, 0.98, 'concrete-dark', 0.01),
-    band(0, 0.04, 'concrete-dark'),
+    band(0, 0.04, 'concrete-dark', TRIM),
   ],
 };
 
@@ -93,7 +108,7 @@ const deck: ModelDefinition = {
   parts: [
     part([0, 0, 0], [1, 1, 1], 'deck'),
     band(0.86, 0.98, 'deck-dark', 0.006),
-    band(0, 0.03, 'deck-dark'),
+    band(0, 0.03, 'deck-dark', TRIM),
   ],
 };
 
@@ -115,7 +130,7 @@ const ledge: ModelDefinition = {
   parts: [
     part([0, 0, 0], [1, 1, 1], 'concrete'),
     band(0.84, 1, 'hazard', 0.008),
-    band(0, 0.06, 'concrete-dark'),
+    band(0, 0.06, 'concrete-dark', TRIM),
   ],
 };
 
@@ -420,7 +435,7 @@ const neonStrip: ModelDefinition = {
   parts: [
     part([0, 0, 0], [1, 1, 1], 'neon'),
     // A dark base, so the tube reads as mounted on something rather than floating.
-    part([0, 0, 0], [1, 0.18, 1], 'metal-dark'),
+    band(0, 0.18, 'metal-dark', TRIM),
   ],
 };
 
@@ -483,10 +498,14 @@ const glassSlab: ModelDefinition = {
   note: 'A curtain wall: a single sheet of glass, with a sill and a mullion grid.',
   parts: [
     part([0, 0, 0], [1, 1, 1], 'glass'),
-    part([0, 0, 0], [1, 0.03, 1], 'metal-dark'),
-    part([0, 0.97, 0], [1, 1, 1], 'metal-dark'),
-    part([0.32, 0.03, 0], [0.34, 0.97, 1], 'metal-dark'),
-    part([0.66, 0.03, 0], [0.68, 0.97, 1], 'metal-dark'),
+    band(0, 0.03, 'metal-dark', TRIM),
+    band(0.97, 1, 'metal-dark', TRIM),
+    // **The mullions stand proud of the glass, not flush with it.** They ran the full depth of the
+    // sheet, so their front and back faces were exactly coplanar with the glass's - two surfaces at
+    // one depth on every curtain-wall tower in the city, which is the flicker on the vertical
+    // edges of a skyscraper. `TRIM` puts them in front of the glass on both sides.
+    part([0.32, 0.03, -TRIM], [0.34, 0.97, 1 + TRIM], 'metal-dark'),
+    part([0.66, 0.03, -TRIM], [0.68, 0.97, 1 + TRIM], 'metal-dark'),
   ],
 };
 
@@ -591,11 +610,17 @@ const windowBand: ModelDefinition = {
   parts: [
     part([0, 0.12, 0], [1, 0.88, 1], 'glass'),
     // Mullions, and a sill and lintel so it reads as a window rather than a stripe.
-    part([0, 0, 0], [1, 0.12, 1], 'metal-dark'),
-    part([0, 0.88, 0], [1, 1, 1], 'metal-dark'),
-    part([0, 0.12, 0], [0.05, 0.88, 1], 'metal-dark'),
-    part([0.47, 0.12, 0], [0.53, 0.88, 1], 'metal-dark'),
-    part([0.95, 0.12, 0], [1, 0.88, 1], 'metal-dark'),
+    //
+    // **The frame stands proud of the glass on both faces.** Every one of these ran the full depth
+    // of the band, so its front and back faces were exactly coplanar with the glass's - two
+    // surfaces at one depth on every window band on every tower, which is the flicker along the
+    // top and bottom rims of a skyscraper. `TRIM` puts the frame in front of the glass.
+    band(0, 0.12, 'metal-dark', TRIM),
+    band(0.88, 1, 'metal-dark', TRIM),
+    // The outer two also stand proud in X, or their side faces are coplanar with the glass's.
+    part([-TRIM, 0.12, -TRIM], [0.05, 0.88, 1 + TRIM], 'metal-dark'),
+    part([0.47, 0.12, -TRIM], [0.53, 0.88, 1 + TRIM], 'metal-dark'),
+    part([0.95, 0.12, -TRIM], [1 + TRIM, 0.88, 1 + TRIM], 'metal-dark'),
   ],
 };
 
@@ -719,7 +744,7 @@ const constructionSlab: ModelDefinition = {
   note: 'A poured floor with column stubs and starter bars poking out of it.',
   parts: [
     part([0, 0, 0], [1, 1, 1], 'concrete-dark'),
-    band(0.94, 1, 'concrete'),
+    band(0.94, 1, 'concrete', TRIM),
     // Columns that stop dead, which is what makes a carcass a carcass.
     ...[
       [0.06, 0.06],
@@ -747,8 +772,8 @@ const constructionColumn: ModelDefinition = {
   note: 'A bare column: shuttered concrete with a rough cap.',
   parts: [
     part([0, 0, 0], [1, 1, 1], 'concrete'),
-    band(0, 0.04, 'concrete-dark'),
-    band(0.96, 1, 'concrete-dark'),
+    band(0, 0.04, 'concrete-dark', TRIM),
+    band(0.96, 1, 'concrete-dark', TRIM),
     part([0.1, 1, 0.1], [0.9, 1.02, 0.9], 'rust'),
   ],
 };
