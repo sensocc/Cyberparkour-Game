@@ -154,6 +154,24 @@ export interface ClimbConfig {
   readonly minHeight: number;
   /** How far ahead the climb probe looks (m). */
   readonly reach: number;
+  /**
+   * How far the *air* grab looks, in metres.
+   *
+   * Longer than `reach` because the player is moving when they catch: a wall run is eleven metres
+   * a second, so a probe the length of a walking step would be behind them by the time it ran. The
+   * grab is also forgiving on purpose - catching a ladder mid-flight is a skill, and a window that
+   * only opens when you are already touching the rungs is a window that never opens.
+   */
+  readonly airReach: number;
+  /**
+   * How far a face must rise above the feet to be caught from the air (m).
+   *
+   * Much lower than `minHeight`, which is what stops a walking player "climbing" a kerb. In the
+   * air the question is different: a ladder is a stack of sections, and the one you are falling
+   * past may have its top only a little above your feet. Requiring a full body height of rung
+   * above you would mean you could only ever catch the bottom of a ladder.
+   */
+  readonly airMinHeight: number;
   /** Seconds before the same face can be climbed again after jumping off. */
   readonly releaseCooldownSeconds: number;
   /** Horizontal speed of a jump off a climbable face (m/s). */
@@ -461,6 +479,13 @@ export const DEFAULT_CONFIG: GameConfig = {
       speed: 2.4,
       minHeight: 1.6,
       reach: 0.45,
+      // A wall run is 11.5 m/s, so a step is 19 cm and a probe the length of a walking step would
+      // be behind the player by the time it ran. 0.9 m is about half a body, which is the distance
+      // at which a ladder is visibly in front of you rather than beside you.
+      airReach: 0.9,
+      // A section's top only has to be a hand's width above the feet: the ladder is a stack, and
+      // the section you are falling past is the one you catch.
+      airMinHeight: 0.4,
       releaseCooldownSeconds: 0.3,
       // A hop off the ladder: out and up, so leaving it keeps the height gained.
       kickSpeed: 4.5,

@@ -918,8 +918,14 @@ function stepClimbing(
   // from the top of a ladder fired the hand-over and threw the player over the edge they were
   // trying to leave.
   if (input.forward < 0) {
+    // **Both halves of the question, not either.** `atFoot` alone fires at the bottom of *every
+    // section*, because a ladder is a stack of five-metre colliders and the feet reach the bottom
+    // of one on the way down to the next. Measured on a three-section ladder, the descent let go
+    // at y = 7.04 - the boundary between sections - and dropped the player the rest of the way.
+    // The release belongs where the feet are at the bottom of their section *and* there is no
+    // section below it, which is the bottom of the stack and nowhere else.
     const atFoot = feetY <= surface.box.min.y + 0.05;
-    if (atFoot || !climbContinuesBelow(world, surface, climbableIds)) {
+    if (atFoot && !climbContinuesBelow(world, surface, climbableIds)) {
       state.climbId = null;
       state.velocity.y = 0;
       return outcome(createMoveResult(), { ended: 'climb' });
@@ -1290,6 +1296,14 @@ function stepLocomotion(
 
   if (state.alive && !state.grounded && !state.maneuver) {
     if (tryGrab(state, input, options)) started = 'hang';
+  }
+
+  // **A ladder can be caught from the air.** Walking into one has always worked; falling past one,
+  // or wall-running into one, did not - the climb was only ever tried from the ground. This is
+  // checked after the ledge grab, so catching a ledge still wins when both are in reach, and before
+  // the pipe, because a ladder is the more specific thing to catch.
+  if (state.alive && !state.grounded && !state.maneuver && started === null) {
+    if (tryClimbFromAir(state, input, options)) started = 'climb';
   }
 
   if (state.alive && state.grounded && !state.maneuver) {
@@ -1884,6 +1898,86 @@ function tryClimb(state: PlayerState, input: MoveInput, options: PlayerStepOptio
   state.velocity.z = 0;
   state.velocity.y = 0;
   return true;
+}
+
+/**
+ * Catches a ladder from the air.
+ *
+ * Walking into a ladder has always worked; falling past one, or wall-running into one, did not -
+ * the climb was only ever tried from the ground. This is the other half of the ability.
+ *
+ * **The probe direction is the interesting part.** A player falling or jumping towards a ladder is
+ * moving at it, so the direction of travel is the right probe. A player *wall-running* is moving
+ * along the wall, and the ladder is on the wall's face - perpendicular to their travel - so the
+ * probe has to be the wall normal instead. Both are tried, the wall first, because a wall run is
+ * the more specific state and the one the player is least likely to be able to correct.
+ *
+ * **No intent, no grab.** `travelDirection` falls back to the wish direction and returns null when
+ * the player is neither moving horizontally nor holding a direction, so somebody falling straight
+ * down past a ladder is not silently caught by it. Catching is something you do.
+ *
+ * **Flush against the face, on one axis.** The grab happens up to `airReach` metres out, so the
+ * player has to be moved onto the rungs or the next step's climb probe - which looks only
+ * `reach` metres - would not find the face they just caught. Only the dominant axis is snapped,
+ * for the same reason the pipe grab does it: snapping both slides the player to the collider's
+ * corner, which on a long ladder is a sideways teleport.
+ */
+function tryClimbFromAir(
+  state: PlayerState,
+  input: MoveInput,
+  options: PlayerStepOptions,
+): boolean {
+  const climbableIds = options.climbableIds;
+  if (!climbableIds || climbableIds.size === 0) return false;
+  if (state.climbCooldown > 0) return false;
+
+  const { config, world } = options;
+  const climb = options.game.maneuver.climb;
+  const box = playerBox(state.position, config.radius, playerHeight(state, config));
+
+  const directions: ReadonlyVec3[] = [];
+  if (state.wallId !== null) directions.push(state.wallNormal);
+  const travel = travelDirection(state, input);
+  if (travel) directions.push(travel);
+  if (directions.length === 0) return false;
+
+  for (const direction of directions) {
+    const surface = findClimbable({
+      world,
+      box,
+      direction,
+      reach: climb.airReach,
+      minTopY: climb.airMinHeight,
+      maxTopY: Number.POSITIVE_INFINITY,
+      radius: config.radius,
+      standHeight: config.standHeight,
+      ignoreId: state.groundId,
+      climbableIds,
+    });
+    if (!surface) continue;
+
+    state.climbId = surface.id;
+    copyVec3(state.climbNormal, direction);
+    if (Math.abs(direction.x) >= Math.abs(direction.z)) {
+      state.position.x =
+        flushAgainst(state.position.x, surface.box.min.x, surface.box.max.x, direction.x, config.radius) -
+        direction.x * COLLISION_SKIN;
+    } else {
+      state.position.z =
+        flushAgainst(state.position.z, surface.box.min.z, surface.box.max.z, direction.z, config.radius) -
+        direction.z * COLLISION_SKIN;
+    }
+    copyVec3(state.previousPosition, state.position);
+    state.velocity.x = 0;
+    state.velocity.y = 0;
+    state.velocity.z = 0;
+    state.crouching = false;
+    state.sliding = false;
+    state.wallId = null;
+    state.peakFallSpeed = 0;
+    return true;
+  }
+  return false;
 }
 
 /** What a scripted move needs beyond its own tuning. */

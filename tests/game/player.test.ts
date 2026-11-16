@@ -782,6 +782,126 @@ describe('climbing', () => {
     // Climbing is a controlled ascent: the player never sinks back down.
     expect(lowest).toBeGreaterThanOrEqual(started - 1e-6);
   });
+
+  it('catches a ladder from the air, falling towards it', () => {
+    // **The half of the ability that was missing.** Walking into a ladder has always worked; the
+    // climb was only ever tried from the ground, so falling past one - or wall-running into one -
+    // did nothing. The player starts in the air, moving at the ladder, and must end up on it.
+    const ladder = climbableAt('ladder', 12);
+    const collisionWorld = world(FLOOR, ladder);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    const state = createPlayerState(spawnAt(-2.2, 6, 0, FACING_EAST), CONFIG);
+    state.grounded = false;
+    state.velocity.x = 6;
+    state.velocity.y = -2;
+
+    let caught = false;
+    for (let step = 0; step < 60; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+      if (state.climbId === 'ladder') {
+        caught = true;
+        break;
+      }
+    }
+
+    expect(caught, 'a ladder in front of a falling player must be catchable').toBe(true);
+    // ...and the catch stops the fall rather than merely registering.
+    expect(state.velocity.y).toBe(0);
+  });
+
+  it('catches a ladder while wall-running along the wall it is bolted to', () => {
+    // A wall run moves *along* the wall, so the ladder is perpendicular to the player's travel -
+    // probing the direction of travel would look straight past it. The wall normal is the probe
+    // that finds it, which is why the air grab tries that first.
+    const wall = collider('wall', vec3(0.8, 6, 0), vec3(0.6, 12, 12), 'wall');
+    const ladder = collider('ladder', vec3(0.8, 6, 0), vec3(0.6, 12, 1.2), 'climbable');
+    const collisionWorld = world(FLOOR, wall, ladder);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    // **Against the face, which is where a wall run holds you.** The stick acceleration keeps the
+    // body on the wall, so a wall-running player is touching it - starting half a metre out is not
+    // a wall run, it is a fall that happens to be beside one.
+    const state = createPlayerState(spawnAt(0.15, 6, 0, FACING_EAST), CONFIG);
+    state.grounded = false;
+    state.wallId = 'wall';
+    state.wallNormal.x = 1;
+    // Travelling along the wall, not into it - which is what a wall run is.
+    state.velocity.x = 0;
+    state.velocity.z = 8;
+    state.velocity.y = -1;
+
+    let caught = false;
+    for (let step = 0; step < 30; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+      if (state.climbId === 'ladder') {
+        caught = true;
+        break;
+      }
+    }
+
+    expect(caught, 'a wall run into a ladder must catch it').toBe(true);
+    // The wall run is over: the player is on the ladder now, not still attached to the wall.
+    expect(state.wallId).toBeNull();
+  });
+
+  it('does not catch a ladder it is falling straight past with no intent', () => {
+    // Catching is something you do. A player dropping past a ladder with no direction held and no
+    // horizontal speed must not be silently snapped onto it.
+    const ladder = climbableAt('ladder', 12);
+    const collisionWorld = world(FLOOR, ladder);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds: new Set(['ladder']) });
+
+    const state = createPlayerState(spawnAt(-0.5, 6, 0, FACING_EAST), CONFIG);
+    state.grounded = false;
+    state.velocity.x = 0;
+    state.velocity.y = -4;
+
+    for (let step = 0; step < 30; step += 1) {
+      stepPlayer(state, STILL, STEP, climbOptions);
+      expect(state.climbId).toBeNull();
+    }
+  });
+
+  it('climbs up and down the ladder it caught from the air', () => {
+    // The catch is only useful if the ladder then behaves like a ladder: up on forward, down on
+    // back, and a jump off it.
+    //
+    // **A stack of sections, because that is what a ladder is.** A single-section ladder releases
+    // the moment you press back - `climbContinuesBelow` finds nothing under it, which is the
+    // correct answer for a ladder that ends there. Every ladder the generator builds is a stack,
+    // so the descent is tested on one.
+    const sections = [0, 1, 2].map((index) =>
+      collider(`rung-${index}`, vec3(0.8, index * 7 + 3.5, 0), vec3(0.6, 7, 1.2), 'climbable'),
+    );
+    const climbableIds = new Set(sections.map((section) => section.id));
+    const collisionWorld = world(FLOOR, ...sections);
+    const climbOptions = optionsFor(collisionWorld, { climbableIds });
+
+    const state = createPlayerState(spawnAt(-2.2, 6, 0, FACING_EAST), CONFIG);
+    state.grounded = false;
+    state.velocity.x = 6;
+    for (let step = 0; step < 60 && state.climbId === null; step += 1) {
+      stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+    }
+    expect(state.climbId).not.toBeNull();
+
+    // Up.
+    const caughtAt = state.position.y;
+    for (let step = 0; step < 60; step += 1) stepPlayer(state, input({ forward: 1 }), STEP, climbOptions);
+    expect(state.position.y).toBeGreaterThan(caughtAt + 1);
+
+    // Down, staying on the stack.
+    const top = state.position.y;
+    for (let step = 0; step < 40; step += 1) stepPlayer(state, input({ forward: -1 }), STEP, climbOptions);
+    expect(state.position.y).toBeLessThan(top - 0.5);
+    expect(state.climbId, 'the descent must stay on the stack').not.toBeNull();
+
+    // ...and off.
+    stepPlayer(state, input({ jump: true }), STEP, climbOptions);
+    expect(state.climbId).toBeNull();
+    expect(state.velocity.y).toBeGreaterThan(0);
+  });
 });
 
 describe('fall damage', () => {

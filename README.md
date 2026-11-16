@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.2.4` |
+| Version | `2.2.5` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1328 in 52 files |
+| Tests | 1332 in 52 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -67,6 +67,8 @@ V2.2.3 fixed the last of it: a hall's **mezzanine** is a `deck` of exactly the s
 
 V2.2.4 fixed the flicker on the top and bottom rims of buildings. A trim band with no overhang spans the whole footprint, so its side faces are exactly coplanar with the body's — two surfaces at one depth, and the depth test picks a winner per pixel that changes as the camera moves. `band()` defaulted to zero overhang, so the fault was the default: every `slab` body, every `deck` roof, every `glass-slab` curtain wall and every `window-band` had it. Bands now stand proud by a normalised 0.004 (22 cm on a 56 m tower, 1.2 cm on a crate), and a test holds every model to "no two parts share a face".
 
+V2.2.5 made ladders catchable from the air. Walking into one has always worked; the climb was only ever tried from the ground, so falling past a ladder — or wall-running into one — did nothing. The air grab probes the wall normal first (a wall run moves *along* the wall, so the ladder is perpendicular to your travel) and then the direction of travel, over a longer reach than the walking probe because a wall run covers 19 cm a step. It needs intent: a player dropping straight down with no direction held is not silently snapped onto the rungs. Fixing it also exposed a real bug in the descent — the release fired at the bottom of *every section* of a stacked ladder rather than at the bottom of the stack, so climbing down let go halfway.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -104,7 +106,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1328 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1332 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.
