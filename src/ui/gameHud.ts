@@ -45,7 +45,19 @@ export interface GameHudSnapshot {
    * straight line rather than a route, because the city is a grid and the straight line is the
    * route within a street or two.
    */
-  readonly hint?: { readonly bearing: number; readonly distance: number } | null;
+  readonly hint?: {
+    readonly bearing: number;
+    readonly distance: number;
+    /**
+     * How far above the player the target is, in metres. Negative is below.
+     *
+     * **The third dimension the pointer was missing.** The bearing is horizontal, so a target
+     * directly overhead and one at your feet both read as "0 m ahead" - the least useful thing a
+     * pointer can say in a city you climb. The HUD draws this as a tilt on the arrow and as a
+     * word, so "up there" and "down there" are different from "that way".
+     */
+    readonly elevation: number;
+  } | null;
   /** The time trial in progress, if any: how long it has been running and the stars it is on. */
   readonly trial?: { readonly id: string; readonly elapsed: number; readonly stars: number } | null;
   /** Whether the secret phone call is happening, which is the one scripted pose in the game. */
@@ -139,6 +151,7 @@ export class GameHud {
   private readonly hint: HTMLElement;
   private readonly hintArrow: HTMLElement;
   private readonly hintText: HTMLElement;
+  private readonly hintElevation: HTMLElement;
   private readonly prompt: HTMLElement;
   private readonly promptTitle: HTMLElement;
   private readonly promptDetail: HTMLElement;
@@ -150,13 +163,25 @@ export class GameHud {
     this.call.className = 'call';
     this.call.textContent = 'CALLING…';
 
+    // **A 3D arrow, not a chevron.** The old indicator was a CSS corner-bracket rotated about Z,
+    // which says "that way" and nothing else. This is a small SVG arrow that is *tilted* by the
+    // target's elevation as well as turned by its bearing: pointing up the screen means the target
+    // is above you, down means below, and the tilt is proportional to the angle rather than a
+    // fixed up/down flag, so a target ten metres up reads differently from one forty metres up.
     this.hintArrow = document.createElement('span');
     this.hintArrow.className = 'hint__arrow';
+    this.hintArrow.innerHTML =
+      '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+      '<path d="M12 2 L19 20 L12 16 L5 20 Z" />' +
+      '</svg>';
     this.hintText = document.createElement('span');
     this.hintText.className = 'hint__text';
+    // The elevation, as a word and a number: "▲ 12 m" above, "▼ 8 m" below, "—" level.
+    this.hintElevation = document.createElement('span');
+    this.hintElevation.className = 'hint__elevation';
     this.hint = document.createElement('div');
     this.hint.className = 'hint';
-    this.hint.append(this.hintArrow, this.hintText);
+    this.hint.append(this.hintArrow, this.hintText, this.hintElevation);
 
     this.healthFill = document.createElement('div');
     this.healthFill.className = 'vitals__fill';
@@ -252,13 +277,50 @@ export class GameHud {
     // **The pointer.** A shard you cannot see is a shard you cannot look for, so the HUD carries a
     // bearing and a distance to the nearest one still out there - and only when there is one.
     const hint = snapshot.hint ?? null;
-    const hintText = hint
-      ? `${Math.round(hint.distance)} m`
-      : '';
+    const hintText = hint ? `${Math.round(hint.distance)} m` : '';
     if (this.hintText.textContent !== hintText) this.hintText.textContent = hintText;
+
+    // **The arrow turns *and* tilts.** The turn is the bearing, as before. The tilt is the
+    // elevation: the arrow is drawn pointing up the screen, so a target above you tilts it further
+    // up and one below tilts it down. The angle is `atan2(elevation, horizontalDistance)` clamped to
+    // 60 degrees, so a target forty metres up and two metres away reads as "straight up" rather
+    // than as a number the eye cannot resolve, and a target on the same roof reads as level.
+    //
     // The *arrow* turns, not the readout: rotating the container turned the distance with it, which
     // is how "96 m" came out upside down on the first play through.
-    this.hintArrow.style.transform = hint ? `rotate(${-hint.bearing}rad)` : '';
+    if (hint) {
+      // The horizontal run is the distance with the vertical taken out of it, which is what the
+      // tilt angle is measured against.
+      const flat = Math.sqrt(
+        Math.max(0, hint.distance * hint.distance - hint.elevation * hint.elevation),
+      );
+      const degrees = (Math.atan2(hint.elevation, Math.max(flat, 0.001)) * 180) / Math.PI;
+      const tilt = Math.max(-60, Math.min(60, degrees));
+      this.hintArrow.style.transform = `rotate(${-hint.bearing}rad) rotateX(${tilt}deg)`;
+    } else {
+      this.hintArrow.style.transform = '';
+    }
+
+    // The elevation as a word and a number, so "up there" is different from "that way". A metre of
+    // tolerance is the difference between a roof and the street; below that the target is level
+    // with the player and the readout says so rather than showing a meaningless "0 m".
+    const elevationText = hint
+      ? hint.elevation > 1
+        ? `▲ ${Math.round(hint.elevation)} m`
+        : hint.elevation < -1
+          ? `▼ ${Math.round(-hint.elevation)} m`
+          : '— level'
+      : '';
+    if (this.hintElevation.textContent !== elevationText) {
+      this.hintElevation.textContent = elevationText;
+    }
+    this.hint.dataset['elevation'] = hint
+      ? hint.elevation > 1
+        ? 'up'
+        : hint.elevation < -1
+          ? 'down'
+          : 'level'
+      : 'none';
     this.hint.classList.toggle('hint--off', hint === null);
 
     // **The trial**, while one is running: the clock, and the stars it is still on. The thresholds

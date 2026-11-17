@@ -982,7 +982,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* The pickup pointer: a bearing and a distance, and nothing at all once they are all found. */
+/*
+ * The pickup pointer: a bearing, a distance and an elevation, and nothing at all once they are
+ * all found.
+ *
+ * **It is a 3D arrow now.** The old indicator was a CSS corner-bracket rotated about Z, which
+ * says "that way" and nothing else - and in a city you climb, "that way" is half an answer. The
+ * arrow is an SVG that the HUD turns by the bearing *and* tilts by the elevation, so pointing up
+ * the screen means the target is above you. The elevation is also written out, because a tilt is
+ * a direction and a number is a fact.
+ */
 .hint {
   position: absolute;
   right: 1.2rem;
@@ -1004,16 +1013,57 @@ body {
   opacity: 0;
 }
 
+/*
+ * The arrow, in its own perspective box.
+ *
+ * `perspective` is what makes `rotateX` read as a tilt rather than as a squash: without it the
+ * arrow foreshortens flat and a target overhead looks like a shorter arrow. The box is square and
+ * the SVG fills it, so the rotation origin is the arrow's own centre.
+ */
 .hint__arrow {
-  width: 0.9rem;
-  height: 0.9rem;
-  border-top: 2px solid currentColor;
-  border-right: 2px solid currentColor;
+  display: block;
+  width: 1.1rem;
+  height: 1.1rem;
+  perspective: 40px;
   transform-origin: 50% 50%;
+  transform-style: preserve-3d;
+  transition: transform 90ms linear;
+}
+
+.hint__arrow svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
 }
 
 .hint__text {
   font-size: 0.85rem;
+}
+
+/*
+ * The elevation, as a word and a number.
+ *
+ * Colour carries the same information as the glyph, so it reads at a glance: cyan above, amber
+ * below, dim when level. The glyph is the fallback for a player who cannot separate the two hues.
+ */
+.hint__elevation {
+  font-size: 0.75rem;
+  opacity: 0.85;
+  min-width: 3.6rem;
+  text-align: right;
+}
+
+.hint[data-elevation='up'] .hint__elevation {
+  color: #7dff9b;
+}
+
+.hint[data-elevation='down'] .hint__elevation {
+  color: #ffc247;
+}
+
+.hint[data-elevation='level'] .hint__elevation {
+  opacity: 0.5;
 }
 
 /* The trial clock, and the phone call. */

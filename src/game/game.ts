@@ -1261,7 +1261,7 @@ export class Game {
    * within a street or two, and a pathfinder whose answer changes shape as buildings are added is
    * a worse guide than an arrow.
    */
-  private nearestShard(): { bearing: number; distance: number } | null {
+  private nearestShard(): { bearing: number; distance: number; elevation: number } | null {
     // **What the pointer should point at, which changes with the quest.** Before the cat has asked,
     // the only useful thing on the HUD is the way to the cat; while the shards are out, it is the
     // nearest one; and once they are all in, it is the way back - which is what stops the last
@@ -1277,12 +1277,19 @@ export class Game {
         // **Three dimensions, not two.** The city is climbed, not walked: a shard on a roof forty
         // metres up is not "twelve metres away" because it is twelve metres horizontally, and a
         // readout that says so while the player stands under it reads as broken. The bearing stays
-        // horizontal - an arrow points along the ground whoever the target is above.
-        return { bearing: Math.atan2(dx, dz) - this.player.yaw, distance: Math.hypot(dx, dy, dz) };
+        // horizontal - an arrow points along the ground whoever the target is above - and the
+        // *elevation* is reported separately so the HUD can say "up there" rather than only "that
+        // way". Without it a target directly overhead and one at your feet both read as "0 m
+        // ahead", which is the least useful thing a pointer can say.
+        return {
+          bearing: Math.atan2(dx, dz) - this.player.yaw,
+          distance: Math.hypot(dx, dy, dz),
+          elevation: dy,
+        };
       }
     }
 
-    let best: { bearing: number; distance: number } | null = null;
+    let best: { bearing: number; distance: number; elevation: number } | null = null;
     for (const shard of this.collectibles) {
       // **Not the secret.** A phone you are pointed at is not hidden, and the guide is the one thing
       // in the game that knows where everything is.
@@ -1296,7 +1303,7 @@ export class Game {
       const distance = Math.hypot(dx, dy, dz);
       if (best && distance >= best.distance) continue;
       // Relative to where the player is looking, so "ahead" means ahead.
-      best = { bearing: Math.atan2(dx, dz) - this.player.yaw, distance };
+      best = { bearing: Math.atan2(dx, dz) - this.player.yaw, distance, elevation: dy };
     }
     return best;
   }

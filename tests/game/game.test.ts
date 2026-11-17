@@ -2083,7 +2083,7 @@ describe('the sounds a run makes', () => {
 
 describe('the pointer to the pickups', () => {
   /** A HUD snapshot with nothing in it but the fields the pointer needs. */
-  const snapshot = (hint: { bearing: number; distance: number } | null) =>
+  const snapshot = (hint: { bearing: number; distance: number; elevation: number } | null) =>
     ({
       health: 100,
       maxHealth: 100,
@@ -2103,7 +2103,7 @@ describe('the pointer to the pickups', () => {
     // distance to the nearest one still out there - and it goes away when there is none.
     const hud = new GameHud();
 
-    hud.update(snapshot({ bearing: Math.PI / 2, distance: 42 }) as never);
+    hud.update(snapshot({ bearing: Math.PI / 2, distance: 42, elevation: 0 }) as never);
     expect(hud.last?.hint?.distance).toBe(42);
     expect(hud.element.querySelector('.hint__text')?.textContent).toBe('42 m');
     expect(hud.element.querySelector('.hint')?.classList.contains('hint--off')).toBe(false);
@@ -2111,5 +2111,51 @@ describe('the pointer to the pickups', () => {
     hud.update(snapshot(null) as never);
     expect(hud.last?.hint).toBe(null);
     expect(hud.element.querySelector('.hint')?.classList.contains('hint--off')).toBe(true);
+  });
+
+  it('says whether the target is above, below or level with the player', () => {
+    // **The third dimension the pointer was missing.** The bearing is horizontal, so a target
+    // directly overhead and one at your feet both read as "0 m ahead" - the least useful thing a
+    // pointer can say in a city you climb. The elevation is written out as a word and a number.
+    const hud = new GameHud();
+    const elevation = () => hud.element.querySelector('.hint__elevation')?.textContent;
+
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: 12 }) as never);
+    expect(elevation()).toBe('▲ 12 m');
+    expect(hud.element.querySelector('.hint')?.getAttribute('data-elevation')).toBe('up');
+
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: -8 }) as never);
+    expect(elevation()).toBe('▼ 8 m');
+    expect(hud.element.querySelector('.hint')?.getAttribute('data-elevation')).toBe('down');
+
+    // A metre of tolerance: below that the target is level with the player, and saying "0 m" would
+    // be a number that means nothing.
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: 0.4 }) as never);
+    expect(elevation()).toBe('— level');
+    expect(hud.element.querySelector('.hint')?.getAttribute('data-elevation')).toBe('level');
+  });
+
+  it('tilts the arrow by the elevation as well as turning it by the bearing', () => {
+    // The arrow is drawn pointing up the screen, so a target above tilts it further up and one
+    // below tilts it down. The tilt is an angle, not a flag: a target forty metres up reads
+    // differently from one four metres up.
+    const hud = new GameHud();
+    const transform = () => hud.element.querySelector('.hint__arrow')?.getAttribute('style') ?? '';
+
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: 0 }) as never);
+    const level = transform();
+    expect(level).toContain('rotateX(0deg)');
+
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: 20 }) as never);
+    const up = transform();
+    expect(up).toContain('rotateX(');
+    expect(up).not.toBe(level);
+    // Above the player tilts the arrow up the screen, which is a positive rotateX.
+    const upAngle = Number(/rotateX\((-?[\d.]+)deg\)/.exec(up)?.[1] ?? '0');
+    expect(upAngle).toBeGreaterThan(0);
+
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: -20 }) as never);
+    const downAngle = Number(/rotateX\((-?[\d.]+)deg\)/.exec(transform())?.[1] ?? '0');
+    expect(downAngle).toBeLessThan(0);
   });
 });
