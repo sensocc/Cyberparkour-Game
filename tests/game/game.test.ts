@@ -20,7 +20,7 @@ import type { AudioOutput } from '../../src/audio/engine.js';
 import type { AudioCue } from '../../src/audio/director.js';
 import { CrashReporter } from '../../src/diagnostics/crashReporter.js';
 import { MemoryCrashSink } from '../../src/diagnostics/crashSinks.js';
-import { Game, type GameStatus } from '../../src/game/game.js';
+import { bearingTo, Game, type GameStatus } from '../../src/game/game.js';
 import { type LevelDefinition, type PropDefinition } from '../../src/game/level/levelData.js';
 import { DEMO_DISTRICT } from '../fixtures/district.js';
 import type { Orientation } from '../../src/game/look.js';
@@ -2157,5 +2157,59 @@ describe('the pointer to the pickups', () => {
     hud.update(snapshot({ bearing: 0, distance: 30, elevation: -20 }) as never);
     const downAngle = Number(/rotateX\((-?[\d.]+)deg\)/.exec(transform())?.[1] ?? '0');
     expect(downAngle).toBeLessThan(0);
+  });
+
+  it('points the arrow at the target when the player is facing it', () => {
+    // **The bug this is for.** The bearing was `atan2(dx, dz) - yaw`, which measures from `+Z` -
+    // and the player's forward at yaw 0 is `-Z`. So a target straight ahead came out as a bearing
+    // of 180 degrees and the arrow pointed *down* the screen; behind read as up, and right as
+    // left. The arrow is drawn pointing up at a rotation of zero, so the bearing has to be
+    // measured from the direction the player is actually facing.
+    //
+    // This is the whole convention in one test: ahead is up, right is right, left is left, behind
+    // is down - and turning to face the target brings the arrow back to up.
+    const hud = new GameHud();
+    const arrowAngle = (): number => {
+      const style = hud.element.querySelector('.hint__arrow')?.getAttribute('style') ?? '';
+      const match = /rotate\((-?[\d.]+)rad\)/.exec(style);
+      return match ? Number(match[1]) : Number.NaN;
+    };
+
+    // The HUD applies `rotate(-bearing)`, so a bearing of 0 is an unrotated (up) arrow.
+    hud.update(snapshot({ bearing: 0, distance: 30, elevation: 0 }) as never);
+    expect(arrowAngle()).toBeCloseTo(0, 5);
+
+    // A target to the player's right is a negative bearing, which rotates the arrow clockwise.
+    hud.update(snapshot({ bearing: -Math.PI / 2, distance: 30, elevation: 0 }) as never);
+    expect(arrowAngle()).toBeCloseTo(Math.PI / 2, 5);
+
+    // ...and to the left is the other way.
+    hud.update(snapshot({ bearing: Math.PI / 2, distance: 30, elevation: 0 }) as never);
+    expect(arrowAngle()).toBeCloseTo(-Math.PI / 2, 5);
+  });
+
+  it('measures the bearing from where the player is facing, not from +Z', () => {
+    // **The bug this is for.** The bearing was `atan2(dx, dz) - yaw`, which measures from `+Z` -
+    // and the player's forward at yaw 0 is `-Z` (see `intoYawBasis`). So a target straight ahead
+    // came out as a bearing of 180 degrees and the arrow pointed *down* the screen; behind read as
+    // up, and right as left. The arrow is drawn pointing up at a rotation of zero, so the bearing
+    // has to be measured from the direction the player is actually facing.
+    //
+    // Tested on the function rather than through a harness: the convention is the thing that was
+    // wrong, and a harness test has to fight the "nearest target" selection to set up a case.
+    // Forward at yaw 0 is -Z, so a target at -Z is straight ahead.
+    expect(bearingTo(0, -1, 0)).toBeCloseTo(0, 6);
+    // ...at +Z is behind.
+    expect(Math.abs(bearingTo(0, 1, 0))).toBeCloseTo(Math.PI, 6);
+    // ...at +X is to the right, which is a negative bearing (the HUD rotates by -bearing).
+    expect(bearingTo(1, 0, 0)).toBeCloseTo(-Math.PI / 2, 6);
+    // ...and at -X is to the left.
+    expect(bearingTo(-1, 0, 0)).toBeCloseTo(Math.PI / 2, 6);
+
+    // Turning to face the target brings the bearing back to zero. At yaw -PI/2 the player's
+    // forward is +X (see `intoYawBasis`), so a target at +X is straight ahead.
+    expect(bearingTo(1, 0, -Math.PI / 2)).toBeCloseTo(0, 6);
+    // ...and the same target from a player still facing -Z is a quarter turn to the right.
+    expect(bearingTo(1, 0, 0)).toBeCloseTo(-Math.PI / 2, 6);
   });
 });

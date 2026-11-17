@@ -1282,7 +1282,7 @@ export class Game {
         // way". Without it a target directly overhead and one at your feet both read as "0 m
         // ahead", which is the least useful thing a pointer can say.
         return {
-          bearing: Math.atan2(dx, dz) - this.player.yaw,
+          bearing: bearingTo(dx, dz, this.player.yaw),
           distance: Math.hypot(dx, dy, dz),
           elevation: dy,
         };
@@ -1303,7 +1303,7 @@ export class Game {
       const distance = Math.hypot(dx, dy, dz);
       if (best && distance >= best.distance) continue;
       // Relative to where the player is looking, so "ahead" means ahead.
-      best = { bearing: Math.atan2(dx, dz) - this.player.yaw, distance, elevation: dy };
+      best = { bearing: bearingTo(dx, dz, this.player.yaw), distance, elevation: dy };
     }
     return best;
   }
@@ -1945,3 +1945,16 @@ export class Game {
   }
 }
 
+/**
+ * The angle from where the player is looking to a target, in radians.
+ *
+ * **`atan2(-dx, -dz)`, not `atan2(dx, dz)`.** The player's forward at yaw 0 is `-Z` (see
+ * `intoYawBasis`), and the HUD draws its arrow pointing *up* the screen at a rotation of zero. The
+ * old form measured the angle from `+Z`, which is behind the player - so a target straight ahead
+ * came out as a bearing of 180 degrees and the arrow pointed down the screen. Measured: ahead read
+ * as DOWN, behind as UP, and right as LEFT. Negating both components measures from the direction
+ * the player is actually facing, which is what the arrow is drawn against.
+ */
+export function bearingTo(dx: number, dz: number, yaw: number): number {
+  return Math.atan2(-dx, -dz) - yaw;
+}
