@@ -19,22 +19,37 @@
 import type { EnvironmentDefinition } from './levelData.js';
 
 export const CITY_ENVIRONMENT: EnvironmentDefinition = {
-  skyColor: '#172a52',
+  // **The sky is a gradient the eye can read, not a flat blue.** A night sky that is one colour
+  // reads as a backdrop; one that is deeper overhead and warmer at the horizon reads as air with a
+  // city under it, which is what makes the neon land. The two sky colours are the zenith and the
+  // horizon, and the haze below is picked to match the horizon rather than to be a neutral grey.
+  skyColor: '#0e1c3c',
   // The fog colour is picked to match the sky's horizon glow rather than to be a neutral grey:
   // the skyline is painted on a cylinder out, and it has to dissolve into the haze rather than
   // into a line. V2.0 lifts the whole night a step: the sky, the haze and the sun all brighten
   // together, so the city reads before it strains.
-  fogColor: '#524a73',
+  fogColor: '#4a4368',
   // Both are overridden by `buildCity` to finish at the draw distance; they are the level's own
   // defaults for a level that is played as authored.
   fogNear: 90,
   fogFar: 480,
-  ambientSkyColor: '#9fb3e0',
-  ambientGroundColor: '#222c3e',
-  ambientIntensity: 1.35,
-  sunColor: '#eef4ff',
-  sunIntensity: 3.8,
-  sunDirection: { x: 0.55, y: 0.9, z: 0.35 },
+  // **Cool from above, warm from below.** The hemisphere's sky colour is the moonlit blue the city
+  // sits under; its ground colour is the sodium bounce coming back off the streets. That vertical
+  // split is the single cheapest thing that makes a flat-lit scene look lit rather than filled,
+  // and it is why the underside of a fire escape reads warmer than its top.
+  ambientSkyColor: '#8fa8dc',
+  ambientGroundColor: '#3a2a2a',
+  // Lowered from 1.35 as the sun and the shafts came up: ambient that is too strong flattens
+  // everything it touches, and contrast is what "cinematic" actually means.
+  ambientIntensity: 1.05,
+  // A slightly cooler sun against a warmer ground bounce, so the two lights separate on a surface.
+  sunColor: '#e6eeff',
+  // Raised from 3.8 for a harder key: longer shadows, brighter tops of towers, a skyline that reads
+  // in silhouette rather than as a field of mid-greys.
+  sunIntensity: 4.6,
+  // Lowered from 0.9: a lower sun rakes across the city instead of sitting on top of it, which is
+  // what gives the towers sides and the streets long shadows.
+  sunDirection: { x: 0.62, y: 0.68, z: 0.4 },
   backdrop: {
     radius: 240,
     height: 190,

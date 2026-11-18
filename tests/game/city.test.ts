@@ -1068,6 +1068,27 @@ describe('what V0.8 puts in the city', () => {
     expect(colours.size).toBeGreaterThan(3);
   });
 
+  it('lights the streets in more than one colour', () => {
+    // **One lamp colour is what makes a generated city read as a model.** The eye needs the street
+    // to be patched - warm sodium under one post, clinical LED under the next - and V2.3.0 gets
+    // that from a coordinate hash rather than from the seeded stream, because every draw from that
+    // stream moves every building in the city. This test is the guard on both halves: the colours
+    // vary, and the layout did not move to get them.
+    const city = buildCity(DEMO_DISTRICT);
+    const streetLamps = (city.lights ?? []).filter((light) => light.id.endsWith('-lamp-light'));
+    expect(streetLamps.length).toBeGreaterThan(40);
+
+    const colours = new Set(streetLamps.map((light) => light.color));
+    expect(colours.size, 'street lamps must not all be the same colour').toBeGreaterThan(1);
+
+    // The hash consumes nothing, so the same seed is still the same city.
+    const again = buildCity(DEMO_DISTRICT);
+    expect(again.props.length).toBe(city.props.length);
+    expect(again.lights?.map((light) => light.color)).toEqual(
+      city.lights?.map((light) => light.color),
+    );
+  });
+
   it('builds curtain-wall towers for the glass to reflect off', () => {
     expect(report['glass-tower'] ?? 0).toBeGreaterThan(5);
     const walls = generated.filter((prop) => prop.model === 'glass-slab');

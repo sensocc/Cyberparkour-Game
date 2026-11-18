@@ -22,6 +22,8 @@ import { modelById, resolveModelParts, type ModelDefinition } from '../game/leve
 import { surfaceById } from '../game/level/surfaces.js';
 import { emptySpritePose, type SmokeEmitter, type SpritePose } from './effects.js';
 import { InstancedPuffs, MAX_PUFFS } from './puffs.js';
+import { buildCat } from './catModel.js';
+import { buildVolumetricShafts } from './volumetrics.js';
 import { NO_ASSETS, type SceneAssets } from './types.js';
 
 /**
@@ -133,6 +135,8 @@ export interface BuiltScene {
    * of the hundreds - the number a forward renderer pays per lit pixel.
    */
   readonly lamps: LampField;
+  /** How many volumetric light shafts were drawn: zero when no lamp is high enough. */
+  readonly lightShafts: number;
   /**
    * Every material the scene owns, keyed by the surface (or part) that uses it.
    *
@@ -856,6 +860,14 @@ export function buildScene(
    * context-loss recovery.
    */
   const movingGeometries: THREE.BufferGeometry[] = [];
+  /**
+   * Geometries and materials owned by props that are *not* box parts.
+   *
+   * A box part's geometry comes from the shared cache and its material from the shared map, so
+   * the builder already owns both. A prop made from real geometry - the cat - brings its own, and
+   * nothing else would free them: the cache never sees them and the material map never holds them.
+   */
+  const sculpted: { geometry?: THREE.BufferGeometry; material?: THREE.Material }[] = [];
 
   /**
    * Builds a group of meshes from a model, in the group's own local space.
@@ -1012,6 +1024,35 @@ export function buildScene(
         npcMixers.push(mixer);
       }
       partInfo.set(prop.id, { count: 0, materials: [] });
+      continue;
+    }
+
+    // **The cat is the one prop built from real geometry.** Every other model in the city is
+    // axis-aligned box parts, which is right for a vent or a tank and wrong for an animal you walk
+    // up to: eight boxes read as a stack of crates with ears. The cat brings its own meshes, so it
+    // cannot join the chunk merge - a merged buffer is a box's geometry with the box's UVs - and it
+    // is added to the scene as its own group at the prop's place.
+    if (prop.model === 'alley-cat') {
+      const cat = buildCat();
+      cat.root.position.set(prop.position.x, prop.position.y - prop.size.y / 2, prop.position.z);
+      // The prop is 1.4 m across and the cat is 0.55 m tall; the group is built at real scale, so
+      // no scaling is applied here.
+      cat.root.traverse((node: THREE.Object3D) => {
+        const mesh = node as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        mesh.userData.cullX = prop.position.x;
+        mesh.userData.cullZ = prop.position.z;
+        moving.push(mesh);
+      });
+      scene.add(cat.root);
+      for (const resource of cat.resources) {
+        if ((resource as THREE.BufferGeometry).isBufferGeometry) {
+          sculpted.push({ geometry: resource as THREE.BufferGeometry });
+        } else {
+          sculpted.push({ material: resource as THREE.Material });
+        }
+      }
+      partInfo.set(prop.id, { count: cat.resources.length, materials: [] });
       continue;
     }
 
@@ -1350,6 +1391,15 @@ export function buildScene(
   }
   const lamps = createLampField(scene, sources);
 
+  // ------------------------------------------------------- volumetric shafts
+  // The haze under the high lamps. Selection and shape live in `volumetrics.ts`; the builder only
+  // hands over the same sources the pool uses, so a shaft and the light it belongs to are always
+  // the same lamp. They are added *after* the lamp field so they draw over the city rather than
+  // under it - additive geometry with no depth write, so the order is cosmetic rather than
+  // correctness, but it is also the order that reads as light.
+  const shafts = buildVolumetricShafts(sources);
+  if (shafts.count > 0) scene.add(shafts.mesh);
+
   // --------------------------------------------------------- city backdrop
   const backdrop = buildCityBackdrop(definition, assets.cityBackdrop);
   if (backdrop) scene.add(backdrop);
@@ -1375,6 +1425,7 @@ export function buildScene(
     npcMixers,
     smoke,
     lamps,
+    lightShafts: shafts.count,
     materials,
     backdrop,
     dispose(): void {
@@ -1384,9 +1435,15 @@ export function buildScene(
       for (const geometry of looseGeometries) geometry.dispose();
       // The doors, cars, gates and pickups: baked buffers that live nowhere but their meshes.
       for (const geometry of movingGeometries) geometry.dispose();
+      // Props built from real geometry own their buffers and materials outright.
+      for (const owned of sculpted) {
+        owned.geometry?.dispose();
+        owned.material?.dispose();
+      }
       for (const material of materials.values()) material.dispose();
       // The batched puffs own their quad buffer and their patched material.
       smoke?.puffs.dispose();
+      shafts.dispose();
       disposeRenderable(grid);
       if (backdrop) disposeRenderable(backdrop);
     },

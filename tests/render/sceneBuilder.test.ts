@@ -189,10 +189,23 @@ describe('buildScene geometry', () => {
           if (isElevatorGateOf(elevator.id, prop.id)) gates.add(prop.id);
         }
       }
+      // **The cat is not a box part.** It is the one prop built from real geometry (see
+      // `catModel.ts`), so it contributes meshes to the scene rather than parts to a chunk. Its box
+      // parts are still defined - they are what a headless build falls back to - so the oracle has
+      // to exclude it, or it counts geometry that was deliberately not drawn.
       const expected = buildCity(DEMO_DISTRICT).props
-        .filter((prop) => !gates.has(prop.id))
+        .filter((prop) => !gates.has(prop.id) && prop.model !== 'alley-cat')
         .reduce((total, prop) => total + resolvePropParts(prop).length, 0);
       expect(parts).toBe(expected);
+
+      // The cat *is* drawn - just not as box parts. Its meshes are in the moving set, which is
+      // where everything that is not a chunk lives.
+      const cat = buildCity(DEMO_DISTRICT).props.find((prop) => prop.model === 'alley-cat');
+      expect(cat, 'the city has a cat').toBeDefined();
+      const catMeshes = built.moving.filter(
+        (mesh) => Math.abs((mesh.userData.cullX as number) - cat!.position.x) < 1e-6,
+      );
+      expect(catMeshes.length, 'the cat is drawn from real geometry').toBeGreaterThan(10);
 
       // A chunk is a real spatial unit rather than a formality: it carries a
       // bounding sphere so the renderer can cull it, and it never moves.

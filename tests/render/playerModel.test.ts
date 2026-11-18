@@ -53,13 +53,52 @@ describe('the body itself', () => {
     const body = build();
     try {
       let meshes = 0;
+      let casting = 0;
       body.root.traverse((object) => {
-        if ((object as { isMesh?: boolean }).isMesh) meshes += 1;
+        const mesh = object as { isMesh?: boolean; castShadow?: boolean };
+        if (!mesh.isMesh) return;
+        meshes += 1;
+        if (mesh.castShadow) casting += 1;
       });
-      // Chest, waist, chest light, two legs of two segments each plus a foot, and
-      // two arms of two segments each plus a hand.
-      expect(meshes).toBe(3 + 6 + 6);
+      // **The count is a shape, not a budget.** It was 15 when the body was built from boxes: a
+      // chest, a waist, a badge, and a box per limb segment. It is 25 now that the body is made of
+      // capsules and spheres (see `playerModel.ts`), because every joint carries a ball as well as
+      // the two segments it joins - the hip, knee, shoulder and elbow pivots are what stop a bent
+      // limb reading as two sticks crossing.
+      //
+      // The invariant worth holding is the *composition*: five pieces of torso, five per leg, five
+      // per arm. A change that adds geometry without a body part to justify it should fail here.
+      expect(meshes).toBe(5 + 10 + 10);
+      // And every part of the player casts a shadow: a body with a limb missing from the shadow
+      // pass is a body with a hole in it.
+      expect(casting).toBe(meshes);
       expect(body.root.name).toBe('player-body');
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('is built from round shapes rather than boxes', () => {
+    // **The point of the V2.3.0 rework.** A box torso seen from above is a rectangle, and the
+    // player looks down at their own body more than at anything else in the game. Every mesh is a
+    // capsule or a sphere - both of which have a round silhouette from every angle, including the
+    // top-down one the player actually sees.
+    const body = build();
+    try {
+      const kinds = new Set<string>();
+      body.root.traverse((object) => {
+        const mesh = object as THREE.Mesh & { isMesh?: boolean };
+        if (!mesh.isMesh) return;
+        const type = (mesh.geometry as THREE.BufferGeometry).type;
+        kinds.add(type);
+      });
+      expect(kinds.size).toBeGreaterThan(0);
+      for (const kind of kinds) {
+        expect(
+          ['CapsuleGeometry', 'SphereGeometry'],
+          `the body must not be built from ${kind}`,
+        ).toContain(kind);
+      }
     } finally {
       body.dispose();
     }

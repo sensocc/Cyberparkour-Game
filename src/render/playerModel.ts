@@ -289,26 +289,81 @@ function finite(value: number, fallback = 0): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
-/** A box of the body's own, tracked for disposal. */
-function box(
-  width: number,
-  height: number,
-  depth: number,
+/**
+ * **The body is made of capsules and spheres, not boxes.**
+ *
+ * Every other model in the city is axis-aligned box parts, which is right for a vent or a tank and
+ * wrong for a person: a box torso seen from above is a rectangle, and the player looks down at
+ * their own body more than at anything else in the game. A capsule has the one property that
+ * matters here - its silhouette is round from every angle, including the top-down one - and a
+ * sphere at each joint covers the seam where two capsules meet, so a bent elbow reads as an elbow
+ * rather than as two sticks crossing.
+ *
+ * The segment count is deliberately low (8-12). This is a body seen at arm's length by a camera
+ * that clips anything within 10 cm of the eye, so the extra smoothness of a 32-segment capsule is
+ * never resolved; what *is* seen is the silhouette, and 8 segments already reads as round.
+ */
+
+/** A shape of the body's own, tracked for disposal. */
+function shape(
+  geometry: THREE.BufferGeometry,
   material: THREE.Material,
   resources: (THREE.BufferGeometry | THREE.Material)[],
-  offsetY = 0,
-  offsetZ = 0,
 ): THREE.Mesh {
-  const geometry = new THREE.BoxGeometry(width, height, depth);
   resources.push(geometry);
   const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.set(0, offsetY, offsetZ);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
 }
 
-/** A two-jointed limb hanging from `attach`. */
+/** A capsule limb segment, hanging down from its joint. */
+function capsule(
+  radius: number,
+  height: number,
+  material: THREE.Material,
+  resources: (THREE.BufferGeometry | THREE.Material)[],
+  offsetY = 0,
+  offsetZ = 0,
+  radialSegments = 10,
+): THREE.Mesh {
+  // `CapsuleGeometry`'s height is the *cylindrical* part, so a segment of total length `height`
+  // is a capsule of `height - 2 * radius` plus two hemispherical caps.
+  const geometry = new THREE.CapsuleGeometry(radius, Math.max(0.001, height - radius * 2), 4, radialSegments);
+  const mesh = shape(geometry, material, resources);
+  mesh.position.set(0, offsetY, offsetZ);
+  return mesh;
+}
+
+/** A sphere, squashed to the proportions given. */
+function blob(
+  radius: number,
+  material: THREE.Material,
+  resources: (THREE.BufferGeometry | THREE.Material)[],
+  offsetY = 0,
+  offsetZ = 0,
+  scale: readonly [number, number, number] = [1, 1, 1],
+  widthSegments = 14,
+): THREE.Mesh {
+  const geometry = new THREE.SphereGeometry(radius, widthSegments, Math.max(8, widthSegments - 4));
+  const mesh = shape(geometry, material, resources);
+  mesh.position.set(0, offsetY, offsetZ);
+  mesh.scale.set(scale[0], scale[1], scale[2]);
+  return mesh;
+}
+
+/**
+ * A two-jointed limb hanging from `attach`.
+ *
+ * Three things make this read as a limb rather than as two sticks: the segments are *capsules*, so
+ * their ends are round; each joint carries a sphere slightly wider than the segment, so the bend
+ * has a pivot instead of a gap; and the lower segment is thinner than the upper one, which is the
+ * proportion a forearm has to an upper arm.
+ *
+ * The joints stay plain `Group`s with nothing but their position and rotation set - the pose code
+ * drives them by name and the springs key on the object - so the shape of what hangs off them is
+ * invisible to every test in `playerModel.test.ts`.
+ */
 function limb(
   attach: THREE.Object3D,
   material: THREE.Material,
@@ -317,16 +372,20 @@ function limb(
   lowerLength: number,
   thickness: number,
 ): Limb {
+  const radius = thickness / 2;
   const root = new THREE.Group();
-  const upper = box(thickness, upperLength, thickness, material, resources, -upperLength / 2);
-  root.add(upper);
+  root.add(capsule(radius, upperLength, material, resources, -upperLength / 2));
+  // The shoulder joint, a ball a little wider than the segment it joins.
+  root.add(blob(radius * 1.06, material, resources, 0, 0, [1, 1, 1], 10));
   attach.add(root);
 
   const mid = new THREE.Group();
   mid.position.y = -upperLength;
   root.add(mid);
-  const lower = box(thickness * 0.86, lowerLength, thickness * 0.86, material, resources, -lowerLength / 2);
-  mid.add(lower);
+  const lowerRadius = radius * 0.84;
+  mid.add(capsule(lowerRadius, lowerLength, material, resources, -lowerLength / 2));
+  // The knee or elbow: the widest point of the limb, which is what a joint is.
+  mid.add(blob(lowerRadius * 1.12, material, resources, 0, 0, [1, 1, 1], 10));
 
   const end = new THREE.Group();
   end.position.y = -lowerLength;
@@ -365,24 +424,45 @@ export function buildPlayerBody(): PlayerBody {
   const torso = new THREE.Group();
   hips.add(torso);
 
+  // The pelvis, a wide flattened ball: what stops the torso floating above the legs.
+  torso.add(blob(WAIST_DEPTH / 2, suit, resources, 0.02, 0, [WAIST_WIDTH / WAIST_DEPTH, 0.8, 1]));
+
+  // The waist, narrower than both the pelvis and the chest - the inversion is the whole reason the
+  // torso reads as a body rather than as a barrel.
+  torso.add(blob(WAIST_DEPTH * 0.46, suit, resources, 0.14, 0, [WAIST_WIDTH / WAIST_DEPTH, 0.75, 0.96]));
+
   const chestHeight = SHOULDER_Y - HIPS_Y - 0.12;
-  torso.add(box(CHEST_WIDTH, chestHeight, CHEST_DEPTH, suit, resources, chestHeight / 2 + 0.12));
-  torso.add(box(WAIST_WIDTH, 0.26, WAIST_DEPTH, suit, resources, 0.06));
-  // A lit band across the *top* of the chest, oversized in both directions so it is
-  // visible from above: it is the one piece of the body the player looks at most, and
-  // the thing that stops the view reading as the inside of a box.
-  // A small lit patch on the chest's top face, near the front edge. Small on
-  // purpose: it is the *nearest* thing to the camera when the player looks down, so
-  // anything bigger than a badge turns the whole view cyan.
+  const chest = capsule(
+    CHEST_DEPTH / 2,
+    chestHeight + 0.16,
+    suit,
+    resources,
+    chestHeight / 2 + 0.14,
+    0,
+    12,
+  );
+  // **Wider than it is deep.** A capsule is round in cross-section; a chest is not, and the player
+  // looks straight down at this one. Scaling X is what turns the top-down silhouette from a circle
+  // into shoulders.
+  chest.scale.set(CHEST_WIDTH / CHEST_DEPTH, 1, 1);
+  torso.add(chest);
+
+  // The shoulder mass, a bar across the top of the chest, so the arms come out of something.
   torso.add(
-    box(
-      CHEST_WIDTH * 0.3,
-      0.02,
-      CHEST_DEPTH * 0.3,
+    blob(0.085, suit, resources, SHOULDER_Y - HIPS_Y - 0.02, 0, [SHOULDER_HALF / 0.085, 0.62, 0.8]),
+  );
+
+  // A small lit badge on the chest's upper front. Small on purpose: it is the *nearest* thing to
+  // the camera when the player looks down, so anything bigger than a badge turns the view cyan.
+  torso.add(
+    blob(
+      CHEST_DEPTH * 0.14,
       trim,
       resources,
-      SHOULDER_Y - HIPS_Y + 0.005,
-      CHEST_DEPTH * 0.3,
+      SHOULDER_Y - HIPS_Y - 0.02,
+      CHEST_DEPTH * 0.34,
+      [1.2, 0.55, 0.6],
+      10,
     ),
   );
 
@@ -391,7 +471,9 @@ export function buildPlayerBody(): PlayerBody {
   legLeft.root.position.x = -HIP_HALF;
   legRight.root.position.x = HIP_HALF;
   for (const leg of [legLeft, legRight]) {
-    leg.end.add(box(LIMB * 1.3, 0.09, LIMB * 1.9, glove, resources, -0.045, LIMB * 0.35));
+    // The foot: a squashed ball pushed forward, which reads as a boot from above - the angle the
+    // player actually sees their own feet from.
+    leg.end.add(blob(LIMB * 0.68, glove, resources, -0.035, LIMB * 0.38, [1, 0.62, 1.75], 10));
   }
 
   const armLeft = limb(torso, suit, resources, ARM_UPPER, ARM_FORE, LIMB);
@@ -399,7 +481,8 @@ export function buildPlayerBody(): PlayerBody {
   armLeft.root.position.set(-SHOULDER_HALF, SHOULDER_Y - HIPS_Y - 0.04, 0);
   armRight.root.position.set(SHOULDER_HALF, SHOULDER_Y - HIPS_Y - 0.04, 0);
   for (const arm of [armLeft, armRight]) {
-    arm.end.add(box(LIMB, 0.11, LIMB * 1.1, glove, resources, -0.055));
+    // The hand, a slightly elongated ball rather than a box: a fist, not a brick.
+    arm.end.add(blob(LIMB * 0.52, glove, resources, -0.055, 0, [1, 1.15, 0.85], 10));
   }
 
   return {

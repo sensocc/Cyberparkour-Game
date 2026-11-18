@@ -182,6 +182,32 @@ function cellKey(ix: number, iz: number): string {
 }
 
 /**
+ * The colour of a street lamp, chosen by *where it is* rather than by the dice.
+ *
+ * **Why not `random()`.** Every colour draw from the seeded stream shifts every subsequent draw,
+ * and the city's prop layout is a function of that stream - so tinting a lamp would move every
+ * building in the city. A coordinate hash consumes nothing: the same cell always gets the same
+ * lamp colour, the same seed always builds the same city, and the layout is bit-identical to
+ * V2.2.7.
+ *
+ * The palette is sodium, mercury and a cold LED, which are the three lamps a real street actually
+ * has. One colour everywhere is what makes a generated city read as a model: the eye needs the
+ * street to be *patched*, warm under one post and clinical under the next.
+ */
+const LAMP_TINTS: readonly string[] = ['#ffd9a3', '#ffc078', '#9fd8ff', '#c8e2ff', '#e8f4ff'];
+
+function lampTint(ix: number, iz: number): string {
+  // A cheap integer hash, then folded into the palette. `Math.imul` keeps it in 32 bits, so the
+  // value does not drift into float territory where two neighbouring cells could collide.
+  let hash = Math.imul(ix + 0x9e37, 0x85ebca6b) ^ Math.imul(iz + 0x79b9, 0xc2b2ae35);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 0x27d4eb2f);
+  hash ^= hash >>> 16;
+  const index = Math.abs(hash) % LAMP_TINTS.length;
+  return LAMP_TINTS[index] as string;
+}
+
+/**
  * A random height for every cell, then every cell capped at the average of the eight around it.
  *
  * Built in one pass before anything is placed, so the rule is a property of the *layout* rather
@@ -613,7 +639,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
         context.lights.push({
           id: `${cellId}-lamp-light`,
           position: { x: cornerX, y: config.groundY + 5.4, z: cornerZ },
-          color: '#ffd9a3',
+          color: lampTint(ix, iz),
           intensity: 11,
           distance: 26,
         });
@@ -665,7 +691,10 @@ export function generateCity(options: CityOptions = {}): CityParts {
           context.lights.push({
             id: `${cellId}-lamp-b-light`,
             position: { x: mirrorX, y: config.groundY + 5.4, z: mirrorZ },
-            color: '#9fd8ff',
+            // Offset from the first lamp's hash so a crossing is a *pair* of different lights
+            // rather than the same colour twice - which is the one thing a mirrored lamp needs to
+            // avoid to read as two lamps.
+            color: lampTint(ix + 7, iz + 13),
             intensity: 10,
             distance: 24,
           });
