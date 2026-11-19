@@ -581,8 +581,14 @@ export function posePlayerBody(
   // A forward lean through the whole body. A roll curls the torso up as well: the
   // camera is inside the body for the whole of it, so what is visible is the chest
   // folding towards the knees rather than a standing figure spinning.
+  // **Negated, because the torso stands *up*.** Every other joint in this rig hangs *down* from
+  // its pivot, so a positive rotation about X swings the far end forward (-Z). The torso's far end
+  // is its shoulders, which are *above* the hips - so the same positive rotation tips them
+  // backward. Measured before the fix: a sprint leaned the chest top 0.073 m behind the hips, a
+  // crouch 0.188 m, a slide 0.221 m and the middle of a roll 0.360 m. That is the "the camera's
+  // forward is the body's back" report: the body was leaning away from where it was going.
   const curl = pose.stance === 'rolling' ? 0.9 * (1 - Math.abs(progress - 0.5) * 2) : 0;
-  body.joints.rotation(body.torso, 'x', lean + curl, JOINT_RATE.torso, step);
+  body.joints.rotation(body.torso, 'x', -(lean + curl), JOINT_RATE.torso, step);
   body.joints.rotation(body.torso, 'y', shoulderTwist, JOINT_RATE.torso, step);
 
   const swing = 0.7 * stride;
@@ -732,8 +738,12 @@ function applyArm(
 
   switch (pose.armAction) {
     case 'swing': {
-      // Counter-swing to the legs, and the elbows stay bent the way arms do.
-      upper = -Math.sin(phase) * sign * swing * 0.8;
+      // **Counter-swing to the legs.** The sign here is already flipped relative to the legs in
+      // `posePlayerBody` - the left arm is set up with `sign = -1` and the left leg with `+1` - so
+      // leading with another minus made each arm swing *with* its own leg, which is a walk nobody
+      // has ever made. Measured at phase +PI/2: left knee at -0.290 and left hand at -0.156, both
+      // in front. They must be on opposite sides.
+      upper = Math.sin(phase) * sign * swing * 0.8;
       // Held clear of the chest, so a walking player can see their own hands.
       roll = sign * (0.22 + swing * 0.12);
       lower = -0.45 - Math.abs(Math.sin(phase)) * 0.3 * swing;
@@ -742,7 +752,11 @@ function applyArm(
     }
     case 'reach': {
       // Both hands forward and up: a vault, a mantle, or a pipe.
-      const lift = pose.piping ? -2.0 : -1.75 + clamp01(finite(pose.maneuverProgress)) * 0.35;
+      // **Positive, so the hands go forward and up.** These were negative, which for a limb that
+      // hangs down swings the hand *backward* - so a vault reached behind the player and a mantle
+      // grabbed at nothing. Measured in the old `reach` pose: the hand sat 0.476 m *behind* the
+      // shoulder. `overhead` (0.225) and `hanging` (0.092) had the same sign.
+      const lift = pose.piping ? 2.0 : 1.75 - clamp01(finite(pose.maneuverProgress)) * 0.35;
       upper = lift * (pose.piping && pose.pipeDirection < 0 ? 0.75 : 1);
       roll = sign * 0.26;
       lower = -0.5;
@@ -768,21 +782,21 @@ function applyArm(
     }
     case 'overhead': {
       // Both hands straight up, on a ladder.
-      upper = -2.6;
+      upper = 2.6;
       roll = sign * 0.12;
       lower = -0.25;
       end = 0;
       break;
     }
     case 'hanging': {
-      upper = -2.9;
+      upper = 2.9;
       roll = sign * 0.1;
       lower = -0.15;
       end = 0;
       break;
     }
     case 'tucked': {
-      upper = -1.3;
+      upper = 1.3;
       roll = sign * 0.35;
       lower = -1.7;
       end = -0.3;
@@ -801,8 +815,10 @@ function applyArm(
       // what distinguishes a slide from a crouch at speed.
       //
       // `sign` splits them: the leading-side arm goes wide, the trailing one drops back.
+      // The trailing arm goes *back* - negative for a joint that hangs down - and the leading arm
+      // comes just forward of the body. Both were the other way round.
       const trailing = sign > 0;
-      upper = trailing ? 0.95 : -0.25;
+      upper = trailing ? -0.95 : 0.25;
       roll = sign * (trailing ? 0.55 : 0.85);
       lower = trailing ? -0.35 : -0.75;
       end = trailing ? -0.1 : -0.3;

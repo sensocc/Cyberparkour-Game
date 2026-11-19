@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.3.1` |
+| Version | `2.3.2` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1353 in 53 files |
+| Tests | 1355 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -77,6 +77,8 @@ V2.3.0 rebuilt the two things the player looks at most and re-lit the city aroun
 
 V2.3.1 fixed the knees and gave the body two animations it did not have. The **knee** report was three separate faults, all measured rather than guessed: the foot mesh's toe offset was `+Z` when forward in the rig is `-Z`, so the knee swung correctly forward and the foot pointed the other way — a leg bent backwards at the ankle; the `tuck` thigh target was `-1.15`, which drove the knee 0.41 m *behind* the hip; and the wall-run driving leg had the same inverted sign (0.31 m behind). Two tests had been written to agree with the inverted tuck and were updated to the corrected invariant. A **slide** now has its own pose — lead leg out, trailing leg folded under, arms out for balance — instead of falling through to the walk cycle; and a player who stands completely still for three seconds **relaxes**: weight shifts onto one hip, the knees settle, and the chest and arms breathe together on a single sine. The idle is a ramped quantity, not a mode, and the pose refuses it while crouched, sliding or airborne — a test caught the body relaxing mid-fall before that gate existed.
 
+V2.3.2 fixed the body facing away from the camera. The rotation was never wrong — the body's yaw, the toes and the chest badge all pointed where the camera did — but the *angles* had been authored as if every part of the rig hung down from its pivot. The torso stands **up**, so a positive rotation about X (which swings a hanging limb forward) tips the shoulders backward: measured, a sprint leaned the chest 0.073 m behind the hips, a crouch 0.188 m, a slide 0.221 m and the middle of a roll 0.360 m. And the arms were negative, so `reach` put the hands 0.476 m *behind* the shoulder — a vault grabbed at nothing. Both fixed, along with the slide's trailing arm and the walk's arm swing, which had an extra minus and so swung each arm *with* its own leg instead of against it. Two new tests pin the invariant in world space, which is the only frame that cannot be fooled by a sign error agreeing with another sign error.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -114,7 +116,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1353 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1355 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

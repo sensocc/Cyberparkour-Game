@@ -252,9 +252,13 @@ describe('the poses that are not a walk', () => {
       settle(body, pose({ armAction: 'hanging' }));
       const hanging = body.armLeft.root.rotation.x;
 
-      // Negative is up: a swing hangs down, a reach is forward, a hang is overhead.
-      expect(reach).toBeLessThan(swing);
-      expect(hanging).toBeLessThan(reach);
+      // **Positive is forward and up.** The arm hangs from the shoulder, so a positive rotation
+      // about X swings its far end forward (-Z) and round towards overhead. These bounds used to be
+      // the other way round, which is how a reach ended up pointing the hands 0.476 m *behind* the
+      // player: the angles had been authored as if the arm stood up from the shoulder rather than
+      // hanging from it.
+      expect(reach).toBeGreaterThan(swing);
+      expect(hanging).toBeGreaterThan(reach);
     } finally {
       body.dispose();
     }
@@ -266,10 +270,16 @@ describe('the poses that are not a walk', () => {
       settle(body, pose({ lean: 0 }));
       expect(body.torso.rotation.x).toBeCloseTo(0, 6);
       settle(body, pose({ lean: 0.5 }));
-      // A spring approaches its target asymptotically, so "settled" is a number of
-      // decimals rather than a value: a ten-thousandth of a radian is a third of a
-      // millimetre at the end of the torso.
-      expect(body.torso.rotation.x).toBeCloseTo(0.5, 4);
+      // **Negative, and that is the fix.** The torso stands *up* from the hips, so a positive
+      // rotation about X tips the shoulders *backward* - the opposite of every limb, which hangs
+      // down from its pivot. A `lean` of 0.5 is "lean forward by half a radian", so the rotation
+      // applied is -0.5. Measured before the fix: a sprint put the chest top 0.073 m behind the
+      // hips and a slide 0.221 m.
+      //
+      // A spring approaches its target asymptotically, so "settled" is a number of decimals rather
+      // than a value: a ten-thousandth of a radian is a third of a millimetre at the end of the
+      // torso.
+      expect(body.torso.rotation.x).toBeCloseTo(-0.5, 4);
     } finally {
       body.dispose();
     }
@@ -283,8 +293,10 @@ describe('the poses that are not a walk', () => {
       settle(body, pose({ stance: 'rolling', maneuverProgress: 1, lean: 0.5 }));
       const end = body.torso.rotation.x;
 
-      expect(middle).toBeGreaterThan(end);
-      expect(end).toBeCloseTo(0.5, 4);
+      // The curl *adds* to the lean in the forward direction, which is the negative one now: the
+      // middle of a roll folds the body up harder than either end does.
+      expect(middle).toBeLessThan(end);
+      expect(end).toBeCloseTo(-0.5, 4);
     } finally {
       body.dispose();
     }
@@ -298,6 +310,91 @@ describe('the poses that are not a walk', () => {
       settle(body, pose({ legAction: 'brace', wallSide: -1 }));
       // The driving leg is whichever is towards the wall.
       expect(body.legLeft.root.rotation.x).toBeCloseTo(right, 6);
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('faces the way the camera looks, in every gait and every reach', () => {
+    // **The bug this is for.** The body's rotation has always been `yaw`, matching the camera's -
+    // and the toes and the chest badge pointed the right way - but the *angles* had been authored
+    // as if every part of the rig hung down from its pivot. The torso stands *up*, so a positive
+    // rotation about X (which swings a hanging limb forward) tips the shoulders backward; and the
+    // arms were negative, so a vault reached behind the player. Measured before the fix: a sprint
+    // leaned the chest 0.073 m behind the hips, a slide 0.221 m, and `reach` put the hands 0.476 m
+    // behind the shoulder. That is what "the camera's forward is the body's back" was.
+    //
+    // Every assertion here is in **world space with forward = -Z**, which is the only frame that
+    // cannot be fooled by a sign error agreeing with another sign error - which is how the three
+    // tests this replaced had all been written to match the bug.
+    const forwardOf = (object: THREE.Object3D): number => {
+      const position = new THREE.Vector3();
+      object.getWorldPosition(position);
+      return position.z;
+    };
+
+    const body = build();
+    try {
+      // The torso leans forward when asked to, in every gait that leans.
+      for (const [label, target] of [
+        ['a sprint', pose({ lean: 0.16, speedFraction: 1 })],
+        ['a crouch', pose({ crouchAmount: 1, lean: 0.42 })],
+        ['a slide', pose({ lean: 0.5, sliding: true })],
+      ] as const) {
+        settle(body, target);
+        body.root.updateMatrixWorld(true);
+        // The chest's *top* is what tips: take the torso's local up axis into the world.
+        const top = new THREE.Vector3(0, 0.46, 0).applyQuaternion(
+          body.torso.getWorldQuaternion(new THREE.Quaternion()),
+        );
+        expect(top.z, `${label} must lean forward, not backward`).toBeLessThan(-0.005);
+      }
+
+      // ...and a reach, a hang and a tuck put the hands in front of the shoulder.
+      for (const action of ['reach', 'overhead', 'hanging', 'tucked'] as const) {
+        settle(body, pose({ armAction: action }));
+        body.root.updateMatrixWorld(true);
+        const shoulder = forwardOf(body.armLeft.root);
+        const hand = body.armLeft.end.children.find((child) =>
+          (child as THREE.Mesh).isMesh,
+        ) as THREE.Object3D;
+        expect(forwardOf(hand) - shoulder, `${action} must put the hand forward`).toBeLessThan(-0.03);
+      }
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('swings each arm against the leg on the same side, not with it', () => {
+    // A walk is a contralateral gait: the left arm goes back as the left leg goes forward. The two
+    // limbs are set up with opposite `sign`s in `posePlayerBody`, and the swing had an extra minus
+    // on top of that, so each arm swung *with* its own leg. Measured at phase PI/2 before the fix:
+    // left knee at -0.290 and left hand at -0.156, both in front.
+    const body = build();
+    try {
+      for (const phase of [Math.PI / 2, -Math.PI / 2, Math.PI / 4]) {
+        settle(body, pose({ armAction: 'swing', gaitPhase: phase, strideAmount: 1 }));
+        body.root.updateMatrixWorld(true);
+
+        const knee = new THREE.Vector3();
+        const hand = new THREE.Vector3();
+        body.legLeft.mid.getWorldPosition(knee);
+        const handMesh = body.armLeft.end.children.find((child) =>
+          (child as THREE.Mesh).isMesh,
+        ) as THREE.Object3D;
+        handMesh.getWorldPosition(hand);
+
+        // Both are relative to the hip, so the comparison is about swing rather than about which
+        // limb happens to sit further forward on the rig.
+        const hip = new THREE.Vector3();
+        body.legLeft.root.getWorldPosition(hip);
+        const kneeLead = hip.z - knee.z;
+        const handLead = hip.z - hand.z;
+        expect(
+          Math.sign(kneeLead),
+          `at phase ${phase.toFixed(2)} the left arm must oppose the left leg`,
+        ).toBe(-Math.sign(handLead));
+      }
     } finally {
       body.dispose();
     }
