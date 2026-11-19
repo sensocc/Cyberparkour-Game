@@ -26,11 +26,31 @@ import {
   type Stance,
 } from './player.js';
 
+/**
+ * How long the player must stand completely still before the body starts to relax, in seconds.
+ *
+ * Three seconds: long enough that it never fires while someone is reading the HUD or lining up a
+ * jump, short enough that standing on a roof looking at the city is enough to see it.
+ */
+const IDLE_AFTER = 3;
+
+/** How long the idle then takes to fade all the way in. */
+const IDLE_RAMP = 1.6;
+
 /** What the arms are doing. */
-export type ArmAction = 'swing' | 'reach' | 'overhead' | 'hanging' | 'tucked' | 'relaxed' | 'phone';
+export type ArmAction =
+  | 'swing'
+  | 'reach'
+  | 'overhead'
+  | 'hanging'
+  | 'tucked'
+  | 'relaxed'
+  | 'phone'
+  | 'slide'
+  | 'idle';
 
 /** What the legs are doing. */
-export type LegAction = 'stride' | 'tuck' | 'hang' | 'brace';
+export type LegAction = 'stride' | 'tuck' | 'hang' | 'brace' | 'slide' | 'idle';
 
 /** Everything the body's animation needs. */
 export interface PlayerPose {
@@ -83,6 +103,22 @@ export interface PlayerPose {
   legAction: LegAction;
   /** Forward lean of the torso in radians, for a sprint. */
   lean: number;
+  /**
+   * How much of the idle animation to apply, 0..1.
+   *
+   * **Faded, not switched.** A player who stops for two seconds and then moves should not see the
+   * body snap from a relaxed slouch back to a walk - so this ramps in over about a second after the
+   * idle threshold, and drops to zero the instant anything else happens.
+   */
+  idleAmount: number;
+  /**
+   * Seconds the idle has been running, for the slow breathing motion.
+   *
+   * The amount says *how much* of the pose to apply; this says *where in the breath* it is. Two
+   * numbers rather than one because a breathing body is a function of time, and the pose is
+   * otherwise entirely a function of state.
+   */
+  idleTime: number;
 }
 
 /**
@@ -104,7 +140,10 @@ export function poseSignature(pose: PlayerPose): string {
     `${pose.armAction}|${pose.legAction}|${pose.stance}|${pose.locomotion}|` +
     `${pose.wallSide}|${pose.pipeDirection}|${pose.maneuver ?? '-'}|` +
     `${pose.crouchAmount.toFixed(4)}|${pose.strideAmount.toFixed(4)}|` +
-    `${pose.gaitPhase.toFixed(4)}|${pose.lean.toFixed(4)}|${pose.maneuverProgress.toFixed(4)}`
+    `${pose.gaitPhase.toFixed(4)}|${pose.lean.toFixed(4)}|${pose.maneuverProgress.toFixed(4)}|` +
+    // Quantised to a tenth of a second: the breath moves the body, so the shadow has to follow it,
+    // but not sixty redraws a second for a chest rising by a centimetre.
+    `${pose.idleAmount.toFixed(4)}|${pose.idleTime.toFixed(1)}`
   );
 }
 
@@ -129,6 +168,8 @@ export function emptyPose(): PlayerPose {
     armAction: 'swing',
     legAction: 'stride',
     lean: 0,
+    idleAmount: 0,
+    idleTime: 0,
   };
 }
 
@@ -176,6 +217,22 @@ export function describePose(
     state.maneuver && state.maneuver.durationSeconds > 0
       ? Math.min(1, Math.max(0, state.maneuver.elapsed / state.maneuver.durationSeconds))
       : 0;
+  // **Idle is a ramped quantity, not a mode.** Nothing happens for `IDLE_AFTER` seconds, then the
+  // body relaxes over `IDLE_RAMP`; the moment anything else happens it goes straight back to zero.
+  // A hard switch would be a snap, and this is the one pose the player is guaranteed to be looking
+  // at with nothing else to distract them.
+  // **The pose checks the preconditions, not just the timer.** The simulation only counts seconds
+  // while the player is genuinely standing still, so in play these agree - but the pose is the
+  // interface, and an interface that trusts its caller to have already filtered the state is one
+  // that draws a relaxed slouch on somebody who is crouched or falling the moment anything else
+  // sets the timer. A test caught exactly that.
+  const canBeIdle =
+    state.alive && state.grounded && !state.crouching && !state.sliding && state.maneuver === null;
+  const idleFor =
+    canBeIdle && state.idleSeconds > IDLE_AFTER ? state.idleSeconds - IDLE_AFTER : 0;
+  out.idleAmount = idleFor <= 0 ? 0 : clamp01(idleFor / IDLE_RAMP);
+  out.idleTime = idleFor;
+
   out.wallSide = wallSideOf(state);
   out.piping = piping;
   out.pipeDirection = !piping ? 0 : state.pipeDirection < 0 ? -1 : state.pipeDirection > 0 ? 1 : 0;
@@ -198,7 +255,17 @@ function armActionFor(state: PlayerState, maneuver: ScriptedMove | null, piping:
   if (maneuver === 'roll') return 'tucked';
   if (maneuver !== null) return 'reach';
   if (state.climbId !== null) return 'overhead';
+  // **A slide is not a crouch-walk.** Both drop the hips, but a slide has the arms out for balance
+  // and the body folded back over the trailing leg - it is a different shape, and reusing `swing`
+  // meant the arms kept walking while the player was sliding on their hip.
+  if (state.sliding) return 'slide';
+  if (idleEnough(state)) return 'idle';
   return 'swing';
+}
+
+/** Whether the body has been still long enough to start relaxing. */
+function idleEnough(state: PlayerState): boolean {
+  return state.idleSeconds > IDLE_AFTER;
 }
 
 function legActionFor(state: PlayerState, maneuver: ScriptedMove | null, piping: boolean): LegAction {
@@ -211,6 +278,8 @@ function legActionFor(state: PlayerState, maneuver: ScriptedMove | null, piping:
   // legs walking - a combination no body makes. Climbing is checked before the grounded case now.
   if (state.climbId !== null) return 'hang';
   if (!state.grounded) return state.wallId !== null ? 'brace' : 'hang';
+  if (state.sliding) return 'slide';
+  if (idleEnough(state)) return 'idle';
   return 'stride';
 }
 

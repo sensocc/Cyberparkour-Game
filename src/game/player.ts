@@ -227,6 +227,19 @@ export interface PlayerState {
   /** Head-bob amplitude multiplier, 0..1, faded in and out. */
   bobAmount: number;
   /**
+   * Seconds the player has been standing completely still.
+   *
+   * **A timer, not a pose.** "Idle" is not a thing the player *is*, the way crouching is - it is
+   * what happens when nothing has happened for a while, so it has to be accumulated somewhere and
+   * the simulation is the only clock the body answers to. The renderer reads it to decide how much
+   * of the idle animation to apply, and fades it in so a player who stops for a second and then
+   * moves does not see the body snap.
+   *
+   * Reset on any input, any speed, and leaving the ground: a body in the air is falling, not
+   * standing about.
+   */
+  idleSeconds: number;
+  /**
    * Seconds since the player was last on the ground, for coyote time.
    *
    * `Infinity` closes the window, and is what a jump sets: see `updateJumpWindows`.
@@ -355,6 +368,7 @@ export function createPlayerState(spawn: SpawnPoint, config: GameConfig): Player
     bobPhase: 0,
     bobPhaseStep: 0,
     bobAmount: 0,
+    idleSeconds: 0,
     // Closed until the player has actually stood on something: a player who starts
     // in mid-air has not "just left the ground", and must not be given a jump for
     // it. The first step on a deck opens it.
@@ -482,6 +496,7 @@ export function respawnPlayer(state: PlayerState, config?: GameConfig): void {
   state.bobPhase = 0;
   state.bobPhaseStep = 0;
   state.bobAmount = 0;
+  state.idleSeconds = 0;
   state.coyote = Number.POSITIVE_INFINITY;
   state.jumpBuffer = 0;
   state.wallId = null;
@@ -553,6 +568,35 @@ export function stepPlayer(
   else if (state.climbId) result = stepClimbing(state, input, dt, options);
   else if (state.pipeId) result = stepPiping(state, input, dt, options);
   else result = stepLocomotion(state, input, dt, options);
+
+  // **How long the player has been standing completely still.** Not a movement rule - nothing about
+  // the simulation reads it - but it is a fact about time, and this is the only clock the body
+  // answers to. A player who is holding a direction, moving, crouching, sliding or off the ground
+  // is doing something; anyone else is standing about, and after long enough the body should stop
+  // being a mannequin.
+  //
+  // Compared against `horizontalSpeed` rather than the raw velocity because a player pushed slowly
+  // by a moving lift is still standing on it, and `!== 0` would restart the timer every frame on
+  // float noise.
+  const still =
+    state.grounded &&
+    state.maneuver === null &&
+    state.hangId === null &&
+    state.climbId === null &&
+    state.pipeId === null &&
+    !state.sliding &&
+    !state.crouching &&
+    input.forward === 0 &&
+    input.right === 0 &&
+    !input.jump &&
+    horizontalSpeed(state) < 0.05;
+  if (still) {
+    // Capped: the pose only cares about "a while" and "a long time", and an uncapped float grows
+    // without bound in a session that runs for hours.
+    state.idleSeconds = Math.min(600, state.idleSeconds + dt);
+  } else {
+    state.idleSeconds = 0;
+  }
 
   // Checkpoints are watched in every mode, so passing one mid-vault counts.
   if (!state.alive) return result;

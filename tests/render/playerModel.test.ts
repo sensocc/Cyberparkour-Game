@@ -352,13 +352,16 @@ describe('joints that travel rather than jump', () => {
     const body = build();
     try {
       settle(body, pose({ legAction: 'stride', gaitPhase: 0, strideAmount: 0 }));
-      const target = -1.15;
+      // **+1.15, not -1.15.** A positive thigh angle lifts the knee *forward*, which is the only
+      // direction a knee goes; the old negative target was the inverted tuck this version fixed, and
+      // this bound had been written to match the bug.
+      const target = 1.15;
 
       // Twenty frames is a third of a second.
       for (let frame = 0; frame < 20; frame += 1) {
         posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, STEP);
       }
-      expect(upperOf(body)).toBeLessThan(target + 0.15);
+      expect(upperOf(body)).toBeGreaterThan(target - 0.15);
     } finally {
       body.dispose();
     }
@@ -493,12 +496,14 @@ describe('the smoothness of the movement itself', () => {
       let furthest = 0;
       for (let frame = 0; frame < 120; frame += 1) {
         posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, 1 / 60);
-        furthest = Math.min(furthest, body.legLeft.root.rotation.x);
+        furthest = Math.max(furthest, body.legLeft.root.rotation.x);
       }
-      // A tuck's thigh target is -1.15 rad, and a critically damped spring approaches it
-      // from one side only.
-      expect(furthest).toBeLessThan(-1.05);
-      expect(furthest).toBeGreaterThanOrEqual(-1.16);
+      // A tuck's thigh target is +1.15 rad - positive because the knee lifts *forward* - and a
+      // critically damped spring approaches it from one side only. The old bound was -1.15 for the
+      // same reason the pose was: the sign was inverted here too, and this test had been written to
+      // agree with it.
+      expect(furthest).toBeGreaterThan(1.05);
+      expect(furthest).toBeLessThanOrEqual(1.16);
     } finally {
       body.dispose();
     }

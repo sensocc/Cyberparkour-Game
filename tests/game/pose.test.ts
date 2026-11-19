@@ -132,6 +132,22 @@ describe('stances', () => {
     expect(poseOf(sliding).lean).toBeGreaterThan(poseOf(crouched).lean);
   });
 
+  it('gives a slide its own pose, not a faster crouch', () => {
+    // **A slide is not a crouch-walk.** Both drop the hips, but the arms and legs are doing
+    // something different: hands out for balance, one leg out in front and the other folded under.
+    // Before V2.3.1 the slide fell through to `swing` and `stride`, so the player slid along with
+    // their arms still walking.
+    const sliding = onDeck();
+    sliding.sliding = true;
+    const pose = poseOf(sliding);
+    expect(pose.legAction).toBe('slide');
+    expect(pose.armAction).toBe('slide');
+
+    const crouching = onDeck();
+    crouching.crouching = true;
+    expect(poseOf(crouching).legAction).not.toBe('slide');
+    expect(poseOf(crouching).armAction).not.toBe('slide');
+  });
   it('rolls the body up when the move is a roll', () => {
     const state = onDeck();
     state.maneuver = maneuver('roll');
@@ -373,4 +389,65 @@ describe('every scripted move', () => {
       expect(pose.legAction).toBe('tuck');
     });
   }
+});
+
+describe('standing completely idle', () => {
+  it('does nothing at all for the first few seconds', () => {
+    // A timer, not a mode: a player who paused to read the HUD must not see the body relax.
+    const state = onDeck();
+    state.idleSeconds = 1;
+    const pose = poseOf(state);
+    expect(pose.idleAmount).toBe(0);
+    expect(pose.legAction).toBe('stride');
+    expect(pose.armAction).toBe('swing');
+  });
+
+  it('relaxes once nothing has happened for a while, and says so in the pose', () => {
+    const state = onDeck();
+    state.idleSeconds = 8;
+    const pose = poseOf(state);
+    expect(pose.idleAmount).toBeGreaterThan(0.5);
+    expect(pose.legAction).toBe('idle');
+    expect(pose.armAction).toBe('idle');
+  });
+
+  it('ramps in rather than switching, so the body does not snap out of it', () => {
+    const early = onDeck();
+    early.idleSeconds = 3.3;
+    const late = onDeck();
+    late.idleSeconds = 6;
+
+    expect(poseOf(early).idleAmount).toBeGreaterThan(0);
+    expect(poseOf(early).idleAmount).toBeLessThan(poseOf(late).idleAmount);
+    expect(poseOf(late).idleAmount).toBe(1);
+    // ...and the breath is a function of time, so the pose keeps changing while it holds.
+    expect(poseOf(late).idleTime).toBeGreaterThan(poseOf(early).idleTime);
+  });
+
+  it('is part of the shadow signature, or a breathing body would cast a still shadow', () => {
+    const a = onDeck();
+    a.idleSeconds = 6;
+    const b = onDeck();
+    b.idleSeconds = 6.5;
+    expect(poseSignature(poseOf(a))).not.toBe(poseSignature(poseOf(b)));
+  });
+
+  it('is not applied while dead, crouched or in the air', () => {
+    for (const setup of [
+      (state: ReturnType<typeof onDeck>) => {
+        state.alive = false;
+      },
+      (state: ReturnType<typeof onDeck>) => {
+        state.crouching = true;
+      },
+      (state: ReturnType<typeof onDeck>) => {
+        state.grounded = false;
+      },
+    ]) {
+      const state = onDeck();
+      state.idleSeconds = 9;
+      setup(state);
+      expect(poseOf(state).idleAmount, 'no idle here').toBe(0);
+    }
+  });
 });

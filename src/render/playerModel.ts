@@ -460,7 +460,8 @@ export function buildPlayerBody(): PlayerBody {
       trim,
       resources,
       SHOULDER_Y - HIPS_Y - 0.02,
-      CHEST_DEPTH * 0.34,
+      // `-Z` is the front of this rig, which is the side the player looks down at.
+      -CHEST_DEPTH * 0.34,
       [1.2, 0.55, 0.6],
       10,
     ),
@@ -471,9 +472,14 @@ export function buildPlayerBody(): PlayerBody {
   legLeft.root.position.x = -HIP_HALF;
   legRight.root.position.x = HIP_HALF;
   for (const leg of [legLeft, legRight]) {
-    // The foot: a squashed ball pushed forward, which reads as a boot from above - the angle the
-    // player actually sees their own feet from.
-    leg.end.add(blob(LIMB * 0.68, glove, resources, -0.035, LIMB * 0.38, [1, 0.62, 1.75], 10));
+    // The foot: a squashed ball pushed **forward**, which reads as a boot from above - the angle
+    // the player actually sees their own feet from.
+    //
+    // **`-Z`, because forward in this rig is `-Z`** (see `intoYawBasis`). It was `+Z`, so the toe
+    // pointed behind the player: the knee swung correctly forward and the foot pointed the other
+    // way, which reads as a leg bent backwards at the ankle. Measured at a full crouch, the knee
+    // sat 0.43 m in front of the hip and the toe 0.06 m behind it.
+    leg.end.add(blob(LIMB * 0.68, glove, resources, -0.035, -LIMB * 0.38, [1, 0.62, 1.75], 10));
   }
 
   const armLeft = limb(torso, suit, resources, ARM_UPPER, ARM_FORE, LIMB);
@@ -641,7 +647,11 @@ function applyLeg(
     }
     case 'tuck': {
       // Knees up and in, the shape a body makes going over something.
-      upper = -1.15 + progress * 0.5;
+      //
+      // **Positive, because a positive thigh angle lifts the knee *forward*.** This was `-1.15`,
+      // which drove the knee 0.41 m behind the hip - the same sign error the stride had, in a case
+      // the stride's test did not cover. Measured on the `tuck` pose: knee ahead of hip -0.411 m.
+      upper = 1.15 - progress * 0.5;
       lower = -1.5;
       end = 0.4;
       break;
@@ -660,9 +670,43 @@ function applyLeg(
       // carries it - a body that always drove with the same leg would look wrong on
       // every wall but one.
       const drives = pose.wallSide !== 0 && sign === -pose.wallSide;
-      upper = drives ? -0.75 : 0.5;
+      // **The driving leg leads, the trailing leg follows.** Both were backwards: the drive was
+      // `-0.75`, which put *that* knee 0.31 m behind the hip, so the leg that was supposed to be
+      // planted on the wall was folded away from it.
+      upper = drives ? 0.75 : -0.5;
       lower = drives ? -1.1 : -0.5;
       end = 0.25;
+      break;
+    }
+    case 'slide': {
+      // **A slide is not a crouch-walk.** The lead leg goes out in front, nearly straight, and the
+      // trailing leg folds right under the hip with the foot tucked back - the shape a person
+      // actually makes going under something. The crouch fold is *replaced* rather than added to,
+      // because a slide is not a squat: the hips are low but the body is long, not compact.
+      //
+      // `sign` picks which leg leads, so a slide reads as coming off one hip rather than as a
+      // symmetric squat. The lead is fixed to the player's right, which is what a right-footed
+      // slide looks like; a slide is a one-sided move and faking symmetry would look worse.
+      const leads = sign > 0;
+      // A positive thigh angle is forward, so the lead leg swings out and the trailing one folds
+      // back under the body - and both knees still bend *forward*, which is the invariant.
+      upper = leads ? 1.05 : 0.15;
+      lower = leads ? -0.28 : -1.85;
+      end = leads ? -0.2 : 0.55;
+      break;
+    }
+    case 'idle': {
+      // **Standing about.** The legs take a relaxed stance: the weight on one hip, the knees very
+      // slightly bent, and a slow shift of that weight from side to side over about five seconds.
+      // The shift is what separates "idle" from "paused": a body that is perfectly still reads as a
+      // mannequin, and the eye is very good at spotting one.
+      //
+      // The breath is shared with the torso (see `posePlayerBody`), so the legs only carry the
+      // weight shift and the small knee settle.
+      const sway = Math.sin(pose.idleTime * 0.9) * 0.5 + 0.5;
+      upper = (sign > 0 ? 1 : -1) * 0.06 * sway;
+      lower = -0.09 - 0.04 * sway;
+      end = 0;
       break;
     }
   }
@@ -749,6 +793,33 @@ function applyArm(
       roll = sign * 0.3;
       lower = -0.5;
       end = -0.15;
+      break;
+    }
+    case 'slide': {
+      // **Arms out for balance, trailing behind.** A sliding player's hands are not swinging: one
+      // arm reaches back to the ground behind them and the other is thrown out to the side. That is
+      // what distinguishes a slide from a crouch at speed.
+      //
+      // `sign` splits them: the leading-side arm goes wide, the trailing one drops back.
+      const trailing = sign > 0;
+      upper = trailing ? 0.95 : -0.25;
+      roll = sign * (trailing ? 0.55 : 0.85);
+      lower = trailing ? -0.35 : -0.75;
+      end = trailing ? -0.1 : -0.3;
+      break;
+    }
+    case 'idle': {
+      // **Arms hanging, with a slow breath.** The upper arm hangs close to the body, the elbow is
+      // slightly bent, and the hands drift a centimetre or two as the chest rises - which is the
+      // whole trick of an idle: the pose is almost still, and the *almost* is what reads as alive.
+      //
+      // The breath is the same `sin` the torso uses, so the arms and the chest move together
+      // instead of the arms floating independently of the shoulder they hang from.
+      const breath = Math.sin(pose.idleTime * 1.15) * pose.idleAmount;
+      upper = 0.16 + breath * 0.05;
+      roll = sign * (0.17 + breath * 0.02);
+      lower = -0.34 - breath * 0.05;
+      end = -0.12;
       break;
     }
   }

@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.3.0` |
+| Version | `2.3.1` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1345 in 53 files |
+| Tests | 1353 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -75,6 +75,8 @@ V2.2.7 fixed which way the arrow points. The bearing was `atan2(dx, dz) - yaw`, 
 
 V2.3.0 rebuilt the two things the player looks at most and re-lit the city around them. The **body** is capsules and spheres instead of boxes — a box torso seen from above is a rectangle, and the player looks down at their own body more than at anything else in the game; every joint now carries a ball, so a bent limb reads as an elbow rather than as two sticks crossing. The **cat** stopped being eight boxes in normalised coordinates and became real geometry (`catModel.ts`): haunches, a curled tail, forward-tilted head, ears, and emissive slit-pupil eyes that cross the bloom threshold, which is how you find it in a cold courtyard. The **lighting** gained volumetric shafts — thin additive cones under every high lamp, one instanced draw call for up to 64 of them — a harder, lower key light, a warm ground bounce against a cool sky, and street lamps tinted from a coordinate hash so the streets are patched with sodium, mercury and LED rather than lit in one colour. The hash consumes nothing from the seeded stream, so the city's layout is bit-identical to V2.2.7.
 
+V2.3.1 fixed the knees and gave the body two animations it did not have. The **knee** report was three separate faults, all measured rather than guessed: the foot mesh's toe offset was `+Z` when forward in the rig is `-Z`, so the knee swung correctly forward and the foot pointed the other way — a leg bent backwards at the ankle; the `tuck` thigh target was `-1.15`, which drove the knee 0.41 m *behind* the hip; and the wall-run driving leg had the same inverted sign (0.31 m behind). Two tests had been written to agree with the inverted tuck and were updated to the corrected invariant. A **slide** now has its own pose — lead leg out, trailing leg folded under, arms out for balance — instead of falling through to the walk cycle; and a player who stands completely still for three seconds **relaxes**: weight shifts onto one hip, the knees settle, and the chest and arms breathe together on a single sine. The idle is a ramped quantity, not a mode, and the pose refuses it while crouched, sliding or airborne — a test caught the body relaxing mid-fall before that gate existed.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -112,7 +114,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1345 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1353 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

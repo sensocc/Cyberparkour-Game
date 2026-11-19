@@ -904,6 +904,39 @@ describe('climbing', () => {
   });
 });
 
+describe('standing still', () => {
+  it('counts the seconds, and clears on anything else', () => {
+    // The timer lives in the simulation because it is a fact about *time*, and the body answers to
+    // the game clock. A minute of standing has to be a minute of standing whoever is drawing it.
+    const collisionWorld = world(FLOOR);
+    const state = createPlayerState(spawnAt(0, 0.001, 0, FACING_EAST), CONFIG);
+    const options = optionsFor(collisionWorld);
+
+    for (let i = 0; i < 120; i += 1) stepPlayer(state, STILL, STEP, options);
+    expect(state.idleSeconds).toBeGreaterThan(1.5);
+
+    // Any input ends it, immediately.
+    stepPlayer(state, input({ forward: 1 }), STEP, options);
+    expect(state.idleSeconds).toBe(0);
+
+    // ...and so does crouching, even motionless.
+    for (let i = 0; i < 60; i += 1) stepPlayer(state, STILL, STEP, options);
+    expect(state.idleSeconds).toBeGreaterThan(0.5);
+    stepPlayer(state, input({ crouch: true }), STEP, options);
+    expect(state.idleSeconds).toBe(0);
+  });
+
+  it('never counts while airborne', () => {
+    // A body in the air is falling, not standing about.
+    const collisionWorld = world(FLOOR);
+    const state = createPlayerState(spawnAt(0, 4, 0, FACING_EAST), CONFIG);
+    state.grounded = false;
+    const options = optionsFor(collisionWorld);
+    for (let i = 0; i < 20; i += 1) stepPlayer(state, STILL, STEP, options);
+    expect(state.idleSeconds).toBe(0);
+  });
+});
+
 describe('fall damage', () => {
   const fall = CONFIG.fallDamage;
 
