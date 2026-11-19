@@ -664,19 +664,33 @@ export class GameView implements GameViewLike {
     // player is truly idle, so comparing them - feet, yaw, and the handful of pose scalars that
     // change the body's shape - is exactly "did the shadow change", and it is what lets the map
     // stop redrawing for a body that is standing still.
+    // **The body faces the opposite way round from the camera.**
+    //
+    // Reported three times, and every measurement of the rig said the two were aligned - the knee
+    // 0.434 m in front of the hip, the torso leaning forward, the toes pointing forward, and
+    // `camDir` dot `bodyFwd` equal to 1.0 at every heading. Whatever the reason the numbers and the
+    // screen disagreed, the fix the report asked for is the simple one: flip the body.
+    //
+    // Flipping the *body* rather than the camera is the safe half of the pair. The camera's yaw is
+    // the player's input, and flipping it would invert every mouse movement and send a walk
+    // backwards; the body's yaw is presentation, read only by this rig and by its shadow. The
+    // player's own movement, look and collisions are untouched, so this cannot change how the game
+    // plays - only which way the drawn figure faces.
+    const bodyYaw = yaw + Math.PI;
+
     const signature = poseSignature(pose);
     const shapeChanged =
       root.position.x !== feet.x ||
       root.position.y !== feet.y ||
       root.position.z !== feet.z ||
-      root.rotation.y !== yaw ||
+      root.rotation.y !== bodyYaw ||
       this.bodySignature !== signature;
     if (shapeChanged) {
       this.shadowDirty = true;
       this.bodySignature = signature;
     }
     root.position.set(feet.x, feet.y, feet.z);
-    root.rotation.y = yaw;
+    root.rotation.y = bodyYaw;
     posePlayerBody(this.body, pose, this.config, dt);
   }
 

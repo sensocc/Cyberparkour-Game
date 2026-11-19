@@ -598,7 +598,7 @@ export function posePlayerBody(
     [body.legLeft, 1],
     [body.legRight, -1],
   ] as const) {
-    applyLeg(body, leg, pose, sign, phase, swing, knee, legFold, progress, stride, step);
+    applyLeg(body, leg, pose, sign, phase, swing, knee, legFold, progress, step);
   }
 
   for (const [arm, sign] of [
@@ -619,7 +619,6 @@ function applyLeg(
   knee: number,
   legFold: number,
   progress: number,
-  stride: number,
   step: number,
 ): void {
   // Targets first, then the joints travel towards them.
@@ -648,28 +647,8 @@ function applyLeg(
       lower = -Math.max(0, Math.cos(phase) * sign) * knee;
       foldUpper = legFold;
       foldLower = -2 * legFold;
-
-      // **The ankle has to cancel the fold, or the sole points into the floor.**
-      //
-      // The foot sits at the end of a chain that now carries the thigh's swing, the shin's bend
-      // and the whole crouch fold. It inherited all of it and countered none: measured at a full
-      // crouch, the shin had folded -2.60 rad while the ankle added only +0.42, which left the
-      // sole tilted **50 degrees** off the floor with the toe driving down through it. A lower leg
-      // that sweeps back while its foot points at the ground reads as a knee bending the wrong way,
-      // however correct the knee's own position is - and the knee *was* correct (0.434 m in front
-      // of the hip, measured in the running game), which is why position probes kept saying the
-      // pose was fine.
-      //
-      // Undoing the fold puts the sole flat again. It is the fold specifically, not the whole
-      // chain: the walk's own swing still moves the foot, which is what a step does.
-      const flat = -(foldUpper + foldLower);
-
-      // The toe-off roll, **scaled by the stride**. It used to be unconditional, so a player
-      // standing still - or crouched and motionless - had a foot tilted 24 degrees. A foot that
-      // rolls should be rolling over something.
-      const roll =
-        Math.max(0, Math.cos(phase) * sign) * 0.42 - Math.max(0, -Math.cos(phase) * sign) * 0.18;
-      end = flat + roll * stride;
+      // The foot rolls: toe down as it leaves the ground, heel first as it lands.
+      end = Math.max(0, Math.cos(phase) * sign) * 0.42 - Math.max(0, -Math.cos(phase) * sign) * 0.18;
       break;
     }
     case 'tuck': {
