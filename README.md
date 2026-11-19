@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.3.2` |
+| Version | `2.3.3` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1355 in 53 files |
+| Tests | 1357 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -79,6 +79,8 @@ V2.3.1 fixed the knees and gave the body two animations it did not have. The **k
 
 V2.3.2 fixed the body facing away from the camera. The rotation was never wrong — the body's yaw, the toes and the chest badge all pointed where the camera did — but the *angles* had been authored as if every part of the rig hung down from its pivot. The torso stands **up**, so a positive rotation about X (which swings a hanging limb forward) tips the shoulders backward: measured, a sprint leaned the chest 0.073 m behind the hips, a crouch 0.188 m, a slide 0.221 m and the middle of a roll 0.360 m. And the arms were negative, so `reach` put the hands 0.476 m *behind* the shoulder — a vault grabbed at nothing. Both fixed, along with the slide's trailing arm and the walk's arm swing, which had an extra minus and so swung each arm *with* its own leg instead of against it. Two new tests pin the invariant in world space, which is the only frame that cannot be fooled by a sign error agreeing with another sign error.
 
+V2.3.3 fixed the ankle. The foot sits at the end of a chain carrying the thigh's swing, the shin's bend and the whole crouch fold, and it countered none of them: measured at a full crouch, the shin had folded −2.60 rad while the ankle added only +0.42, leaving the sole **50° off the floor** with the toe driving down through it. A lower leg that sweeps back while its foot points at the ground reads as a knee folding towards you — even though the knee's own position is correct (0.434 m in front of the hip, confirmed by measuring the running game in a browser, where the camera's forward and the body's facing agree to a dot product of 1.0 at every heading). The ankle now cancels the fold, so the sole is flat at every crouch depth, and the toe-off roll scales with the stride instead of tilting a motionless foot 24°.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -116,7 +118,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1355 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1357 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

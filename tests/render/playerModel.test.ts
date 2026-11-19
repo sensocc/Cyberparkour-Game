@@ -240,6 +240,62 @@ describe('the poses that are not a walk', () => {
     }
   });
 
+  it('keeps the sole flat on the floor at every crouch depth', () => {
+    // **The bug this is for.** The foot sits at the end of a chain carrying the thigh's swing, the
+    // shin's bend and the whole crouch fold - and it countered none of it. Measured at a full
+    // crouch in V2.3.2: the shin had folded -2.60 rad while the ankle added only +0.42, leaving the
+    // sole tilted **50 degrees** off the floor with the toe driving through it. A lower leg that
+    // sweeps back while its foot points at the ground reads as a knee bending the wrong way, even
+    // though the knee's own position was correct (0.434 m in front of the hip, confirmed in the
+    // running game) - which is why position probes kept reporting the pose as fine.
+    //
+    // The sole's up axis is the only number that answers "does this foot look planted", so it is
+    // what is asserted, at three depths rather than one.
+    const body = build();
+    try {
+      for (const crouchAmount of [0, 0.5, 1]) {
+        settle(body, pose({ crouchAmount }));
+        body.root.updateMatrixWorld(true);
+
+        const soleUp = new THREE.Vector3(0, 1, 0).applyQuaternion(
+          body.legLeft.end.getWorldQuaternion(new THREE.Quaternion()),
+        );
+        const toe = new THREE.Vector3(0, 0, -1).applyQuaternion(
+          body.legLeft.end.getWorldQuaternion(new THREE.Quaternion()),
+        );
+        const tiltDegrees = (Math.acos(Math.min(1, Math.max(-1, soleUp.y))) * 180) / Math.PI;
+
+        expect(tiltDegrees, `sole must be flat at crouch ${crouchAmount}`).toBeLessThan(1);
+        // ...and the toe still points forward (-Z), not down into the floor or back at the player.
+        expect(toe.z, `toe must point forward at crouch ${crouchAmount}`).toBeLessThan(-0.95);
+
+        // The knee leads the hip, which is the thing the eye reads as "bending the right way".
+        const hip = new THREE.Vector3();
+        const knee = new THREE.Vector3();
+        body.legLeft.root.getWorldPosition(hip);
+        body.legLeft.mid.getWorldPosition(knee);
+        expect(hip.z - knee.z, `knee must lead the hip at crouch ${crouchAmount}`).toBeGreaterThan(
+          -0.02,
+        );
+      }
+    } finally {
+      body.dispose();
+    }
+  });
+
+  it('does not roll the foot when the player is not taking a step', () => {
+    // The toe-off roll used to be unconditional, so a motionless player had a foot tilted 24
+    // degrees. A foot that rolls should be rolling over something, so it scales with the stride.
+    const body = build();
+    try {
+      settle(body, pose({ strideAmount: 0 }));
+      body.root.updateMatrixWorld(true);
+      expect(Math.abs(body.legLeft.end.rotation.x)).toBeLessThan(0.01);
+    } finally {
+      body.dispose();
+    }
+  });
+
   it('raises the hands for a reach, and further for a hang', () => {
     const body = build();
     try {
