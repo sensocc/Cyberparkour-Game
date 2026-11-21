@@ -717,9 +717,19 @@ function applyLeg(
     }
   }
 
-  body.joints.rotation(leg.root, 'x', upper, JOINT_RATE.upper, step, foldUpper);
-  body.joints.rotation(leg.mid, 'x', lower, JOINT_RATE.lower, step, foldLower);
-  body.joints.rotation(leg.end, 'x', end, JOINT_RATE.end, step);
+  // **The legs are drawn in the opposite direction to everything else in the rig.**
+  //
+  // Requested as exactly that and nothing more: do not change any other pose, angle or behaviour,
+  // just turn the legs round. So the flip happens here, at the single point where the leg's three
+  // joints are written, and nowhere else - hips, torso, arms, the crouch depth, the stride and the
+  // body's own facing are all untouched.
+  //
+  // The fold offsets are negated with their angles because they are applied *outside* the spring
+  // (`rotation` adds `offset` after integrating towards `target`); negating only the target would
+  // leave the offset disagreeing with it and the leg would sit at the wrong depth.
+  body.joints.rotation(leg.root, 'x', -upper, JOINT_RATE.upper, step, -foldUpper);
+  body.joints.rotation(leg.mid, 'x', -lower, JOINT_RATE.lower, step, -foldLower);
+  body.joints.rotation(leg.end, 'x', -end, JOINT_RATE.end, step);
 }
 
 function applyArm(

@@ -8,7 +8,7 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.3.4` |
+| Version | `2.3.5` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
 | Tests | 1355 in 53 files |
 | Coverage | ~91% of statements |
@@ -80,6 +80,8 @@ V2.3.1 fixed the knees and gave the body two animations it did not have. The **k
 V2.3.2 fixed the body facing away from the camera. The rotation was never wrong — the body's yaw, the toes and the chest badge all pointed where the camera did — but the *angles* had been authored as if every part of the rig hung down from its pivot. The torso stands **up**, so a positive rotation about X (which swings a hanging limb forward) tips the shoulders backward: measured, a sprint leaned the chest 0.073 m behind the hips, a crouch 0.188 m, a slide 0.221 m and the middle of a roll 0.360 m. And the arms were negative, so `reach` put the hands 0.476 m *behind* the shoulder — a vault grabbed at nothing. Both fixed, along with the slide's trailing arm and the walk's arm swing, which had an extra minus and so swung each arm *with* its own leg instead of against it. Two new tests pin the invariant in world space, which is the only frame that cannot be fooled by a sign error agreeing with another sign error.
 
 V2.3.4 reverts V2.3.3's crouch change and flips the drawn body 180° relative to the camera. The ankle work in V2.3.3 was a real defect — the sole sat 50° off the floor at a full crouch — but it did not address the report, which was that the camera and the body appeared to face opposite ways. Every measurement of the rig said otherwise (the knee 0.434 m in front of the hip, the torso leaning forward, `camDir · bodyFwd` = 1.0 at every heading), so rather than keep measuring, the crouch is back to exactly what V2.3.2 drew and the body is turned to face the other way. The flip is applied to the **body**, not the camera: the camera's yaw is the player's look input, and turning it round would invert every mouse movement and walk the player backwards. The body's yaw is presentation — read only by its own rig and its shadow — so movement, look and collision are untouched.
+
+V2.3.5 draws the legs in the opposite direction. Nothing else was asked for and nothing else changed: the flip happens at the single point where the leg's three joints are written, so the hips, torso, arms, crouch depth, stride and the body's own facing are all untouched. Measured at a full crouch the knee moved from −0.434 m to **+0.434 m** relative to the hip — exactly mirrored — with the foot still under the hip and on the floor. Five tests asserted the old leg direction and were updated to the mirrored invariant rather than loosened; one of them records a real cost, because with the arms left alone a same-side arm and leg now swing together, which is not how people walk. Restoring a natural gait means flipping the arm swing to match.
 
 ## Movement
 

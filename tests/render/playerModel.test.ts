@@ -165,12 +165,16 @@ describe('the stride', () => {
   });
 
   it('never lets a knee bend the wrong way', () => {
+    // **The hinge is mirrored now, so the bound is too.** V2.3.5 draws the legs in the opposite
+    // direction to the rest of the rig (requested as exactly that, and nothing else), which turns
+    // every leg angle's sign. A knee is still a hinge that only folds one way - it is now `>= 0`
+    // rather than `<= 0`. This is the bound following the invariant, not the invariant changing.
     const body = build();
     try {
       for (let step = 0; step <= 12; step += 1) {
         posePlayerBody(body, pose({ gaitPhase: (step / 12) * Math.PI * 2, strideAmount: 1 }), CONFIG, STEP);
-        expect(body.legLeft.mid.rotation.x).toBeLessThanOrEqual(0.0001);
-        expect(body.legRight.mid.rotation.x).toBeLessThanOrEqual(0.0001);
+        expect(body.legLeft.mid.rotation.x).toBeGreaterThanOrEqual(-0.0001);
+        expect(body.legRight.mid.rotation.x).toBeGreaterThanOrEqual(-0.0001);
       }
     } finally {
       body.dispose();
@@ -365,11 +369,18 @@ describe('the poses that are not a walk', () => {
     }
   });
 
-  it('swings each arm against the leg on the same side, not with it', () => {
-    // A walk is a contralateral gait: the left arm goes back as the left leg goes forward. The two
-    // limbs are set up with opposite `sign`s in `posePlayerBody`, and the swing had an extra minus
-    // on top of that, so each arm swung *with* its own leg. Measured at phase PI/2 before the fix:
-    // left knee at -0.290 and left hand at -0.156, both in front.
+  it('mirrors the legs against the arms, which is what flipping them does', () => {
+    // **This test used to assert the opposite, and the change is deliberate.**
+    //
+    // A walk is normally a contralateral gait: the left arm goes back as the left leg goes forward.
+    // V2.3.5 was asked to draw the legs in the opposite direction and to change nothing else, and
+    // the arms were left alone - so the relationship inverts. At phase PI/2 the left knee is now
+    // +0.290 (behind the hip, where it used to lead) while the left hand is unchanged at +0.314, so
+    // the same-side arm and leg swing *together*.
+    //
+    // That is a real cost of the request rather than a fix: an ipsilateral gait is not how people
+    // walk. It is recorded here so the change is visible in the suite rather than hidden by a
+    // deleted test, and so restoring a contralateral walk means flipping the arm swing to match.
     const body = build();
     try {
       for (const phase of [Math.PI / 2, -Math.PI / 2, Math.PI / 4]) {
@@ -392,8 +403,8 @@ describe('the poses that are not a walk', () => {
         const handLead = hip.z - hand.z;
         expect(
           Math.sign(kneeLead),
-          `at phase ${phase.toFixed(2)} the left arm must oppose the left leg`,
-        ).toBe(-Math.sign(handLead));
+          `at phase ${phase.toFixed(2)} the left arm swings with the left leg, because the legs are mirrored`,
+        ).toBe(Math.sign(handLead));
       }
     } finally {
       body.dispose();
@@ -449,16 +460,16 @@ describe('joints that travel rather than jump', () => {
     const body = build();
     try {
       settle(body, pose({ legAction: 'stride', gaitPhase: 0, strideAmount: 0 }));
-      // **+1.15, not -1.15.** A positive thigh angle lifts the knee *forward*, which is the only
-      // direction a knee goes; the old negative target was the inverted tuck this version fixed, and
-      // this bound had been written to match the bug.
-      const target = 1.15;
+      // **-1.15 now, because the legs are mirrored.** The tuck pose still targets +1.15 in the pose
+      // data; `applyLeg` negates it on the way to the joint, so the joint's own target is -1.15.
+      // This bound follows the drawn angle rather than the authored one.
+      const target = -1.15;
 
       // Twenty frames is a third of a second.
       for (let frame = 0; frame < 20; frame += 1) {
         posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, STEP);
       }
-      expect(upperOf(body)).toBeGreaterThan(target - 0.15);
+      expect(upperOf(body)).toBeLessThan(target + 0.15);
     } finally {
       body.dispose();
     }
@@ -593,14 +604,13 @@ describe('the smoothness of the movement itself', () => {
       let furthest = 0;
       for (let frame = 0; frame < 120; frame += 1) {
         posePlayerBody(body, pose({ legAction: 'tuck' }), CONFIG, 1 / 60);
-        furthest = Math.max(furthest, body.legLeft.root.rotation.x);
+        furthest = Math.min(furthest, body.legLeft.root.rotation.x);
       }
-      // A tuck's thigh target is +1.15 rad - positive because the knee lifts *forward* - and a
-      // critically damped spring approaches it from one side only. The old bound was -1.15 for the
-      // same reason the pose was: the sign was inverted here too, and this test had been written to
-      // agree with it.
-      expect(furthest).toBeGreaterThan(1.05);
-      expect(furthest).toBeLessThanOrEqual(1.16);
+      // A tuck's drawn thigh target is -1.15 rad, because the legs are mirrored against the pose
+      // data. A critically damped spring approaches it from one side only, so the test tracks the
+      // furthest excursion towards it and holds it short of overshoot.
+      expect(furthest).toBeLessThan(-1.05);
+      expect(furthest).toBeGreaterThanOrEqual(-1.16);
     } finally {
       body.dispose();
     }
@@ -807,9 +817,12 @@ describe('the crouch', () => {
       body.legLeft.mid.getWorldPosition(knee);
       body.legLeft.end.getWorldPosition(foot);
 
-      // The knee leads the hip, in the direction the body faces.
-      expect(knee.z).toBeLessThan(hip.z - 0.15);
-      // ...and the foot has come back under the hip rather than swinging out in front of it.
+      // **The knee now leads away from the body's facing**, because the legs are drawn mirrored.
+      // Measured at a full crouch: the knee is +0.434 m the other side of the hip, exactly the
+      // magnitude it sat on the near side before the flip. The foot still ends up under the hip and
+      // on the floor, which is the part that must not change - a mirrored leg that floats or sinks
+      // would be a worse bug than the one being fixed.
+      expect(knee.z).toBeGreaterThan(hip.z + 0.15);
       expect(Math.abs(foot.z - hip.z)).toBeLessThan(0.1);
       expect(foot.y).toBeGreaterThan(-0.05);
     } finally {
