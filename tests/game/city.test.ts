@@ -1089,6 +1089,38 @@ describe('what V0.8 puts in the city', () => {
     );
   });
 
+  it('furnishes the streets with more than tarmac and a lamp', () => {
+    // **The brief for V2.4.0.** The streets were tarmac, a lane marking, one lamp on a corner and
+    // a thing at the end of each road - which is what a city looks like before anybody lives in it.
+    // This pins both halves: the furniture exists and is varied, and none of it is a collider.
+    const street = generated.filter((prop) => prop.id.startsWith('street-'));
+    const kinds = new Set(street.map((prop) => prop.model));
+
+    expect(street.length, 'streets are furnished').toBeGreaterThan(2000);
+    for (const kind of ['kerb', 'bench', 'street-tree', 'hedge', 'parked-car', 'bollard', 'litter-bin', 'traffic-cone']) {
+      expect(kinds, `${kind} on the streets`).toContain(kind);
+    }
+
+    // **Nothing collides.** A bench you can trip over is a physics bug, and a parkour game needs
+    // the pavement to stay ground: every piece is `collide: 'none'`.
+    expect(street.filter((prop) => prop.collide !== 'none').map((prop) => prop.id)).toEqual([]);
+
+    // The density is a *mixture*, not one type repeated - which is the difference between a
+    // furnished street and a row of the same object.
+    expect(kinds.size).toBeGreaterThanOrEqual(8);
+
+    // **And the layout did not move to get them.** Street furniture draws from the dressing pass's
+    // own RNG stream rather than the generator's, so the city underneath is untouched: the props
+    // that are not street furniture are the same ones, in the same order. Compared as *generated*
+    // props on both sides - `generated` is a slice past the fixture's own props, so a filtered
+    // comparison against `again.props` would be comparing two different bases.
+    const again = buildCity(DEMO_DISTRICT);
+    const againGenerated = again.props.slice(DEMO_DISTRICT.props.length);
+    expect(againGenerated.filter((prop) => !prop.id.startsWith('street-')).map((prop) => prop.id)).toEqual(
+      generated.filter((prop) => !prop.id.startsWith('street-')).map((prop) => prop.id),
+    );
+  });
+
   it('builds curtain-wall towers for the glass to reflect off', () => {
     expect(report['glass-tower'] ?? 0).toBeGreaterThan(5);
     const walls = generated.filter((prop) => prop.model === 'glass-slab');

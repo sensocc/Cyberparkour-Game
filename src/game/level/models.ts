@@ -546,6 +546,145 @@ const bush: ModelDefinition = {
 };
 
 /**
+ * A bench: a slatted seat on two legs, with a back.
+ *
+ * Street furniture has to read at a glance from a rooftop thirty metres up, so it is built from the
+ * same few boxes everything else is - but the *proportions* are what make it a bench rather than a
+ * crate. A seat 0.45 m off the ground and 1.8 m long is a bench; the back is what says which way it
+ * faces, so nothing has to be guessed from the shape.
+ */
+const bench: ModelDefinition = {
+  id: 'bench',
+  note: 'A bench: slatted seat, backrest and two legs. Faces -Z.',
+  parts: [
+    // Legs, inset from the ends so the seat reads as overhanging them.
+    part([0.09, 0, 0.36], [0.17, 0.44, 0.64], 'metal-dark'),
+    part([0.83, 0, 0.36], [0.91, 0.44, 0.64], 'metal-dark'),
+    // The seat, three slats with gaps - the gaps are what make it read as slats rather than a board.
+    part([0.02, 0.44, 0.34], [0.98, 0.52, 0.5], 'rust'),
+    part([0.02, 0.44, 0.53], [0.98, 0.52, 0.69], 'rust'),
+    part([0.02, 0.44, 0.72], [0.98, 0.52, 0.88], 'rust'),
+    // The back: two uprights and a rail, at the far edge from the seat's front.
+    part([0.09, 0.52, 0.82], [0.17, 0.92, 0.9], 'metal-dark'),
+    part([0.83, 0.52, 0.82], [0.91, 0.92, 0.9], 'metal-dark'),
+    part([0.02, 0.82, 0.84], [0.98, 0.94, 0.92], 'rust'),
+  ],
+};
+
+/**
+ * A street tree: a trunk, a spread of canopy, and a grate at the base.
+ *
+ * The canopy is three offset boxes rather than one, because a tree is the one piece of street
+ * furniture whose *silhouette* has to be irregular - a single cube on a stick reads as a traffic
+ * signal. The offsets also keep the parts from sharing a face, which is what would flicker.
+ */
+const streetTree: ModelDefinition = {
+  id: 'street-tree',
+  note: 'A street tree: trunk, three-lobed canopy, and a grille at the base.',
+  parts: [
+    part([0.04, 0, 0.04], [0.96, 0.06, 0.96], 'grille'),
+    part([0.45, 0.06, 0.45], [0.55, 0.62, 0.55], 'rust'),
+    // Canopy, lowest lobe first: each is inset differently so no two share a side.
+    part([0.24, 0.5, 0.26], [0.76, 0.8, 0.74], 'concrete-dark'),
+    part([0.14, 0.68, 0.18], [0.86, 0.94, 0.82], 'rust'),
+    part([0.28, 0.84, 0.3], [0.72, 1, 0.7], 'concrete-dark'),
+  ],
+};
+
+/** A low hedge: a clipped box of planting, longer than it is deep. */
+const hedge: ModelDefinition = {
+  id: 'hedge',
+  note: 'A clipped hedge: a planter kerb and a block of planting.',
+  parts: [
+    part([0, 0, 0.08], [1, 0.16, 0.92], 'concrete-dark'),
+    part([0.02, 0.16, 0.12], [0.98, 0.84, 0.88], 'rust'),
+    part([0.06, 0.78, 0.16], [0.94, 1, 0.84], 'concrete-dark'),
+  ],
+};
+
+/** A parked car: a body, a cabin, four wheels and lit lamps at both ends. */
+const parkedCar: ModelDefinition = {
+  id: 'parked-car',
+  note: 'A parked car: body, cabin, four wheels, head and tail lamps. Faces -Z.',
+  parts: [
+    // The body sits clear of the ground on its wheels, so the wheels are what touch.
+    part([0.06, 0.16, 0.04], [0.94, 0.46, 0.96], 'metal-dark'),
+    // The cabin, inset at both ends so the bonnet and boot read as bonnet and boot.
+    part([0.14, 0.46, 0.24], [0.86, 0.76, 0.74], 'glass-dark'),
+    // A roof panel, inset again so its sides are not coplanar with the glass.
+    part([0.18, 0.74, 0.28], [0.82, 0.8, 0.7], 'metal-dark'),
+    // Wheels, inside the body's own X range so they read as attached rather than bolted on.
+    part([0.1, 0.02, 0.16], [0.2, 0.3, 0.36], 'metal-light'),
+    part([0.8, 0.02, 0.16], [0.9, 0.3, 0.36], 'metal-light'),
+    part([0.1, 0.02, 0.64], [0.2, 0.3, 0.84], 'metal-light'),
+    part([0.8, 0.02, 0.64], [0.9, 0.3, 0.84], 'metal-light'),
+    // Lamps at both ends, so it reads as a car from whichever way you approach it.
+    part([0.1, 0.32, 0], [0.28, 0.4, 0.05], 'neon'),
+    part([0.72, 0.32, 0], [0.9, 0.4, 0.05], 'neon'),
+    part([0.1, 0.34, 0.95], [0.28, 0.4, 1], 'metal-warm'),
+    part([0.72, 0.34, 0.95], [0.9, 0.4, 1], 'metal-warm'),
+  ],
+};
+
+/** A bollard: the short post that keeps traffic off the pavement. */
+const bollard: ModelDefinition = {
+  id: 'bollard',
+  note: 'A bollard: a capped post with a reflective band.',
+  parts: [
+    part([0.28, 0, 0.28], [0.72, 0.82, 0.72], 'metal-dark'),
+    part([0.24, 0.78, 0.24], [0.76, 0.9, 0.76], 'metal-light'),
+    part([0.22, 0.62, 0.26], [0.78, 0.7, 0.74], 'hazard'),
+  ],
+};
+
+/** A kerbside bin: a lidded drum with a band round it. */
+const litterBin: ModelDefinition = {
+  id: 'litter-bin',
+  note: 'A kerbside bin: a drum, a lid and a band.',
+  parts: [
+    part([0.2, 0.06, 0.2], [0.8, 0.94, 0.8], 'metal-dark'),
+    part([0.16, 0.9, 0.16], [0.84, 0.98, 0.84], 'metal-light'),
+    part([0.17, 0.5, 0.23], [0.83, 0.62, 0.77], 'rust'),
+    part([0.26, 0, 0.26], [0.74, 0.06, 0.74], 'metal-light'),
+  ],
+};
+
+/** A traffic cone: the one thing that says "the road is closed here". */
+const trafficCone: ModelDefinition = {
+  id: 'traffic-cone',
+  note: 'A traffic cone: a square base, a tapered body, two reflective bands.',
+  parts: [
+    part([0.06, 0, 0.06], [0.94, 0.08, 0.94], 'hazard'),
+    part([0.26, 0.08, 0.26], [0.74, 0.42, 0.74], 'hazard'),
+    part([0.32, 0.42, 0.32], [0.68, 0.7, 0.68], 'hazard'),
+    // The bands stand proud on both axes, so neither is coplanar with the body it wraps.
+    part([0.22, 0.2, 0.22], [0.78, 0.3, 0.78], 'metal-light'),
+    part([0.28, 0.5, 0.28], [0.72, 0.58, 0.72], 'metal-light'),
+    part([0.38, 0.7, 0.38], [0.62, 0.84, 0.62], 'hazard'),
+  ],
+};
+
+/**
+ * A pavement kerb: the step between the road and the walk.
+ *
+ * One long low box with a lighter top course. It is the cheapest detail in this file and it does
+ * more for a street than most of the rest, because the eye reads a kerb line as *a street* where a
+ * flat plane reads as a gap between buildings.
+ */
+const kerb: ModelDefinition = {
+  id: 'kerb',
+  note: 'A kerb: a dark face and a lighter coping stone on top.',
+  parts: [
+    part([0, 0, 0.2], [1, 0.62, 0.8], 'concrete-dark'),
+    // **Inset in X and Z, or the coping shares both side faces with the face below it** - two
+    // surfaces at one depth along the whole length of every kerb, which is exactly the z-fighting
+    // the trim rule exists to stop. The coping sits slightly proud in Y instead, which is how a
+    // real coping stone reads.
+    part([0.01, 0.6, 0.12], [0.99, 0.82, 0.88], 'concrete'),
+  ],
+};
+
+/**
  * An alley cat, sitting.
  *
  * The quest-giver. Small, dark, with a head that reads as a head from ten metres - which at this
@@ -859,6 +998,14 @@ const MODELS: readonly ModelDefinition[] = [
   lampPost,
   planter,
   bush,
+  bench,
+  streetTree,
+  hedge,
+  parkedCar,
+  bollard,
+  litterBin,
+  trafficCone,
+  kerb,
   billboard,
   crane,
   scaffold,

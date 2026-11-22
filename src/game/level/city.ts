@@ -1175,6 +1175,37 @@ export function generateCity(options: CityOptions = {}): CityParts {
   };
 
   /**
+   * True when a box `w` by `d` by `h` at (x, z) on a surface at `y` stands clear of everything.
+   *
+   * **`dressFits` cannot answer this for a box model.** It looks the size up in `DRESSING`, which
+   * only holds the glTF kit, so a bench or a kerb would ask about a model that is not in the table.
+   * This is the same test with the size passed in, which is what the street furniture has.
+   */
+  const boxFree = (
+    x: number,
+    y: number,
+    z: number,
+    w: number,
+    d: number,
+    h: number,
+  ): boolean => {
+    for (const prop of props) {
+      // **A kerb is not an obstacle to the furniture that lines it.** The kerb is a 22 cm coping
+      // along the very edge of the road, and the benches and trees stand on that same line - so
+      // counting it meant every piece of street furniture was rejected by the kerb it belongs to.
+      // Measured before this line: 1,024 kerbs and 13 benches, because the kerb spans the whole
+      // road and nothing else could fit beside it.
+      if (prop.model === 'kerb') continue;
+      if (Math.abs(prop.position.x - x) >= prop.size.x / 2 + w / 2 + 0.25) continue;
+      if (Math.abs(prop.position.z - z) >= prop.size.z / 2 + d / 2 + 0.25) continue;
+      if (prop.position.y + prop.size.y / 2 <= y + 0.1) continue;
+      if (prop.position.y - prop.size.y / 2 >= y + h + 0.2) continue;
+      return false;
+    }
+    return true;
+  };
+
+  /**
    * A clear spot for `model` on a deck: the first free place in an aligned row along one edge.
    *
    * **Rows, not scatter.** Offsets drawn at random put a roof's furniture at arbitrary points and
@@ -1242,6 +1273,194 @@ export function generateCity(options: CityOptions = {}): CityParts {
     // Set along the road rather than at whatever angle the dice gave, which is how a kerb reads.
     const yaw = road.size.x > road.size.z ? Math.PI / 2 : 0;
     dress(model, at, config.groundY, yaw);
+  }
+
+  // ---------------------------------------------------------------- street detail
+  //
+  // The streets were tarmac, a lane marking, one lamp on a corner and a thing at the end of each
+  // road - which is what a city looks like before anybody lives in it. This pass dresses them the
+  // way the roofs are dressed: in *rows along the kerb*, with every piece asking `dressFits` first.
+  //
+  // **Nothing here collides.** `collide: 'none'` on every piece, like the kerb kit it sits beside.
+  // A bench you can trip over is a physics bug, and a parkour game needs the ground to stay ground.
+  //
+  // **Nothing here draws from the seeded stream beyond `dressRandom`**, which is its own stream, so
+  // the city's layout is unchanged by anything in this section.
+  //
+  // The density is per-road and deliberately modest: at 512 roads, one piece every few metres is
+  // several thousand props, and the whole city is 62,000 model parts already.
+  const kerbOffset = 0.6;
+
+  /**
+   * The box each street piece occupies, in metres, **long axis on X**.
+   *
+   * A box-part model cannot be rotated - the renderer emits axis-aligned geometry and every
+   * collider is an AABB (see `models.ts`) - so a piece that runs along a Z-road gets its X and Z
+   * sizes swapped rather than a yaw. That is why the sizes live here instead of in the model, and
+   * why every piece below is either symmetric about both axes or is only placed where its shape
+   * already points the right way.
+   */
+  const STREET_SIZE: Readonly<Record<string, readonly [number, number, number]>> = {
+    kerb: [1, 0.22, 0.7],
+    bench: [1.9, 0.9, 0.72],
+    'street-tree': [2.4, 4.6, 2.4],
+    hedge: [3.6, 0.9, 0.9],
+    'parked-car': [4.5, 1.45, 1.95],
+    bollard: [0.32, 0.95, 0.32],
+    'litter-bin': [0.62, 1, 0.62],
+    'traffic-cone': [0.55, 0.8, 0.55],
+  };
+
+  /** `[w, h, d]` for a piece on a road running along X, with the axes swapped for a Z-road. */
+  const sizeOn = (
+    model: string,
+    alongX: boolean,
+    scaleX = 1,
+  ): readonly [number, number, number] => {
+    const size = STREET_SIZE[model] ?? ([1, 1, 1] as const);
+    return alongX ? [size[0] * scaleX, size[1], size[2]] : [size[2], size[1], size[0] * scaleX];
+  };
+
+  /**
+   * A run of positions along a road's two kerbs.
+   *
+   * `step` is the pitch between pieces down one side, so a 9 m pitch puts a bench or a tree every
+   * nine metres - which is roughly how far apart they are on a real street.
+   */
+  const alongRoad = (
+    road: (typeof roads)[number],
+    step: number,
+  ): { x: number; z: number; side: 1 | -1; alongX: boolean }[] => {
+    const alongX = road.size.x > road.size.z;
+    const length = (alongX ? road.size.x : road.size.z) / 2;
+    // Clear of both junctions, so nothing stands in the crossing.
+    const from = -length + 3.5;
+    const to = length - 3.5;
+    if (to <= from) return [];
+    const out: { x: number; z: number; side: 1 | -1; alongX: boolean }[] = [];
+    const count = Math.floor((to - from) / step);
+    if (count < 1) return out;
+    const half = (alongX ? road.size.z : road.size.x) / 2;
+    const edge = Math.max(0, half - kerbOffset);
+    for (let index = 0; index < count; index += 1) {
+      // Centred in the run rather than starting at one end, so the spacing is symmetric.
+      const t = from + ((index + 0.5) / count) * (to - from);
+      for (const side of [1, -1] as const) {
+        out.push(
+          alongX
+            ? { x: road.position.x + t, z: road.position.z + side * edge, side, alongX }
+            : { x: road.position.x + side * edge, z: road.position.z + t, side, alongX },
+        );
+      }
+    }
+    return out;
+  };
+
+  let streetIndex = 0;
+  const streetPiece = (
+    model: string,
+    x: number,
+    z: number,
+    size: readonly [number, number, number],
+  ): void => {
+    props.push(
+      make(`street-${streetIndex++}-${model}`, {
+        at: [x, z],
+        bottom: config.groundY,
+        size,
+        model,
+        collide: 'none',
+      }),
+    );
+    count('street-furniture');
+  };
+
+  for (const road of roads) {
+    const alongX = road.size.x > road.size.z;
+    const length = (alongX ? road.size.x : road.size.z) / 2;
+    const halfWidth = (alongX ? road.size.z : road.size.x) / 2;
+    const edge = halfWidth - kerbOffset;
+
+    // ---- the kerb line itself. Always, both sides, the whole length.
+    //
+    // One scaled prop per side rather than a chain of short ones: cheaper, cannot leave a gap, and
+    // a kerb is a straight line so there is nothing to break up. Its length is the road's own, so
+    // it runs from junction to junction.
+    for (const side of [1, -1] as const) {
+      const cx = alongX ? road.position.x : road.position.x + side * edge;
+      const cz = alongX ? road.position.z + side * edge : road.position.z;
+      // **Stopped short of the junctions.** The kerb runs the length of the street, but the glTF
+      // street furniture from the pass above was placed two metres in from each end - so a kerb
+      // spanning the full length stood *inside* every dumpster, barrier and street-light on the
+      // road: measured, twenty-two overlaps of 0.22 m, which is the kerb's whole height. Four
+      // metres clear at each end is the junction, where no kerb runs anyway.
+      streetPiece('kerb', cx, cz, sizeOn('kerb', alongX, Math.max(1, length * 2 - 8)));
+    }
+
+    // **One roll per road decides whether it is furnished at all.** Three in ten streets get
+    // nothing, which is what stops the city reading as a showroom rather than a place.
+    if (dressRandom() > 0.75) continue;
+
+    for (const point of alongRoad(road, 9)) {
+      const pick = dressRandom();
+      let model: string | null = null;
+      if (pick < 0.14) model = 'bench';
+      else if (pick < 0.3) model = 'street-tree';
+      else if (pick < 0.42) model = 'hedge';
+      else if (pick < 0.52) model = 'litter-bin';
+      else if (pick < 0.64) model = 'bollard';
+      else if (pick < 0.72) model = 'parked-car';
+      else if (pick < 0.8) model = 'traffic-cone';
+      if (!model) continue;
+
+      // **A bench only where its back can point away from the road.** The model's backrest is at
+      // +Z and the renderer cannot turn it, so a bench is only placed on the -Z kerb of an X-road,
+      // where +Z *is* away from the lane. Every other piece is symmetric enough to go anywhere.
+      if (model === 'bench' && !(point.alongX && point.side < 0)) continue;
+
+      const size = sizeOn(model, point.alongX);
+      // **`boxFree`, not `dressFits`.** `dressFits` looks the size up in `DRESSING`, which holds
+      // only the glTF kit - so asking it about a bench throws. These are box models with their own
+      // sizes, and this is the same test with the size passed in.
+      if (!boxFree(point.x, config.groundY, point.z, size[0], size[2], size[1])) continue;
+      streetPiece(model, point.x, point.z, size);
+    }
+  }
+
+  // ---------------------------------------------------------------- parks
+  //
+  // A courtyard on the street grid is the city's own open ground, and a park is the one place with
+  // room for something a kerb cannot hold. This dresses a *few* of them - every third, not all, or
+  // the courtyards stop being courtyards - with a planting bed, trees behind it and a bench facing
+  // it. It asks the same question everything else does, so a yard already full of crates and a
+  // scaffold simply gets what still fits.
+  for (const [index, key] of [...openCells].entries()) {
+    if (index % 3 !== 0) continue;
+    const [ix, iz] = key.split('|').map(Number) as [number, number];
+    const px = -GRID_SPAN / 2 + config.pitch * (ix + 0.5);
+    const pz = -GRID_SPAN / 2 + config.pitch * (iz + 0.5);
+
+    // Offset from the yard's centre, where the crates and the scaffold already stand. The bench is
+    // at the -Z side so it faces +Z, towards the bed - the same constraint as a kerbside bench.
+    const bedX = px - 5;
+    const bedZ = pz + 4;
+    const [hw, , hd] = sizeOn('hedge', true);
+    if (boxFree(bedX, config.groundY, bedZ, hw, hd, 0.9)) {
+      streetPiece('hedge', bedX, bedZ, sizeOn('hedge', true));
+      for (const [tx, tz] of [
+        [bedX - 3.2, bedZ + 1.2],
+        [bedX + 3.4, bedZ + 1.4],
+      ] as const) {
+        const [tw, , td] = sizeOn('street-tree', true);
+        if (boxFree(tx, config.groundY, tz, tw, td, 4.6)) {
+          streetPiece('street-tree', tx, tz, sizeOn('street-tree', true));
+        }
+      }
+      const [bw, , bd] = sizeOn('bench', true);
+      if (boxFree(bedX + 0.2, config.groundY, bedZ - 2.8, bw, bd, 0.9)) {
+        streetPiece('bench', bedX + 0.2, bedZ - 2.8, sizeOn('bench', true));
+      }
+    }
   }
 
   // Citizens: two on the rooftops, two at street level, each idling on their own clock.

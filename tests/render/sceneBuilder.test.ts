@@ -175,7 +175,12 @@ describe('buildScene geometry', () => {
     // no browser can push whatever the triangle count says; merged into per-chunk
     // buffers it is about a thousand - and the parts are the ones that were there
     // before, which is what the oracle below checks.
-    const built = buildScene(buildCity(DEMO_DISTRICT));
+    // **Built once, not five times.** This test used to call `buildCity` separately for the scene,
+    // the gate list, the expected part count and the cat - which was affordable when the city was
+    // 11,000 props and became a 120-second timeout at 14,700 (V2.4.0's street furniture). The city
+    // is deterministic, so one build is the same city every one of those calls produced.
+    const city = buildCity(DEMO_DISTRICT);
+    const built = buildScene(city);
     try {
       const parts = mergedParts(built);
       expect(parts).toBeGreaterThan(30_000);
@@ -184,8 +189,8 @@ describe('buildScene geometry', () => {
       // Nothing was dropped on the way in: every part of every prop that is not a
       // gate is in a buffer. (Gates are groups that slide.)
       const gates = new Set<string>();
-      for (const elevator of buildCity(DEMO_DISTRICT).elevators ?? []) {
-        for (const prop of buildCity(DEMO_DISTRICT).props) {
+      for (const elevator of city.elevators ?? []) {
+        for (const prop of city.props) {
           if (isElevatorGateOf(elevator.id, prop.id)) gates.add(prop.id);
         }
       }
@@ -193,14 +198,14 @@ describe('buildScene geometry', () => {
       // `catModel.ts`), so it contributes meshes to the scene rather than parts to a chunk. Its box
       // parts are still defined - they are what a headless build falls back to - so the oracle has
       // to exclude it, or it counts geometry that was deliberately not drawn.
-      const expected = buildCity(DEMO_DISTRICT).props
+      const expected = city.props
         .filter((prop) => !gates.has(prop.id) && prop.model !== 'alley-cat')
         .reduce((total, prop) => total + resolvePropParts(prop).length, 0);
       expect(parts).toBe(expected);
 
       // The cat *is* drawn - just not as box parts. Its meshes are in the moving set, which is
       // where everything that is not a chunk lives.
-      const cat = buildCity(DEMO_DISTRICT).props.find((prop) => prop.model === 'alley-cat');
+      const cat = city.props.find((prop) => prop.model === 'alley-cat');
       expect(cat, 'the city has a cat').toBeDefined();
       const catMeshes = built.moving.filter(
         (mesh) => Math.abs((mesh.userData.cullX as number) - cat!.position.x) < 1e-6,
