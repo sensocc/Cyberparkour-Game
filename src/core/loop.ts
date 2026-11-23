@@ -50,6 +50,19 @@ export class GameLoop {
    */
   private active = false;
   private handle: number | null = null;
+  /**
+   * Bumped by every `start()`.
+   *
+   * **A frame callback must not reschedule a loop that a *different* start now owns.** `stop()`
+   * followed by `start()` from inside a frame is not hypothetical - it is what `Game.restart()`
+   * does, so it is what pressing R does. `start()` schedules a callback; then the callback that
+   * asked for the restart reaches its own `if (this.active) this.schedule()` and schedules a
+   * second one. `handle` remembers only the later of the two, so the earlier cannot be cancelled
+   * and both chains run for ever, each advancing the simulation. Measured before this field: two
+   * frames queued where there should be one, and the game at double speed from the first restart
+   * on. The generation lets a frame tell whether it still owns the loop it was scheduled by.
+   */
+  private generation = 0;
   private frameCount = 0;
   private lastFrameDelta = 0;
 
@@ -82,6 +95,7 @@ export class GameLoop {
     if (this.active) return;
 
     this.active = true;
+    this.generation += 1;
     this.frameCount = 0;
     // Baseline the clock at *now*, not at the first frame: the time between
     // start() and the first animation frame is real time and should be
@@ -101,14 +115,21 @@ export class GameLoop {
   }
 
   private schedule(): void {
+    const generation = this.generation;
     this.handle = this.scheduler.request((timestampMs) => {
+      // A callback scheduled by an *older* start must do nothing at all: a restart inside a frame
+      // has already begun a new chain, and letting this one run would be the second chain.
+      if (generation !== this.generation) return;
       this.handle = null;
       // A stop() from inside the previous frame must win over the reschedule.
       if (!this.active) return;
 
       this.frame(timestampMs);
 
-      if (this.active) this.schedule();
+      // **Reschedule only if this frame still owns the loop.** A `stop()` + `start()` inside
+      // `frame()` bumped the generation, and that start has already queued the next frame; adding
+      // another here is what used to leave two chains running.
+      if (this.active && generation === this.generation) this.schedule();
     });
   }
 

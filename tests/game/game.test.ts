@@ -870,6 +870,44 @@ describe('Game debug HUD toggle', () => {
     expect(harness.game.snapshot().player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 9);
   });
 
+  it('R near the cat restarts one run, not two', () => {
+    // **The reported bug.** Walking up to the cat and pressing R instead of E "restarts with broken
+    // navigation". The reason was not the cat and not the respawn: `restart()` calls
+    // `loop.stop()` then `loop.start()` from inside the frame that processed the key, and `start()`
+    // scheduled a frame while the callback that triggered the restart then scheduled a *second*.
+    // `handle` remembered only the newer one, so both chains survived - two rAF loops, every delta
+    // applied twice, from the first restart onward. Nothing about it needs the cat; the cat is
+    // simply where a player presses R by accident.
+    //
+    // The level puts the cat on the spawn, so the player is already standing in front of it.
+    // A cat at the spawn, so the player starts in front of it - the same shape as `QUEST_LEVEL`
+    // in the run suite, repeated here because that one is scoped to its own describe block.
+    const harness = createHarness({
+      level: {
+        ...DEMO_DISTRICT,
+        npc: { id: 'test-cat', name: 'Alley cat', position: { x: 0, y: 0.5, z: 3 }, reach: 4 },
+      },
+    });
+    startGame(harness);
+    stepFrames(harness, 2);
+
+    // Standing at the cat, as reported.
+    expect(harness.game.snapshot().player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 3);
+
+    harness.input.keyDown('KeyR');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyR');
+
+    // **One frame queued, exactly.** Two is the bug: it doubles the simulation for the rest of the
+    // session, which the player experiences as the world moving at the wrong speed.
+    expect(harness.scheduler.queued, 'a restart must not leave a second frame chain').toBe(1);
+
+    // And it stays one while the new run advances.
+    stepFrames(harness, 5);
+    expect(harness.scheduler.queued).toBe(1);
+    expect(harness.game.currentStatus).toBe('playing');
+  });
+
   it('Esc pauses when pointer lock was never acquired', () => {
     const harness = createHarness();
     startGame(harness);

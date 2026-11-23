@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.4.0` |
+| Version | `2.4.1` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1356 in 53 files |
+| Tests | 1358 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -85,6 +85,8 @@ V2.3.5 draws the legs in the opposite direction. Nothing else was asked for and 
 
 V2.4.0 furnished the streets. They were tarmac, a lane marking, one lamp on a corner and a thing at the end of each road — which is what a city looks like before anybody lives in it. Eight new models (kerb, bench, street tree, hedge, parked car, bollard, litter bin, traffic cone) are placed in rows along both kerbs of three streets in four, and every third courtyard gets a planting bed with trees behind it and a bench facing it. Measured: **3,458 pieces** — 1,024 kerbs, 520 bollards, 488 hedges, 422 bins, 343 trees, 310 cones, 181 benches, 170 cars — and **none of them a collider**, because a bench you can trip over is a physics bug in a parkour game. Two invariants keep it honest: `boxFree` asks before anything sits down (and the kerb it belongs to does not count as an obstacle, which was cutting the furniture count to thirteen pieces before it was excluded), and the kerbs stop four metres short of each junction, where they were standing inside twenty-two dumpsters and barriers. Every new model is checked for coplanar faces by the flicker test; the kerb's coping stone failed it first and was inset.
 
+V2.4.1 fixes a restart bug. Walking up to the cat and pressing **R** instead of E was reported as "respawns with broken navigation", and the cause was neither the cat nor the respawn — it was the loop. `restart()` calls `loop.stop()` then `loop.start()` from inside the frame that processed the key, so `start()` scheduled a frame and then the callback that triggered the restart reached its own reschedule and scheduled a **second**. `handle` remembered only the newer of the two, so the older could never be cancelled: two independent rAF chains, every frame's delta applied twice, for the rest of the session. Measured: 2 frames queued where there should be 1. The loop now carries a generation that `start()` bumps, and a frame neither runs nor reschedules unless it still owns the loop it was scheduled by. Two tests pin it — one on the loop, one reproducing the reported path end to end — and both fail with `expected 2 to be 1` without the fix.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -122,7 +124,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1356 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1358 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

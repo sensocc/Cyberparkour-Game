@@ -148,6 +148,39 @@ describe('GameLoop', () => {
     expect(loop.frames).toBe(2);
   });
 
+  it('does not queue a second frame when restarted from inside a frame', () => {
+    // **The bug this is for.** `Game.restart()` calls `loop.stop()` then `loop.start()` from inside
+    // the frame handler - which is what pressing R does. `start()` schedules a frame; then the
+    // callback that triggered the restart reached its own `if (this.active) this.schedule()` and
+    // scheduled a *second*. `this.handle` only remembers the newer one, so both survived: two
+    // independent rAF chains, forever, and every frame's delta applied twice. Measured: the game
+    // ran at double speed from the first restart on, which reads as "navigation is broken".
+    const scheduler = new FakeScheduler();
+    let restarted = false;
+    let frames = 0;
+    const loop = new GameLoop({
+      onFrame: () => {
+        frames += 1;
+        if (restarted) return;
+        restarted = true;
+        loop.stop();
+        loop.start();
+      },
+      scheduler,
+    });
+
+    loop.start();
+    expect(scheduler.queued, 'one frame queued before the first tick').toBe(1);
+
+    scheduler.runFrame(16);
+    expect(scheduler.queued, 'still exactly one frame queued after a restart in a frame').toBe(1);
+
+    // And it stays one: the second chain, if it existed, would show up as extra frames.
+    scheduler.runFrame(16);
+    expect(scheduler.queued).toBe(1);
+    expect(frames, 'one simulated frame per scheduled frame').toBe(2);
+  });
+
   it('passes timestamps through to the frame handler', () => {
     const scheduler = new FakeScheduler();
     const stamps: number[] = [];
