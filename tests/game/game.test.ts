@@ -870,18 +870,14 @@ describe('Game debug HUD toggle', () => {
     expect(harness.game.snapshot().player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 9);
   });
 
-  it('R near the cat restarts one run, not two', () => {
-    // **The reported bug.** Walking up to the cat and pressing R instead of E "restarts with broken
-    // navigation". The reason was not the cat and not the respawn: `restart()` calls
-    // `loop.stop()` then `loop.start()` from inside the frame that processed the key, and `start()`
-    // scheduled a frame while the callback that triggered the restart then scheduled a *second*.
-    // `handle` remembered only the newer one, so both chains survived - two rAF loops, every delta
-    // applied twice, from the first restart onward. Nothing about it needs the cat; the cat is
-    // simply where a player presses R by accident.
+  it('R does nothing while the player is standing at the cat', () => {
+    // **Asked for explicitly, and the second report of the same problem.** V2.4.1 fixed the loop
+    // *double-scheduling* that a restart caused, and that fix stands - but the player still had a
+    // destructive key one keystroke away from the one the cat asks for. The rule now is the one
+    // that was asked for: **R at the cat does nothing at all.**
     //
-    // The level puts the cat on the spawn, so the player is already standing in front of it.
-    // A cat at the spawn, so the player starts in front of it - the same shape as `QUEST_LEVEL`
-    // in the run suite, repeated here because that one is scoped to its own describe block.
+    // The cost is deliberate: R is the restart key everywhere else, and it is suppressed only
+    // inside the cat's reach. `restart()` itself is unchanged and still reachable from the menus.
     const harness = createHarness({
       level: {
         ...DEMO_DISTRICT,
@@ -891,21 +887,89 @@ describe('Game debug HUD toggle', () => {
     startGame(harness);
     stepFrames(harness, 2);
 
-    // Standing at the cat, as reported.
+    // Standing at the cat, as reported - the level puts it on the spawn.
     expect(harness.game.snapshot().player.position.z).toBeCloseTo(DEMO_DISTRICT.spawn.position.z, 3);
+
+    // **Start the run clock, which only runs once the player moves.** A couple of frames of W is a
+    // few centimetres - well inside the cat's 4 m reach - and once started the clock keeps ticking
+    // on its own, so a restart would be unmistakable: it puts the clock back to zero.
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 2);
+    harness.input.keyUp('KeyW');
+    stepFrames(harness, 20);
+    // Where the player ended up is the reference: the assertion is that R moved them nowhere.
+    const before = harness.game.snapshot().player.position;
+    const clockBefore = harness.game.runSnapshot.elapsedSeconds;
+    expect(clockBefore, 'the clock is running before R is pressed').toBeGreaterThan(0);
 
     harness.input.keyDown('KeyR');
     stepFrames(harness, 1);
     harness.input.keyUp('KeyR');
 
-    // **One frame queued, exactly.** Two is the bug: it doubles the simulation for the rest of the
-    // session, which the player experiences as the world moving at the wrong speed.
-    expect(harness.scheduler.queued, 'a restart must not leave a second frame chain').toBe(1);
-
-    // And it stays one while the new run advances.
-    stepFrames(harness, 5);
-    expect(harness.scheduler.queued).toBe(1);
+    // **Nothing happened.** The clock kept running rather than resetting, and the player is still
+    // where they were - so no restart was performed.
+    expect(
+      harness.game.runSnapshot.elapsedSeconds,
+      'a restart would have put the clock back to zero',
+    ).toBeGreaterThan(clockBefore);
+    expect(harness.game.snapshot().player.position.z).toBeCloseTo(before.z, 6);
     expect(harness.game.currentStatus).toBe('playing');
+
+    // And the loop is still the single one it started with.
+    expect(harness.scheduler.queued, 'one frame chain').toBe(1);
+  });
+
+  it('still restarts with R away from the cat', () => {
+    // The other half of the rule: the guard above must not disable the key for the whole game.
+    // The demo district has no cat in it, so the player is nowhere near one.
+    const harness = createHarness();
+    startGame(harness);
+    stepFrames(harness, 2);
+    // Start the clock the same way - it does not run while the player stands still.
+    harness.input.keyDown('KeyW');
+    stepFrames(harness, 2);
+    harness.input.keyUp('KeyW');
+    stepFrames(harness, 20);
+    const clockBefore = harness.game.runSnapshot.elapsedSeconds;
+    expect(clockBefore, 'the clock is running before R is pressed').toBeGreaterThan(0);
+
+    harness.input.keyDown('KeyR');
+    stepFrames(harness, 1);
+    harness.input.keyUp('KeyR');
+
+    expect(
+      harness.game.runSnapshot.elapsedSeconds,
+      'a restart puts the clock back to zero',
+    ).toBeLessThan(clockBefore);
+    expect(harness.game.currentStatus).toBe('playing');
+  });
+
+  it('keeps the play HUD updating after a restart, rather than freezing it', () => {
+    // **The other half of the reported freeze, and the reason it was "only fixable by death or a
+    // restart".** The play HUD is throttled to 10 Hz by comparing two clocks:
+    // `stats.elapsedSeconds - lastGameHud >= 0.1`. `resetSimulation()` puts `stats` back to zero
+    // but did **not** put `lastGameHud` back, so after a restart the gate compared a brand-new
+    // clock against the *previous run's* mark and stayed false until the new run caught up. The
+    // play HUD - and with it the navigation hint - sat frozen at its last value.
+    //
+    // Measured: run the clock past a second, restart, then advance a fifth of a second. The HUD
+    // must have drawn at the new run's time, not still be showing the old one's.
+    const harness = createHarness();
+    startGame(harness);
+    stepFrames(harness, 2);
+    // A second and a half of play, so `lastGameHud` is a long way past zero.
+    stepFrames(harness, 95);
+
+    harness.game.restart();
+    stepFrames(harness, 13); // about 0.21 s at 16 ms - twice the HUD's 0.1 s budget
+
+    const hud = harness.gameHud.last;
+    expect(hud, 'the play HUD has drawn').not.toBeNull();
+    // A frozen HUD would still be reporting the old run's clock.
+    expect(
+      hud!.elapsedSeconds,
+      'the HUD is drawing from the new run, not the old one',
+    ).toBeLessThan(0.5);
   });
 
   it('Esc pauses when pointer lock was never acquired', () => {

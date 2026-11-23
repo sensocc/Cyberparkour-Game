@@ -958,6 +958,14 @@ export class Game {
     this.accumulator.reset();
     this.stats.reset();
     this.lastHudUpdate = 0;
+    // **`lastGameHud` is on this clock, and the clock has just gone back to zero.** The play HUD's
+    // 10 Hz gate is `elapsed - lastGameHud >= 0.1`. `stats.reset()` puts `elapsed` back to 0, and
+    // `lastGameHud` kept the *old* run's value - so the gate stayed false until the new run had
+    // ticked past the old run's mark, and the play HUD (navigation hint included) froze at whatever
+    // it was showing. Measured: after a restart the HUD reported the previous run's clock for as
+    // long as that run had lasted. `stats.reset()` is called from nowhere but here, so this is the
+    // only place the two clocks can disagree.
+    this.lastGameHud = -Infinity;
     this.sprinting = false;
     this.options.input.clear();
     this.motion.reset();
@@ -1936,7 +1944,13 @@ export class Game {
           this.pause('key');
           break;
         case 'restart':
-          if (this.status !== 'ended') this.restart();
+          // **R does nothing while the player is standing at the cat.** Asked for explicitly, and
+          // for a good reason: the cat is the one place the player is meant to press E, and R is
+          // one key away from it. A restart there throws away a run the player was in the middle of
+          // talking to the quest-giver, which is both destructive and confusing. The key still
+          // works everywhere else on the map.
+          if (this.status === 'ended' || this.nearNpc()) break;
+          this.restart();
           break;
         default:
           break;

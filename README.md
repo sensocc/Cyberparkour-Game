@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.4.1` |
+| Version | `2.4.2` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1358 in 53 files |
+| Tests | 1360 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -87,6 +87,8 @@ V2.4.0 furnished the streets. They were tarmac, a lane marking, one lamp on a co
 
 V2.4.1 fixes a restart bug. Walking up to the cat and pressing **R** instead of E was reported as "respawns with broken navigation", and the cause was neither the cat nor the respawn — it was the loop. `restart()` calls `loop.stop()` then `loop.start()` from inside the frame that processed the key, so `start()` scheduled a frame and then the callback that triggered the restart reached its own reschedule and scheduled a **second**. `handle` remembered only the newer of the two, so the older could never be cancelled: two independent rAF chains, every frame's delta applied twice, for the rest of the session. Measured: 2 frames queued where there should be 1. The loop now carries a generation that `start()` bumps, and a frame neither runs nor reschedules unless it still owns the loop it was scheduled by. Two tests pin it — one on the loop, one reproducing the reported path end to end — and both fail with `expected 2 to be 1` without the fix.
 
+V2.4.2 makes **R do nothing while the player is standing at the cat**, which is what was asked for and the right call regardless of anything else: the cat is the one place E is meant to be pressed, R is one key away, and a restart there throws away a run the player is in the middle of giving to the quest-giver. The key still works everywhere else. The same version fixes the reason the freeze survived a restart: the play HUD is throttled by `stats.elapsedSeconds - lastGameHud >= 0.1`, and `resetSimulation()` put `stats` back to zero while leaving `lastGameHud` at the *previous* run's value — so the gate stayed shut until the new run caught up, and the hint froze at whatever it was showing. `stats.reset()` is called from nowhere else, so that was the only place the two clocks could disagree; it is reset with the clock now. Three tests: R is inert at the cat (the clock keeps running and the player does not move), R still restarts away from it, and the play HUD draws from the new run after a restart rather than the old one's clock.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -124,7 +126,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1358 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1360 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.
