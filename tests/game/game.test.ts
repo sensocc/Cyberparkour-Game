@@ -945,31 +945,35 @@ describe('Game debug HUD toggle', () => {
   });
 
   it('keeps the play HUD updating after a restart, rather than freezing it', () => {
-    // **The other half of the reported freeze, and the reason it was "only fixable by death or a
-    // restart".** The play HUD is throttled to 10 Hz by comparing two clocks:
-    // `stats.elapsedSeconds - lastGameHud >= 0.1`. `resetSimulation()` puts `stats` back to zero
-    // but did **not** put `lastGameHud` back, so after a restart the gate compared a brand-new
-    // clock against the *previous run's* mark and stayed false until the new run caught up. The
-    // play HUD - and with it the navigation hint - sat frozen at its last value.
+    // **The other half of the reported freeze, and why it was "only fixable by death or a restart".**
+    // The play HUD is throttled by comparing two clocks on the *frame* timer:
     //
-    // Measured: run the clock past a second, restart, then advance a fifth of a second. The HUD
-    // must have drawn at the new run's time, not still be showing the old one's.
+    //     stats.elapsedSeconds - lastGameHud >= 0.1
+    //
+    // `resetSimulation()` puts `stats` back to zero but did **not** put `lastGameHud` back, so the
+    // gate compared a brand-new clock against the previous run's mark and stayed shut - the HUD sat
+    // frozen at its last values, navigation hint included, until the new run caught up.
+    //
+    // **This counts calls to the HUD, not the values in it.** The first version of this test read
+    // `gameHud.last.elapsedSeconds`, which is the *run* clock and only starts once the player
+    // moves - so it read 0 with and without the fix and would have passed either way. Spying on the
+    // update is the thing that actually distinguishes "redrew at the new run's time" from "never
+    // redrew at all".
     const harness = createHarness();
     startGame(harness);
     stepFrames(harness, 2);
-    // A second and a half of play, so `lastGameHud` is a long way past zero.
+    // A second and a half of play, so `lastGameHud` ends up a long way past zero.
     stepFrames(harness, 95);
 
+    const update = vi.spyOn(harness.gameHud, 'update');
     harness.game.restart();
     stepFrames(harness, 13); // about 0.21 s at 16 ms - twice the HUD's 0.1 s budget
 
-    const hud = harness.gameHud.last;
-    expect(hud, 'the play HUD has drawn').not.toBeNull();
-    // A frozen HUD would still be reporting the old run's clock.
     expect(
-      hud!.elapsedSeconds,
-      'the HUD is drawing from the new run, not the old one',
-    ).toBeLessThan(0.5);
+      update.mock.calls.length,
+      'the play HUD redrew within a fifth of a second of the restart',
+    ).toBeGreaterThan(0);
+    update.mockRestore();
   });
 
   it('Esc pauses when pointer lock was never acquired', () => {
