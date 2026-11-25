@@ -39,6 +39,7 @@ import {
   type PropDefinition,
   type SpawnPoint,
 } from './levelData.js';
+import type { PropQuarter } from './models.js';
 
 
 /** How the city is laid out. All of it is optional; the defaults are the demo's. */
@@ -476,6 +477,16 @@ export function generateCity(options: CityOptions = {}): CityParts {
   //
   // Decided before anything is placed, so the alley pass and the building pass agree about which
   // cells are open.
+  /**
+   * What each cell is *for*, so its streets can be dressed to match.
+   *
+   * A street's identity is not a decoration applied to it - it is a consequence of what stands
+   * along it. An industrial plot gets cables, loading clutter and utility cabinets; a residential
+   * one gets benches, bins and planting; a commercial one gets storefronts, posters and signs.
+   * Recording the archetype at the point it is chosen is cheaper and more honest than inferring a
+   * zone afterwards from prop ids, and it cannot disagree with what was actually built.
+   */
+  const zones = new Map<string, 'industrial' | 'civic' | 'commercial' | 'residential'>();
   const openCells = new Set<string>();
   for (let ix = 0; ix < cells; ix += 1) {
     for (let iz = 0; iz < cells; iz += 1) {
@@ -707,6 +718,7 @@ export function generateCity(options: CityOptions = {}): CityParts {
       if (openCells.has(cellKey(ix, iz))) {
         // A yard rather than a building: a wall on two sides, a lamp, and clutter to climb on.
         context.count('courtyard');
+        zones.set(cellKey(ix, iz), 'civic');
         const wall = 1.2;
         context.props.push(
           make(`${cellId}-yard-wall-n`, {
@@ -775,9 +787,11 @@ export function generateCity(options: CityOptions = {}): CityParts {
 
       if (roll < band.construction) {
         count('construction');
+        zones.set(cellKey(ix, iz), 'industrial');
         constructionSite(context, cx, cz, halfW, halfD, band);
       } else if (roll < band.construction + band.hall) {
         count('hall');
+        zones.set(cellKey(ix, iz), 'civic');
         hall(context, cx, cz, halfW, halfD, band);
       } else if (roll < 0.45 && top - config.groundY < INTERIOR_MAX_HEIGHT) {
         // Interiors are worth having where a building is a few storeys. The ceiling is eight floors
@@ -785,17 +799,21 @@ export function generateCity(options: CityOptions = {}): CityParts {
         // height rule never held: it built eight floors whatever its cell said, so a cell whose
         // target was fifty-eight came out at eight and its neighbours averaged nothing like it.
         count('interior');
+        zones.set(cellKey(ix, iz), 'commercial');
         interiorTower(context, cx, cz, halfW, halfD, band);
       } else if (roll < 0.6) {
         count('tower');
+        zones.set(cellKey(ix, iz), 'commercial');
         tower(context, cx, cz, halfW, halfD, band);
       } else if (roll < 0.66 && Math.min(halfW, halfD) > 14) {
         // **A round tower, occasionally.** Six per cent of cells, and only where the plot is wide
         // enough for the ring to read as a circle rather than a lump. A city of round towers is a
         // theme park; one in sixteen is a landmark you notice.
+        zones.set(cellKey(ix, iz), 'commercial');
         roundTower(context, cx, cz, halfW, halfD, band);
       } else {
         count('block');
+        zones.set(cellKey(ix, iz), 'residential');
         block(context, cx, cz, halfW, halfD, band);
       }
     }
@@ -1146,7 +1164,6 @@ export function generateCity(options: CityOptions = {}): CityParts {
     'solar-landscape', 'chimney-small', 'chimney-medium', 'detail-tank',
     'windmill-low', 'container-a', 'computer', 'cable-small', 'fence', 'door', 'light-square',
   ];
-  const streetPool: readonly GltfPropModelId[] = ['dumpster', 'barrier', 'pole-single', 'street-light'];
 
   /**
    * True when `model`'s own bounding box stands clear at (x, z) on a surface at height `y`.
@@ -1257,103 +1274,84 @@ export function generateCity(options: CityOptions = {}): CityParts {
     dress(model, [place.x, place.z], deck.y, place.yaw);
   }
 
-  // Streets: furniture at the ends of the roads, where the eye is when you look down.
+  // ================================================================ the streets
+  //
+  // **A street is not the gap between two buildings with objects sprinkled in it.** What makes a
+  // place read as a street is that everything along it answers the same set of questions: where is
+  // the crossing, where do you stand to wait, what is sold here, and who keeps it tidy. This pass
+  // dresses every road from the *zone* of the plot it belongs to - industrial, civic, commercial or
+  // residential - so two streets a hundred metres apart do not get the same furniture in the same
+  // arrangement.
+  //
+  // Three rules keep it from becoming clutter:
+  //
+  //  - **Against the wall, never in the lane.** Every piece sits at the outer edge of the street
+  //    gap, hard against the building side, so the walkable width between them stays clear by
+  //    construction rather than by luck.
+  //  - **It faces something.** Benches, vending machines, signs and posters all carry a model that
+  //    is authored facing -Z, and each is turned a quarter to face the road (or the wall) it
+  //    belongs to. That is what `quarter` is for; a bench at an arbitrary angle reads as debris.
+  //  - **Solid things collide, flat things do not.** A bench, bin, cabinet, car or tree trunk is
+  //    something you walk around; a kerb, a crossing, a manhole or a painted line is something you
+  //    walk *over*, and giving them colliders would turn a two-centimetre edge into a wall the
+  //    solver has to resolve every step. Both facts are recorded per piece rather than assumed.
   const roads = props.filter((prop) => prop.id.endsWith('-road-x') || prop.id.endsWith('-road-z'));
-  for (const road of roads) {
-    if (dressRandom() > 0.06) continue;
-    const model = streetPool[Math.floor(dressRandom() * streetPool.length)] ?? streetPool[0]!;
-    const along = road.size.x > road.size.z ? road.size.x / 2 - 2 : road.size.z / 2 - 2;
-    const side = dressRandom() < 0.5 ? 1 : -1;
-    const at: [number, number] = road.size.x > road.size.z
-      ? [road.position.x + side * along, road.position.z]
-      : [road.position.x, road.position.z + side * along];
-    // Street furniture shares the kerb with the lamps, the planters, the bushes and the kerb-side
-    // kit, so it asks the same question the roofs do.
-    if (!dressFits(model, at[0], config.groundY, at[1])) continue;
-    // Set along the road rather than at whatever angle the dice gave, which is how a kerb reads.
-    const yaw = road.size.x > road.size.z ? Math.PI / 2 : 0;
-    dress(model, at, config.groundY, yaw);
-  }
 
-  // ---------------------------------------------------------------- street detail
-  //
-  // The streets were tarmac, a lane marking, one lamp on a corner and a thing at the end of each
-  // road - which is what a city looks like before anybody lives in it. This pass dresses them the
-  // way the roofs are dressed: in *rows along the kerb*, with every piece asking `dressFits` first.
-  //
-  // **Nothing here collides.** `collide: 'none'` on every piece, like the kerb kit it sits beside.
-  // A bench you can trip over is a physics bug, and a parkour game needs the ground to stay ground.
-  //
-  // **Nothing here draws from the seeded stream beyond `dressRandom`**, which is its own stream, so
-  // the city's layout is unchanged by anything in this section.
-  //
-  // The density is per-road and deliberately modest: at 512 roads, one piece every few metres is
-  // several thousand props, and the whole city is 62,000 model parts already.
-  const kerbOffset = 0.6;
-
-  /**
-   * The box each street piece occupies, in metres, **long axis on X**.
-   *
-   * A box-part model cannot be rotated - the renderer emits axis-aligned geometry and every
-   * collider is an AABB (see `models.ts`) - so a piece that runs along a Z-road gets its X and Z
-   * sizes swapped rather than a yaw. That is why the sizes live here instead of in the model, and
-   * why every piece below is either symmetric about both axes or is only placed where its shape
-   * already points the right way.
-   */
+  /** The box each piece occupies, in metres, authored **long axis on X**. */
   const STREET_SIZE: Readonly<Record<string, readonly [number, number, number]>> = {
     kerb: [1, 0.22, 0.7],
-    bench: [1.9, 0.9, 0.72],
-    'street-tree': [2.4, 4.6, 2.4],
-    hedge: [3.6, 0.9, 0.9],
-    'parked-car': [4.5, 1.45, 1.95],
+    bench: [1.8, 0.95, 0.8],
+    'street-tree': [2.2, 4.6, 2.2],
+    hedge: [3.4, 0.9, 0.9],
+    'parked-car': [4.4, 1.45, 1.9],
     bollard: [0.32, 0.95, 0.32],
     'litter-bin': [0.62, 1, 0.62],
     'traffic-cone': [0.55, 0.8, 0.55],
-  };
-
-  /** `[w, h, d]` for a piece on a road running along X, with the axes swapped for a Z-road. */
-  const sizeOn = (
-    model: string,
-    alongX: boolean,
-    scaleX = 1,
-  ): readonly [number, number, number] => {
-    const size = STREET_SIZE[model] ?? ([1, 1, 1] as const);
-    return alongX ? [size[0] * scaleX, size[1], size[2]] : [size[2], size[1], size[0] * scaleX];
+    'crosswalk': [3, 0.02, 1],
+    manhole: [1, 0.02, 1],
+    'bus-stop': [4.2, 2.5, 1.3],
+    vending: [1.1, 2, 0.9],
+    'utility-box': [1.3, 1.6, 0.7],
+    // **The collider is the post, not the plate.** `parts` would make the 6 cm plate a collider of
+    // its own, which the level rejects as thinner than the collision sub-step; a 0.4 m box round
+    // the post is what a player actually walks into.
+    'traffic-sign': [0.4, 2.6, 0.4],
+    'poster-panel': [2, 2.3, 0.3],
+    awning: [3.4, 1.1, 0.9],
+    'cable-spool': [2.2, 2.2, 1.7],
+    crate: [1.6, 1.4, 1.4],
+    planter: [2.6, 3, 2.6],
   };
 
   /**
-   * A run of positions along a road's two kerbs.
+   * How a piece is turned so its authored -Z face points at the road.
    *
-   * `step` is the pitch between pieces down one side, so a 9 m pitch puts a bench or a tree every
-   * nine metres - which is roughly how far apart they are on a real street.
+   * The models all face -Z; `side` is which side of the road the piece stands on. On an X-road a
+   * piece at +Z looks back towards -Z (a quarter turn of 0), and one at -Z looks towards +Z (2).
+   * On a Z-road the same reasoning runs on X, where the quarter turns 3 and 1 put the face on -X
+   * and +X respectively.
    */
-  const alongRoad = (
-    road: (typeof roads)[number],
-    step: number,
-  ): { x: number; z: number; side: 1 | -1; alongX: boolean }[] => {
-    const alongX = road.size.x > road.size.z;
-    const length = (alongX ? road.size.x : road.size.z) / 2;
-    // Clear of both junctions, so nothing stands in the crossing.
-    const from = -length + 3.5;
-    const to = length - 3.5;
-    if (to <= from) return [];
-    const out: { x: number; z: number; side: 1 | -1; alongX: boolean }[] = [];
-    const count = Math.floor((to - from) / step);
-    if (count < 1) return out;
-    const half = (alongX ? road.size.z : road.size.x) / 2;
-    const edge = Math.max(0, half - kerbOffset);
-    for (let index = 0; index < count; index += 1) {
-      // Centred in the run rather than starting at one end, so the spacing is symmetric.
-      const t = from + ((index + 0.5) / count) * (to - from);
-      for (const side of [1, -1] as const) {
-        out.push(
-          alongX
-            ? { x: road.position.x + t, z: road.position.z + side * edge, side, alongX }
-            : { x: road.position.x + side * edge, z: road.position.z + t, side, alongX },
-        );
-      }
-    }
-    return out;
+  const faceRoad = (alongX: boolean, side: number): PropQuarter =>
+    alongX ? ((side > 0 ? 0 : 2) as PropQuarter) : ((side > 0 ? 3 : 1) as PropQuarter);
+
+  /**
+   * How a piece is turned to run *parallel* to the road - a parked car, nose along the kerb.
+   *
+   * The models that care are authored long on X (`parked-car` is 4.4 m wide, 1.9 m deep), so on an
+   * X-road nothing needs turning and on a Z-road the car turns a quarter to lie along it.
+   */
+  const alongFacing = (alongX: boolean): PropQuarter => (alongX ? 0 : 1);
+
+  /** `[w, h, d]` with the axes swapped for a piece standing on a Z-road. */
+  const dims = (model: string, alongX: boolean): readonly [number, number, number] => {
+    const size = STREET_SIZE[model] ?? ([1, 1, 1] as const);
+    return alongX ? size : [size[2], size[1], size[0]];
+  };
+
+  /** Which cell owns a road, and which way it runs. */
+  const roadCell = (id: string): { ix: number; iz: number } | null => {
+    const match = /^cell-(\d+)-(\d+)-road-[xz]$/.exec(id);
+    return match ? { ix: Number(match[1]), iz: Number(match[2]) } : null;
   };
 
   let streetIndex = 0;
@@ -1362,103 +1360,378 @@ export function generateCity(options: CityOptions = {}): CityParts {
     x: number,
     z: number,
     size: readonly [number, number, number],
+    options: {
+      readonly bottom?: number;
+      readonly quarter?: PropQuarter;
+      readonly collide?: PropDefinition['collide'];
+    } = {},
   ): void => {
     props.push(
       make(`street-${streetIndex++}-${model}`, {
         at: [x, z],
-        bottom: config.groundY,
+        bottom: options.bottom ?? config.groundY,
         size,
         model,
-        collide: 'none',
+        ...(options.collide ? { collide: options.collide } : {}),
+        ...(options.quarter ? { quarter: options.quarter } : {}),
       }),
     );
-    count('street-furniture');
+  };
+
+  /**
+   * What each kind of street is furnished with.
+   *
+   * `againstWall` pieces turn to face the road; `facing: false` pieces are symmetric and can go
+   * either way. The weights are relative, so a residential street is mostly benches and planting
+   * with the occasional bin, where a commercial one leads with storefront kit.
+   */
+  type Zone = 'industrial' | 'civic' | 'commercial' | 'residential';
+  interface Kit {
+    readonly model: string;
+    readonly weight: number;
+    readonly collide?: PropDefinition['collide'];
+    /**
+     * Which way the piece is turned.
+     *
+     * `road` - faces the lane across the pavement, which is a bench or a shop's vending machine.
+     * `along` - runs parallel to the lane, which is a parked car. `none` - symmetric, so it goes
+     * down whichever way it is dropped (a bin, a bollard, a tree).
+     */
+    readonly facing?: 'road' | 'along';
+  }
+  const ZONE_KIT: Readonly<Record<Zone, readonly Kit[]>> = {
+    residential: [
+      { model: 'bench', weight: 3, collide: 'box', facing: 'road' },
+      { model: 'street-tree', weight: 3, collide: 'parts' },
+      { model: 'litter-bin', weight: 2, collide: 'box' },
+      { model: 'hedge', weight: 1, collide: 'box' },
+      { model: 'bollard', weight: 2, collide: 'box' },
+      { model: 'parked-car', weight: 2, collide: 'box', facing: 'along' },
+    ],
+    commercial: [
+      { model: 'vending', weight: 3, collide: 'box', facing: 'road' },
+      { model: 'poster-panel', weight: 2, collide: 'parts', facing: 'road' },
+      { model: 'traffic-sign', weight: 2, collide: 'box', facing: 'road' },
+      { model: 'bus-stop', weight: 1, collide: 'parts', facing: 'road' },
+      { model: 'bench', weight: 2, collide: 'box', facing: 'road' },
+      { model: 'litter-bin', weight: 2, collide: 'box' },
+      { model: 'parked-car', weight: 2, collide: 'box', facing: 'along' },
+    ],
+    industrial: [
+      { model: 'utility-box', weight: 3, collide: 'box', facing: 'road' },
+      // A cone is small but it is a solid object: walk into one and you stop, which is also
+      // how a cone works as street furniture - it marks something off. Not paint, so not flat.
+      { model: 'traffic-cone', weight: 3, collide: 'box' },
+      { model: 'cable-spool', weight: 2, collide: 'box' },
+      { model: 'crate', weight: 2, collide: 'box' },
+      { model: 'bollard', weight: 1, collide: 'box' },
+    ],
+    civic: [
+      { model: 'bench', weight: 3, collide: 'box', facing: 'road' },
+      { model: 'street-tree', weight: 3, collide: 'parts' },
+      { model: 'poster-panel', weight: 2, collide: 'parts', facing: 'road' },
+      { model: 'litter-bin', weight: 2, collide: 'box' },
+      { model: 'bus-stop', weight: 1, collide: 'parts', facing: 'road' },
+    ],
+  };
+
+  /**
+   * The narrowest walkable lane a solid street piece may leave, in metres.
+   *
+   * The player's collision box is 0.7 m across, so 2.0 m is nearly three time its width - enough
+   * to pass a piece without brushing it, which is what "pedestrian paths remain navigable" means
+   * in practice. Pieces that are decorative (`collide: 'none'`) are not held to it: you walk
+   * through a cone's shadow, not around a cone's collider.
+   */
+  const MIN_LANE = 2;
+
+  /** A weighted pick from a zone's kit, using the dressing stream. */
+  const pickFromKit = (zone: Zone): Kit => {
+    const kit = ZONE_KIT[zone];
+    let total = 0;
+    for (const entry of kit) total += entry.weight;
+    let roll = dressRandom() * total;
+    for (const entry of kit) {
+      roll -= entry.weight;
+      if (roll <= 0) return entry;
+    }
+    return kit[0]!;
+  };
+
+  /**
+   * The tall things a canopy can hang from.
+   *
+   * An awning projects from a *building*, not from a road: the gap between two plots is the
+   * average of two cells' street widths, so computing a wall position from the road's own width
+   * put canopies in mid-air - measured, an awning 15.9 m from the nearest facade, and 161 of them
+   * in islands that never reach the ground. These are the props that actually form a vertical
+   * surface at canopy height, so the awning pass can hang off the real thing.
+   */
+  const wallBand = { low: config.groundY + 2.5, high: config.groundY + 4.5 };
+  const walls = props.filter(
+    (prop) =>
+      !prop.id.startsWith('street-') &&
+      prop.size.y > 6 &&
+      prop.position.y + prop.size.y / 2 > wallBand.high &&
+      prop.position.y - prop.size.y / 2 < wallBand.low,
+  );
+
+  /**
+   * The nearest wall face beyond `from` along one axis, or `null`.
+   *
+   * `side` +1 looks towards larger coordinates, -1 towards smaller. `along` is the coordinate on
+   * the *other* horizontal axis, which the wall has to span for the canopy to actually touch it.
+   */
+  const wallFace = (
+    axis: 'x' | 'z',
+    from: number,
+    along: number,
+    side: 1 | -1,
+  ): number | null => {
+    const across = axis === 'x' ? 'z' : 'x';
+    let best: number | null = null;
+    for (const wall of walls) {
+      const half = (axis === 'x' ? wall.size.x : wall.size.z) / 2;
+      const centre = axis === 'x' ? wall.position.x : wall.position.z;
+      const lo = centre - half;
+      const hi = centre + half;
+      // The wall has to span the canopy's own position across the road.
+      const acrossHalf = (across === 'x' ? wall.size.x : wall.size.z) / 2;
+      const acrossCentre = across === 'x' ? wall.position.x : wall.position.z;
+      if (Math.abs(acrossCentre - along) > acrossHalf) continue;
+      const face = side > 0 ? lo : hi;
+      if (side > 0 ? face < from : face > from) continue;
+      if (best === null || Math.abs(face - from) < Math.abs(best - from)) best = face;
+    }
+    return best;
+  };
+
+  /**
+   * How deep a box at (x, y, z) sits inside the deepest tall thing it meets, in metres.
+   *
+   * The same measure the interpenetration test uses: the smallest of the three axis overlaps, so a
+   * box that merely *touches* a wall scores 0 and one buried in it scores its own thickness. Used
+   * to reject a canopy that would end up inside a building - which is what happens next to a round
+   * tower, whose ring is eight overlapping segment boxes and therefore reaches further than the
+   * face its neighbour's street suggests.
+   */
+  const deepestIntoWalls = (
+    x: number,
+    y: number,
+    z: number,
+    w: number,
+    h: number,
+    d: number,
+  ): number => {
+    let deepest = 0;
+    for (const wall of walls) {
+      const overlapX = Math.min(x + w / 2, wall.position.x + wall.size.x / 2) -
+        Math.max(x - w / 2, wall.position.x - wall.size.x / 2);
+      if (overlapX <= 0) continue;
+      const overlapY = Math.min(y + h / 2, wall.position.y + wall.size.y / 2) -
+        Math.max(y - h / 2, wall.position.y - wall.size.y / 2);
+      if (overlapY <= 0) continue;
+      const overlapZ = Math.min(z + d / 2, wall.position.z + wall.size.z / 2) -
+        Math.max(z - d / 2, wall.position.z - wall.size.z / 2);
+      if (overlapZ <= 0) continue;
+      deepest = Math.max(deepest, Math.min(overlapX, overlapY, overlapZ));
+    }
+    return deepest;
   };
 
   for (const road of roads) {
     const alongX = road.size.x > road.size.z;
-    const length = (alongX ? road.size.x : road.size.z) / 2;
-    const halfWidth = (alongX ? road.size.z : road.size.x) / 2;
-    const edge = halfWidth - kerbOffset;
+    // The road is drawn at 86% of the street gap; the gap is where the pavement is.
+    const gapHalf = (alongX ? road.size.z : road.size.x) / 0.86 / 2;
+    const lengthHalf = (alongX ? road.size.x : road.size.z) / 2;
 
-    // ---- the kerb line itself. Always, both sides, the whole length.
+    const cell = roadCell(road.id);
+    const zone: Zone = (cell && zones.get(cellKey(cell.ix, cell.iz))) || 'residential';
+
+    const roadCentre = alongX
+      ? { x: road.position.x, z: road.position.z }
+      : { x: road.position.x, z: road.position.z };
+
+    // ---- kerbs: a painted line at the edge of the gap, on both sides.
     //
-    // One scaled prop per side rather than a chain of short ones: cheaper, cannot leave a gap, and
-    // a kerb is a straight line so there is nothing to break up. Its length is the road's own, so
-    // it runs from junction to junction.
+    // **Flat, not raised.** There is no step-up in the movement code - a raised kerb would be a
+    // 22 cm wall the collision solver treats as solid, and the player would be unable to leave the
+    // road. The kerb is therefore a flush band of lighter concrete that reads as an edge without
+    // being one, and it is `collide: 'none'` for the same reason.
+    //
+    // **One band per side, scaled to the road's length.** A kerb is a straight line the whole way
+    // down a street, so a chain of metre-long segments would both cost more and leave gaps; a
+    // single scaled piece cannot. It stops short of each junction, where no kerb runs anyway.
+    const kerbRun = Math.max(2, lengthHalf * 2 - 8);
     for (const side of [1, -1] as const) {
-      const cx = alongX ? road.position.x : road.position.x + side * edge;
-      const cz = alongX ? road.position.z + side * edge : road.position.z;
-      // **Stopped short of the junctions.** The kerb runs the length of the street, but the glTF
-      // street furniture from the pass above was placed two metres in from each end - so a kerb
-      // spanning the full length stood *inside* every dumpster, barrier and street-light on the
-      // road: measured, twenty-two overlaps of 0.22 m, which is the kerb's whole height. Four
-      // metres clear at each end is the junction, where no kerb runs anyway.
-      streetPiece('kerb', cx, cz, sizeOn('kerb', alongX, Math.max(1, length * 2 - 8)));
+      const cx = alongX ? roadCentre.x : roadCentre.x + side * (gapHalf - 0.3);
+      const cz = alongX ? roadCentre.z + side * (gapHalf - 0.3) : roadCentre.z;
+      const size: readonly [number, number, number] = alongX
+        ? [kerbRun, 0.22, 0.7]
+        : [0.7, 0.22, kerbRun];
+      // **Flat, so it does not collide.** A kerb is an edge you read, not a step you climb - the
+      // movement code has no step-up, so a solid 22 cm band would simply pen the player into the
+      // road. `collide: 'none'` is the same choice the road and its markings already make.
+      streetPiece('kerb', cx, cz, size, { collide: 'none' });
     }
 
-    // **One roll per road decides whether it is furnished at all.** Three in ten streets get
-    // nothing, which is what stops the city reading as a showroom rather than a place.
-    if (dressRandom() > 0.75) continue;
-
-    for (const point of alongRoad(road, 9)) {
-      const pick = dressRandom();
-      let model: string | null = null;
-      if (pick < 0.14) model = 'bench';
-      else if (pick < 0.3) model = 'street-tree';
-      else if (pick < 0.42) model = 'hedge';
-      else if (pick < 0.52) model = 'litter-bin';
-      else if (pick < 0.64) model = 'bollard';
-      else if (pick < 0.72) model = 'parked-car';
-      else if (pick < 0.8) model = 'traffic-cone';
-      if (!model) continue;
-
-      // **A bench only where its back can point away from the road.** The model's backrest is at
-      // +Z and the renderer cannot turn it, so a bench is only placed on the -Z kerb of an X-road,
-      // where +Z *is* away from the lane. Every other piece is symmetric enough to go anywhere.
-      if (model === 'bench' && !(point.alongX && point.side < 0)) continue;
-
-      const size = sizeOn(model, point.alongX);
-      // **`boxFree`, not `dressFits`.** `dressFits` looks the size up in `DRESSING`, which holds
-      // only the glTF kit - so asking it about a bench throws. These are box models with their own
-      // sizes, and this is the same test with the size passed in.
-      if (!boxFree(point.x, config.groundY, point.z, size[0], size[2], size[1])) continue;
-      streetPiece(model, point.x, point.z, size);
+    // ---- crossings and manholes
+    //
+    // A crossing belongs at a junction, so it goes near each end of the road, running *across*
+    // the street rather than along it. Manholes are maintenance, so they sit in the lane.
+    const crossWidth = 2.6;
+    for (const end of [1, -1] as const) {
+      if (dressRandom() > 0.55) continue;
+      const along = end * (lengthHalf - 3.2);
+      const size: [number, number, number] = alongX
+        ? [crossWidth, 0.02, road.size.z * 0.8]
+        : [road.size.x * 0.8, 0.02, crossWidth];
+      // The stripes are authored across X, so an X-road's crossing is turned a quarter to lie
+      // across the lane; a Z-road's is already the right way round.
+      const quarter: PropQuarter = alongX ? 1 : 0;
+      const x = alongX ? roadCentre.x + along : roadCentre.x;
+      const z = alongX ? roadCentre.z : roadCentre.z + along;
+      // Paint on the road: no collider, like the lane markings.
+      streetPiece('crosswalk', x, z, size, {
+        bottom: config.groundY + 0.03,
+        quarter,
+        collide: 'none',
+      });
     }
-  }
 
-  // ---------------------------------------------------------------- parks
-  //
-  // A courtyard on the street grid is the city's own open ground, and a park is the one place with
-  // room for something a kerb cannot hold. This dresses a *few* of them - every third, not all, or
-  // the courtyards stop being courtyards - with a planting bed, trees behind it and a bench facing
-  // it. It asks the same question everything else does, so a yard already full of crates and a
-  // scaffold simply gets what still fits.
-  for (const [index, key] of [...openCells].entries()) {
-    if (index % 3 !== 0) continue;
-    const [ix, iz] = key.split('|').map(Number) as [number, number];
-    const px = -GRID_SPAN / 2 + config.pitch * (ix + 0.5);
-    const pz = -GRID_SPAN / 2 + config.pitch * (iz + 0.5);
+    const manholes = 1 + Math.floor(dressRandom() * 2);
+    for (let index = 0; index < manholes; index += 1) {
+      if (dressRandom() > 0.6) continue;
+      const along = (dressRandom() * 2 - 1) * (lengthHalf - 4);
+      const size: readonly [number, number, number] = [1, 0.02, 1];
+      const x = alongX ? roadCentre.x + along : roadCentre.x;
+      const z = alongX ? roadCentre.z : roadCentre.z + along;
+      if (!boxFree(x, config.groundY, z, size[0], size[2], 0.02)) continue;
+      streetPiece('manhole', x, z, size, { bottom: config.groundY + 0.02, collide: 'none' });
+    }
 
-    // Offset from the yard's centre, where the crates and the scaffold already stand. The bench is
-    // at the -Z side so it faces +Z, towards the bed - the same constraint as a kerbside bench.
-    const bedX = px - 5;
-    const bedZ = pz + 4;
-    const [hw, , hd] = sizeOn('hedge', true);
-    if (boxFree(bedX, config.groundY, bedZ, hw, hd, 0.9)) {
-      streetPiece('hedge', bedX, bedZ, sizeOn('hedge', true));
-      for (const [tx, tz] of [
-        [bedX - 3.2, bedZ + 1.2],
-        [bedX + 3.4, bedZ + 1.4],
-      ] as const) {
-        const [tw, , td] = sizeOn('street-tree', true);
-        if (boxFree(tx, config.groundY, tz, tw, td, 4.6)) {
-          streetPiece('street-tree', tx, tz, sizeOn('street-tree', true));
-        }
+    // ---- the furniture, at the wall, facing the road.
+    //
+    // The piece stands at the outer edge of the gap, hard against the building, and the walkable
+    // width left between the two rows is the whole street minus twice the deepest piece - which
+    // for the narrowest street is still well over two metres.
+    const pitch = zone === 'commercial' ? 7 : zone === 'industrial' ? 8 : 9;
+    const slots = Math.floor((lengthHalf * 2 - 7) / pitch);
+    for (let slot = 0; slot < slots; slot += 1) {
+      const t = -(lengthHalf - 3.5) + ((slot + 0.5) / slots) * (lengthHalf * 2 - 7);
+
+      // **Decide both sides of a slot together, then check the lane once.**
+      //
+      // The lane is a property of the *cross-section*, not of one piece: two 2.2 m trees facing
+      // each other across a 4.5 m alley leave 0.1 m, and neither of them is individually wrong.
+      // The first version of this rule judged each piece against both sides at once, so it threw
+      // away a tree that faced a bench - measured, 37 trees in the whole city where there had been
+      // 343, because it was reserving room for a piece that was never placed. This picks, then
+      // measures the slot exactly: how much lane is left between the deepest actual faces.
+      const picks: { side: 1 | -1; kit: Kit; size: readonly [number, number, number] }[] = [];
+      for (const side of [1, -1] as const) {
+        // Not every slot on every side is filled: a continuous row of vending machines is not a
+        // street either. One draw decides, so the mixture is stable for a given seed.
+        if (dressRandom() > 0.55) continue;
+        const kit = pickFromKit(zone);
+        picks.push({ side, kit, size: dims(kit.model, alongX) });
       }
-      const [bw, , bd] = sizeOn('bench', true);
-      if (boxFree(bedX + 0.2, config.groundY, bedZ - 2.8, bw, bd, 0.9)) {
-        streetPiece('bench', bedX + 0.2, bedZ - 2.8, sizeOn('bench', true));
+      if (picks.length === 0) continue;
+
+      /** How far this piece eats into the lane from the centre line - zero for paint. */
+      const eats = (pick: (typeof picks)[number]): number =>
+        pick.kit.collide && pick.kit.collide !== 'none' ? pick.size[2] : 0;
+      let taken = picks.reduce((sum, pick) => sum + eats(pick), 0);
+      // **Deepest first when the slot does not fit.** Room for a car and a bench is rarer than
+      // room for two benches; dropping the deeper piece keeps the street furnished where a "skip
+      // the whole slot" rule would leave it bare.
+      if (gapHalf * 2 - taken - 0.2 < MIN_LANE) {
+        picks.sort((a, b) => eats(b) - eats(a));
+        picks.shift();
+        taken = picks.reduce((sum, pick) => sum + eats(pick), 0);
+        if (gapHalf * 2 - taken - 0.2 < MIN_LANE) continue;
+      }
+
+      for (const { side, kit, size } of picks) {
+        const [w, , d] = size;
+        const offset = gapHalf - d / 2 - 0.1;
+        const x = alongX ? roadCentre.x + t : roadCentre.x + side * offset;
+        const z = alongX ? roadCentre.z + side * offset : roadCentre.z + t;
+        if (!boxFree(x, config.groundY, z, w, d, size[1])) continue;
+        streetPiece(kit.model, x, z, size, {
+          ...(kit.collide ? { collide: kit.collide } : {}),
+          ...(kit.facing === 'road'
+            ? { quarter: faceRoad(alongX, side) }
+            : kit.facing === 'along'
+              ? { quarter: alongFacing(alongX) }
+              : {}),
+        });
+      }
+    }
+
+    // ---- shopfronts: awnings over the pavement on a commercial street.
+    //
+    // Mounted above head height and projecting out over the walk, which is what a canopy is. They
+    // do not collide: a player running along that pavement should pass under a shop's awning, not
+    // into it.
+    if (zone === 'commercial') {
+      const awnDepth = STREET_SIZE.awning![2];
+      const awnHeight = STREET_SIZE.awning![1];
+      // **Hung off the wall, overlapping it by 0.1 m.** A canopy has to touch its building or it
+      // is a sheet of metal in the sky: the 0.1 m overlap is well under the 0.5 m the
+      // interpenetration check treats as a fault, and it makes the awning genuinely attached to
+      // the facade rather than merely near it. Where there is no wall in reach - a plot that is a
+      // yard, or a street wider than any facade the filter found - the awning is simply not built.
+      const arm = 0.1;
+      for (const side of [1, -1] as const) {
+        for (const t of [-lengthHalf / 2, lengthHalf / 2]) {
+          if (dressRandom() > 0.5) continue;
+          const along = alongX ? roadCentre.x + t : roadCentre.z + t;
+          const from = alongX ? roadCentre.z : roadCentre.x;
+          const face = wallFace(alongX ? 'z' : 'x', from, along, side);
+          if (face === null) continue;
+          // **Project out from the wall towards the road.** `face` is the wall's near face and
+          // the wall extends in `side`, so the canopy goes the *other* way: its inner edge sits
+          // `arm` inside the facade and the rest over the pavement.
+          const offset = face - side * (awnDepth / 2 - arm);
+          const x = alongX ? along : offset;
+          const z = alongX ? offset : along;
+          const size: readonly [number, number, number] = alongX
+            ? [STREET_SIZE.awning![0], awnHeight, awnDepth]
+            : [awnDepth, awnHeight, STREET_SIZE.awning![0]];
+          // **Ask the geometry, not the street.** A canopy is meant to overlap its own wall by
+          // `arm`; anything deeper than a third of a metre means it is inside a *building* - a
+          // round tower's ring reaches past the facade its neighbour's street implies. Measured
+          // before this guard: twenty awnings 0.57-0.90 m inside a ring segment.
+          if (deepestIntoWalls(x, config.groundY + 3 + awnHeight / 2, z, size[0], size[1], size[2]) > 0.35) {
+            continue;
+          }
+          // **And do not hang one canopy inside another.** Two roads meet at a corner, and each
+          // owns the awnings on its own side, so a plot on that corner gets a canopy from both -
+          // three pairs ended up exactly on top of each other. `boxFree` ignores the flat kit, so
+          // this is its own check against the canopies already placed.
+          let clash = false;
+          for (const placed of props) {
+            if (placed.model !== 'awning') continue;
+            if (
+              Math.abs(placed.position.x - x) < (placed.size.x + size[0]) / 2 + 0.2 &&
+              Math.abs(placed.position.z - z) < (placed.size.z + size[2]) / 2 + 0.2 &&
+              Math.abs(placed.position.y - (config.groundY + 3 + awnHeight / 2)) < awnHeight + 0.2
+            ) {
+              clash = true;
+              break;
+            }
+          }
+          if (clash) continue;
+          streetPiece('awning', x, z, size, {
+            bottom: config.groundY + 3,
+            // Faces away from its wall, towards the lane - the same turn a kerbside piece
+            // standing on that side of the road would take.
+            quarter: faceRoad(alongX, side),
+            // Above head height: a player running under a shop's canopy passes beneath it.
+            collide: 'none',
+          });
+        }
       }
     }
   }
@@ -1476,10 +1749,21 @@ export function generateCity(options: CityOptions = {}): CityParts {
       // A citizen keeps its own idle turn: it is a person, not part of the plant room.
       dress(model, [place.x, place.z], deck.y, yaw);
     } else {
-      const road = roads[Math.floor(dressRandom() * roads.length)];
-      if (!road) continue;
-      if (!dressFits(model, road.position.x, config.groundY, road.position.z)) continue;
-      dress(model, [road.position.x, road.position.z], config.groundY, yaw);
+      // **Try several roads before giving up.** The street now has crossings, manholes and
+      // furniture in it, so the first road drawn can be occupied - and a citizen who is simply
+      // dropped when that happens leaves three people in a city built for four. A handful of tries
+      // is enough: 512 roads, and the pass is looking for one clear patch of ground.
+      let placed = false;
+      for (let attempt = 0; attempt < 24 && !placed; attempt += 1) {
+        const road = roads[Math.floor(dressRandom() * roads.length)];
+        if (!road) continue;
+        const along = road.size.x > road.size.z
+          ? { x: road.position.x + (dressRandom() - 0.5) * road.size.x * 0.5, z: road.position.z }
+          : { x: road.position.x, z: road.position.z + (dressRandom() - 0.5) * road.size.z * 0.5 };
+        if (!dressFits(model, along.x, config.groundY, along.z)) continue;
+        dress(model, [along.x, along.z], config.groundY, yaw);
+        placed = true;
+      }
     }
   }
 
@@ -1608,6 +1892,7 @@ function make(
     readonly tints?: Record<string, string>;
     readonly climbable?: boolean;
     readonly gltf?: PropDefinition['gltf'];
+    readonly quarter?: PropQuarter;
   },
 ): PropDefinition {
   return {
@@ -1618,6 +1903,7 @@ function make(
     size: { x: spec.size[0], y: spec.size[1], z: spec.size[2] },
     ...(spec.tints ? { tints: spec.tints } : {}),
     ...(spec.collide ? { collide: spec.collide } : {}),
+    ...(spec.quarter ? { quarter: spec.quarter } : {}),
     ...(spec.climbable ? { climbable: true } : {}),
     ...(spec.gltf ? { gltf: spec.gltf } : {}),
   };

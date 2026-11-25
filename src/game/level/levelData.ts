@@ -22,6 +22,10 @@ import type { ColliderKind } from '../physics/collision.js';
  * The level references them by id; the renderer owns the files and the loading.
  * They are decoration - rooftop and street clutter - and never carry collision.
  */
+import type { PropQuarter } from './models.js';
+
+export type { PropQuarter };
+
 export type GltfPropModelId =
   | 'ac'
   | 'ac-side'
@@ -82,6 +86,19 @@ export interface PropDefinition {
   readonly pipe?: boolean;
   readonly castShadow?: boolean;
   readonly receiveShadow?: boolean;
+  /**
+   * Which way the prop faces, in quarter turns about Y (`0`-`3`).
+   *
+   * **Quarter turns, not radians.** Parts are axis-aligned boxes and colliders are AABBs, so a
+   * free rotation would mean rotated geometry and rotated-box physics. A 90-degree turn about the
+   * prop's own centre is a coordinate swap, which keeps both axis-aligned - and it is what lets a
+   * bench face its street, a car park parallel on a north-south road, and a vending machine stand
+   * back against a wall rather than through it.
+   *
+   * The *caller* swaps `size.x` and `size.z` for an odd quarter turn. A 1.9 m bench turned
+   * sideways is 1.9 m deep, and the collider has to agree with the parts.
+   */
+  readonly quarter?: PropQuarter;
   /**
    * An imported GLTF model drawn instead of the box parts.
    *

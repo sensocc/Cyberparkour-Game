@@ -685,6 +685,139 @@ const kerb: ModelDefinition = {
 };
 
 /**
+ * A zebra crossing: painted stripes lying flat on the road.
+ *
+ * Flat, thin and **non-solid** - it is paint, not an obstacle. The stripes are separate boxes
+ * rather than one band so the gaps are real geometry; a single textured slab would need UVs the
+ * box renderer does not give us. They span the full width and are spaced along Z, so no two share
+ * a side face (they do not overlap in Z, which is what `sharedFaces` asks).
+ */
+const crosswalk: ModelDefinition = {
+  id: 'crosswalk',
+  note: 'A zebra crossing: five painted stripes, flat on the road.',
+  parts: [
+    part([0, 0, 0.04], [1, 0.3, 0.14], 'hazard'),
+    part([0, 0, 0.22], [1, 0.3, 0.32], 'hazard'),
+    part([0, 0, 0.4], [1, 0.3, 0.5], 'hazard'),
+    part([0, 0, 0.58], [1, 0.3, 0.68], 'hazard'),
+    part([0, 0, 0.76], [1, 0.3, 0.86], 'hazard'),
+  ],
+};
+
+/** A manhole cover: a flat disc of metal with a ring round it. */
+const manhole: ModelDefinition = {
+  id: 'manhole',
+  note: 'A manhole cover: a flat lid in a slightly wider ring.',
+  parts: [
+    part([0.04, 0, 0.04], [0.96, 0.22, 0.96], 'metal-dark'),
+    part([0, 0, 0], [1, 0.12, 1], 'metal-light'),
+  ],
+};
+
+/**
+ * A bus stop: a shelter with a roof, a side panel and a bench under it.
+ *
+ * Built open on one side (+X) so a player can stand inside it, and **solid** on the posts and the
+ * panel, which is what a shelter is. The roof is high enough to walk under.
+ */
+const busStop: ModelDefinition = {
+  id: 'bus-stop',
+  note: 'A bus shelter: roof, two posts, a side panel and a bench. Open on +X.',
+  parts: [
+    // The roof, the widest piece, with a lit underside strip so it is findable at night.
+    part([0, 0.9, 0.04], [1, 1, 0.96], 'metal-dark'),
+    part([0.06, 0.86, 0.1], [0.94, 0.9, 0.87], 'neon'),
+    // Two posts at the back edge.
+    part([0.04, 0, 0.06], [0.12, 0.9, 0.14], 'metal-light'),
+    part([0.04, 0, 0.82], [0.12, 0.9, 0.9], 'metal-light'),
+    // The side panel, at -Z, inset so it is not coplanar with the posts.
+    part([0.14, 0.08, 0.1], [0.9, 0.78, 0.2], 'glass-dark'),
+    // A bench along the back.
+    part([0.16, 0.3, 0.3], [0.88, 0.38, 0.5], 'rust'),
+    part([0.2, 0, 0.32], [0.3, 0.3, 0.42], 'metal-dark'),
+    part([0.74, 0, 0.32], [0.84, 0.3, 0.42], 'metal-dark'),
+  ],
+};
+
+/**
+ * A vending machine: a lit front panel in a body, standing against a wall.
+ *
+ * Faces -Z, so `quarter: 2` turns it to face +Z and `1`/`3` turn it to face a side wall.
+ */
+const vending: ModelDefinition = {
+  id: 'vending',
+  note: 'A vending machine: body, lit front and a dispensing slot. Faces -Z.',
+  parts: [
+    part([0.04, 0, 0.06], [0.96, 1, 0.94], 'metal-dark'),
+    // The lit window, inset on every side so it is not coplanar with the body.
+    part([0.12, 0.22, 0.04], [0.88, 0.88, 0.1], 'neon'),
+    // The slot and a kick plate.
+    part([0.18, 0.06, 0.03], [0.82, 0.18, 0.09], 'metal-light'),
+    part([0.06, 0.94, 0.08], [0.94, 0.98, 0.92], 'metal-light'),
+  ],
+};
+
+/** A utility cabinet: a grey box of street infrastructure with a louvred door. */
+const utilityBox: ModelDefinition = {
+  id: 'utility-box',
+  note: 'A utility cabinet: a body, a door panel and vents. Faces -Z.',
+  parts: [
+    part([0.02, 0, 0.05], [0.98, 1, 0.95], 'metal'),
+    // The door, inset from the body on all sides.
+    part([0.08, 0.06, 0.03], [0.92, 0.94, 0.08], 'metal-light'),
+    // Vents, proud of the door so nothing is coplanar.
+    part([0.16, 0.3, 0.01], [0.84, 0.36, 0.045], 'metal-dark'),
+    part([0.16, 0.44, 0.01], [0.84, 0.5, 0.045], 'metal-dark'),
+    part([0.16, 0.58, 0.01], [0.84, 0.64, 0.045], 'metal-dark'),
+  ],
+};
+
+/** A street sign: a post with a plate on top. */
+const trafficSign: ModelDefinition = {
+  id: 'traffic-sign',
+  note: 'A street sign: a slim post and a plate. Faces -Z.',
+  parts: [
+    part([0.44, 0, 0.44], [0.56, 0.92, 0.56], 'metal-dark'),
+    // The plate, inset from the post so the post's faces are not coplanar with it.
+    part([0.18, 0.72, 0.42], [0.82, 0.98, 0.48], 'hazard'),
+    part([0.24, 0.78, 0.4], [0.76, 0.92, 0.43], 'metal-dark'),
+  ],
+};
+
+/**
+ * A shop awning: a canopy over a doorway, projecting from the wall.
+ *
+ * Axis-aligned in two steps rather than sloped - a box renderer cannot draw a slope, and two
+ * stacked boxes read as a canopy from the street. Faces -Z (out from the wall).
+ */
+const awning: ModelDefinition = {
+  id: 'awning',
+  note: 'A shop awning: two stepped canopy panels on two brackets. Projects -Z.',
+  parts: [
+    part([0, 0.86, 0], [1, 0.94, 0.62], 'hazard'),
+    part([0.02, 0.78, 0.1], [0.98, 0.88, 0.56], 'metal-dark'),
+    part([0.06, 0.5, 0.46], [0.14, 0.86, 0.54], 'metal-dark'),
+    part([0.86, 0.5, 0.46], [0.94, 0.86, 0.54], 'metal-dark'),
+  ],
+};
+
+/**
+ * A poster panel: a lit notice board on a pavement post - the advertising a commercial street
+ * has that a residential one does not.
+ */
+const posterPanel: ModelDefinition = {
+  id: 'poster-panel',
+  note: 'A poster panel: two posts and a lit board. Faces -Z.',
+  parts: [
+    part([0.08, 0, 0.42], [0.16, 0.6, 0.5], 'metal-dark'),
+    part([0.84, 0, 0.42], [0.92, 0.6, 0.5], 'metal-dark'),
+    part([0.04, 0.5, 0.4], [0.96, 0.98, 0.48], 'metal-dark'),
+    // The lit face, inset so it reads as a board in a frame.
+    part([0.1, 0.56, 0.38], [0.9, 0.92, 0.41], 'neon'),
+  ],
+};
+
+/**
  * An alley cat, sitting.
  *
  * The quest-giver. Small, dark, with a head that reads as a head from ten metres - which at this
@@ -1006,6 +1139,14 @@ const MODELS: readonly ModelDefinition[] = [
   litterBin,
   trafficCone,
   kerb,
+  crosswalk,
+  manhole,
+  busStop,
+  vending,
+  utilityBox,
+  trafficSign,
+  awning,
+  posterPanel,
   billboard,
   crane,
   scaffold,
@@ -1061,24 +1202,78 @@ export interface ResolvedPart {
  * Every part coordinate is normalised against the prop's bounds, so the same
  * model works at any scale.
  */
+/**
+ * Which way a prop faces, in quarter turns about Y.
+ *
+ * **Quarter turns, not an angle.** Every part is an axis-aligned box and every collider is an
+ * AABB, so a free rotation would need the renderer to emit rotated geometry and the physics to
+ * test against rotated boxes. Rotating by exactly 90 degrees about the box's own centre keeps
+ * every part axis-aligned: it is a coordinate swap, and the result is still a box. That is what
+ * lets a bench face its street and a car park parallel on a north-south road without touching
+ * either system.
+ *
+ * The caller swaps `size.x` and `size.z` for an odd quarter - `sizeOn` in `city.ts` does that -
+ * because a 1.9 m bench turned sideways is 1.9 m deep, not 0.9 m.
+ */
+export type PropQuarter = 0 | 1 | 2 | 3;
+
+/**
+ * Rotates a normalised part by `quarter` turns about the unit square's centre.
+ *
+ * Normalised space is `[0, 1]` on each axis, so a 90-degree turn about (0.5, 0.5) is exact in
+ * floating point: the coordinate `x` becomes `1 - z` and `z` becomes `x`, and no rounding creeps
+ * in. That matters because two parts that were flush before the turn must still be flush after
+ * it - a trim band that becomes coplanar with its body would flicker, and the coplanar test would
+ * (rightly) fail.
+ */
+function quarterBox(
+  min: ReadonlyVec3,
+  max: ReadonlyVec3,
+  quarter: PropQuarter,
+): { min: ReadonlyVec3; max: ReadonlyVec3 } {
+  if (quarter === 0) return { min, max };
+  if (quarter === 2) {
+    return {
+      min: { x: 1 - max.x, y: min.y, z: 1 - max.z },
+      max: { x: 1 - min.x, y: max.y, z: 1 - min.z },
+    };
+  }
+  if (quarter === 1) {
+    // (x, z) -> (1 - z, x): looking down, the box turns a quarter anticlockwise.
+    return {
+      min: { x: 1 - max.z, y: min.y, z: min.x },
+      max: { x: 1 - min.z, y: max.y, z: max.x },
+    };
+  }
+  // quarter === 3: (x, z) -> (z, 1 - x).
+  return {
+    min: { x: min.z, y: min.y, z: 1 - max.x },
+    max: { x: max.z, y: max.y, z: 1 - min.x },
+  };
+}
+
 export function resolveModelParts(
   model: ModelDefinition,
   origin: ReadonlyVec3,
   size: ReadonlyVec3,
+  quarter: PropQuarter = 0,
 ): ResolvedPart[] {
-  return model.parts.map((entry) => ({
-    min: {
-      x: origin.x + entry.min.x * size.x,
-      y: origin.y + entry.min.y * size.y,
-      z: origin.z + entry.min.z * size.z,
-    },
-    max: {
-      x: origin.x + entry.max.x * size.x,
-      y: origin.y + entry.max.y * size.y,
-      z: origin.z + entry.max.z * size.z,
-    },
-    surface: entry.surface,
-    castShadow: entry.castShadow ?? true,
-    receiveShadow: entry.receiveShadow ?? true,
-  }));
+  return model.parts.map((entry) => {
+    const box = quarterBox(entry.min, entry.max, quarter);
+    return {
+      min: {
+        x: origin.x + box.min.x * size.x,
+        y: origin.y + box.min.y * size.y,
+        z: origin.z + box.min.z * size.z,
+      },
+      max: {
+        x: origin.x + box.max.x * size.x,
+        y: origin.y + box.max.y * size.y,
+        z: origin.z + box.max.z * size.z,
+      },
+      surface: entry.surface,
+      castShadow: entry.castShadow ?? true,
+      receiveShadow: entry.receiveShadow ?? true,
+    };
+  });
 }

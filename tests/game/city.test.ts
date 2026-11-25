@@ -1097,13 +1097,31 @@ describe('what V0.8 puts in the city', () => {
     const kinds = new Set(street.map((prop) => prop.model));
 
     expect(street.length, 'streets are furnished').toBeGreaterThan(2000);
-    for (const kind of ['kerb', 'bench', 'street-tree', 'hedge', 'parked-car', 'bollard', 'litter-bin', 'traffic-cone']) {
+    for (const kind of [
+      'kerb', 'bench', 'street-tree', 'hedge', 'parked-car', 'bollard', 'litter-bin',
+      'traffic-cone', 'crosswalk', 'manhole', 'bus-stop', 'vending', 'utility-box',
+      'traffic-sign', 'poster-panel', 'awning',
+    ]) {
       expect(kinds, `${kind} on the streets`).toContain(kind);
     }
 
-    // **Nothing collides.** A bench you can trip over is a physics bug, and a parkour game needs
-    // the pavement to stay ground: every piece is `collide: 'none'`.
-    expect(street.filter((prop) => prop.collide !== 'none').map((prop) => prop.id)).toEqual([]);
+    // **Solids collide, paint does not.** V2.4.0 made every street piece decorative, which was
+    // the right call while the streets held nothing you could walk into. V2.5.0 asks for the
+    // opposite on the objects that *are* objects: a bench, a bin, a cabinet, a parked car or a
+    // tree trunk is something you walk around, and a player who passes through one is standing
+    // inside a solid thing. What must stay non-solid is the *flat* kit - a kerb, a crossing, a
+    // manhole, a canopy overhead - because the movement code has no step-up, so a 22 cm kerb
+    // with a collider would pen the player into the road rather than being a detail.
+    const FLAT = new Set(['kerb', 'crosswalk', 'manhole', 'awning']);
+    const solid = street.filter((prop) => !FLAT.has(prop.model));
+    expect(
+      solid.filter((prop) => !prop.collide || prop.collide === 'none').map((prop) => prop.id).slice(0, 5),
+      'every solid piece of street furniture has a collider',
+    ).toEqual([]);
+    expect(
+      street.filter((prop) => FLAT.has(prop.model) && prop.collide !== 'none').map((prop) => prop.id).slice(0, 5),
+      'paint and overhead canopies never collide',
+    ).toEqual([]);
 
     // The density is a *mixture*, not one type repeated - which is the difference between a
     // furnished street and a row of the same object.
@@ -1119,6 +1137,75 @@ describe('what V0.8 puts in the city', () => {
     expect(againGenerated.filter((prop) => !prop.id.startsWith('street-')).map((prop) => prop.id)).toEqual(
       generated.filter((prop) => !prop.id.startsWith('street-')).map((prop) => prop.id),
     );
+  });
+
+  it('furnishes different streets differently, by what stands along them', () => {
+    // **The brief's "street identity".** The same objects in the same arrangement on every road is
+    // a city with one street repeated five hundred times. Each road is dressed from the *zone* of
+    // the plot it belongs to - industrial, civic, commercial or residential - so the mixture of
+    // furniture along two streets a hundred metres apart is genuinely different.
+    const street = generated.filter((prop) => prop.id.startsWith('street-'));
+    const byModel = (model: string) => street.filter((prop) => prop.model === model).length;
+
+    // The kits overlap on purpose (a bench suits a plaza and a pavement both), but each has a
+    // signature piece a player can use to read what kind of street they are on.
+    expect(byModel('vending'), 'commercial streets have shopfront kit').toBeGreaterThan(40);
+    expect(byModel('utility-box'), 'industrial streets have cabinets').toBeGreaterThan(5);
+    expect(byModel('bus-stop'), 'a place to wait, on the streets that need one').toBeGreaterThan(10);
+    expect(byModel('poster-panel'), 'advertising, on the commercial streets').toBeGreaterThan(50);
+
+    // And it is a mixture rather than one signature each: a commercial street that is nothing but
+    // vending machines is as artificial as one with no furniture at all.
+    expect(byModel('bench'), 'seating everywhere people stop').toBeGreaterThan(100);
+    expect(byModel('litter-bin'), 'bins near the seating').toBeGreaterThan(100);
+  });
+
+  it('leaves a walkable lane down every street', () => {
+    // **"Pedestrian paths remain navigable", measured.** Street furniture crowding a lane is
+    // invisible in a count of props and obvious to a player who cannot get past it. This samples
+    // every road across its whole length and asks the question that matters: with everything
+    // solid on it, how wide is the gap left down the middle?
+    //
+    // The player's collision box is 0.7 m across; the floor here is 1.5 m, twice that, so a
+    // pass is always possible even in the worst cross-section of the narrowest alley.
+    const solids = generated.filter(
+      (prop) => prop.id.startsWith('street-') && prop.collide && prop.collide !== 'none',
+    );
+    const roads = city.props.filter((prop) => /-road-[xz]$/.test(prop.id));
+    expect(roads.length).toBeGreaterThan(400);
+
+    let narrowest = Infinity;
+    let where = '';
+    for (const road of roads) {
+      const alongX = road.size.x > road.size.z;
+      const gapHalf = (alongX ? road.size.z : road.size.x) / 0.86 / 2;
+      const lengthHalf = (alongX ? road.size.x : road.size.z) / 2;
+      const steps = 24;
+      for (let step = 0; step < steps; step += 1) {
+        const t = -lengthHalf + ((step + 0.5) / steps) * lengthHalf * 2;
+        const along = alongX ? road.position.x + t : road.position.z + t;
+        let negSide = 0;
+        let posSide = 0;
+        for (const piece of solids) {
+          const alongCentre = alongX ? piece.position.x : piece.position.z;
+          const alongHalf = (alongX ? piece.size.x : piece.size.z) / 2;
+          if (Math.abs(alongCentre - along) > alongHalf) continue;
+          const across = (alongX ? piece.position.z : piece.position.x) -
+            (alongX ? road.position.z : road.position.x);
+          const acrossHalf = (alongX ? piece.size.z : piece.size.x) / 2;
+          const eats = gapHalf - (Math.abs(across) - acrossHalf);
+          if (eats <= 0) continue;
+          if (across < 0) negSide = Math.max(negSide, eats);
+          else posSide = Math.max(posSide, eats);
+        }
+        const clear = gapHalf * 2 - negSide - posSide;
+        if (clear < narrowest) {
+          narrowest = clear;
+          where = `${road.id} at ${t.toFixed(0)} m`;
+        }
+      }
+    }
+    expect(narrowest, `the narrowest lane, on ${where}`).toBeGreaterThan(1.5);
   });
 
   it('builds curtain-wall towers for the glass to reflect off', () => {

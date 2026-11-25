@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.4.3` |
+| Version | `2.5.0` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1360 in 53 files |
+| Tests | 1362 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -91,6 +91,16 @@ V2.4.2 makes **R do nothing while the player is standing at the cat**, which is 
 
 V2.4.3 strengthens that third test, and only that. As first shipped it read `gameHud.last.elapsedSeconds` — which is the **run** clock, and only starts once the player moves — so it read 0 with *and* without the fix and would have passed either way. Proved by reverting the one-line reset and watching it still pass. It now spies on `GameHud.update` and counts draws, which is the difference between "redrew at the new run's time" and "never redrew at all": with the reset removed it fails `expected 0 to be greater than 0`, and with it restored it passes. The README sentence describing that test was corrected at the same time, because it described an assertion the test did not make.
 
+V2.5.0 redesigns the streets. The previous pass put furniture along the kerbs; this one makes the streets *mean something*, and the difference is that each road is now furnished from the zone of the plot it belongs to — industrial, civic, commercial or residential — so two streets a hundred metres apart do not get the same objects in the same arrangement. Eight new models carry that identity: crossings, manholes, bus shelters, vending machines, utility cabinets, street signs, poster panels and shop awnings. **4,198 street pieces**, of which 1,799 are solid.
+
+The enabling change is a quarter-turn prop rotation. Parts are axis-aligned boxes and colliders are AABBs, so a free rotation was impossible; a 90° turn about the prop's own centre is a coordinate swap and keeps both, which is what lets a bench face its street and a car park parallel on a north–south road. The caller swaps `size.x`/`size.z` to match, so the collider agrees with the parts.
+
+**Solids collide, paint does not.** A bench, bin, cabinet, car or tree trunk is something you walk around; a kerb, crossing, manhole or overhead canopy is something you walk over. That distinction is not cosmetic: the movement code has no step-up, so a 22 cm kerb with a collider would have penned the player into the road rather than being a detail.
+
+Five faults were caught by measurement rather than by eye. **(1)** Awnings were placed from a wall position computed from the road's own width, but the gap between two plots is the average of two cells — measured, one canopy hung **15.9 m from any facade** and 161 sat in islands that never reach the ground; they now hang off real wall faces, overlapping by 0.1 m. **(2)** That fix then buried twenty canopies **0.57–0.90 m inside round towers**, whose rings are overlapping segment boxes that reach past the implied facade; there is now an explicit depth guard. **(3)** Three pairs of canopies from perpendicular roads landed exactly on each other at corners. **(4)** The walkable lane was computed as `2·gap − d`, counting a piece's depth once when it narrows the street from *both* sides of the centre line — measured, that left **0.1 m** between two trees facing each other, for a player 0.7 m wide; the rule now judges a slot as a cross-section and drops the deeper piece when both will not fit. **(5)** Street furniture took the street-level citizens with it, because they were placed at road centres — they now retry.
+
+Measured after the fixes: mean lane **5.41 m**, narrowest **2.20 m**, and **0 of 10,240** road-centreline samples blocked in the real collision world. At street level the view costs **307 draw calls and 358k triangles at 60 fps**.
+
 ## Movement
 
 Wall runs, wall jumps, vaults and the Kong vault, mantles and pull-ups, the landing roll, ladders and pipe climbs — ordinary states in one state machine, built to be felt rather than counted.
@@ -128,7 +138,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1360 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1362 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

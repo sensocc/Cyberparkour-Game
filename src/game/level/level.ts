@@ -71,7 +71,10 @@ export function spawnBounds(definition: LevelDefinition, player: PlayerSize): AA
 export function resolvePropParts(prop: PropDefinition): ResolvedPart[] {
   const model = modelById(prop.model);
   if (!model) throw new RangeError(`prop "${prop.id}" references unknown model "${prop.model}"`);
-  return resolveModelParts(model, propBounds(prop).min, prop.size);
+  // **The prop's own quarter turn, not the model's.** A bench faces its street by turning a
+  // quarter; the caller has already swapped `size.x` and `size.z` to match, so this is a
+  // coordinate swap inside a box that is already the right shape.
+  return resolveModelParts(model, propBounds(prop).min, prop.size, prop.quarter ?? 0);
 }
 
 /**
