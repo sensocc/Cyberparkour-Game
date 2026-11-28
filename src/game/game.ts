@@ -36,7 +36,7 @@ import { vec3, type Vec3 } from '../core/vec3.js';
 import type { CrashReporter } from '../diagnostics/crashReporter.js';
 import { FrameStats, type StatsSnapshot } from '../diagnostics/stats.js';
 import { DomInput } from '../input/domInput.js';
-import { floorFromAction } from '../input/bindings.js';
+import type { KeyAction } from '../input/bindings.js';
 import type { InputState } from '../input/inputState.js';
 import { TouchControls } from '../input/touchControls.js';
 import { requestLandscape } from '../core/device.js';
@@ -1372,14 +1372,28 @@ export class Game {
     if (inside) {
       const floors = this.elevators.floors(inside);
       const here = this.elevators.floorOf(inside) ?? 0;
+      const choice = liftDirections(here, floors.length);
+      const roofName = floors[floors.length - 1]?.name ?? 'the roof';
+      const streetName = floors[0]?.name ?? 'the street';
       this.elevatorPrompt = {
         kind: 'select',
-        title: 'SELECT A FLOOR',
-        detail: floors
-          .map((floor, index) => `${index + 1} ${floor.name}${index === here ? ' *' : ''}`)
-          .join('  ·  '),
+        title: 'GO TO',
+        detail:
+          choice.length === 0
+            ? 'This car serves one floor'
+            : choice
+                .map(
+                  (entry) =>
+                    `${entry.action === 'liftUp' ? '1' : '2'} ${entry.label} - ${
+                      entry.action === 'liftUp' ? roofName : streetName
+                    }`,
+                )
+                .join('   ·   '),
       };
-      this.pushTouchContext(null, floors.map((floor) => floor.name));
+      this.pushTouchContext(
+        null,
+        choice.map((entry) => ({ action: entry.action, label: entry.label })),
+      );
       return;
     }
 
@@ -1401,7 +1415,10 @@ export class Game {
    * The desktop prompt lives in the middle of the screen as text; the touch version is the interact
    * button's face and the floor picker. Same facts, two presentations - one source, pushed here.
    */
-  private pushTouchContext(interactLabel: string | null, floors: readonly string[]): void {
+  private pushTouchContext(
+    interactLabel: string | null,
+    floors: readonly { readonly action: KeyAction; readonly label: string }[],
+  ): void {
     this.touchControls?.setContext({ interactLabel, floors });
   }
 
@@ -1533,14 +1550,22 @@ export class Game {
    *
    * @returns whether the car is on its way.
    */
-  private sendElevator(floor: number): boolean {
+  private sendElevator(direction: 'up' | 'down'): boolean {
     const inside = this.elevators.riding(this.player.position);
     if (!inside) return false;
-    const car = this.elevators.call(inside, floor);
+    // **The roof is the last floor and the street is the first.** A car's floors are listed lowest
+    // first (see `ElevatorDefinition`), so "up" is the end of the list and "down" is its start -
+    // including inside an interior tower, whose lowest floor *is* its street level.
+    const floors = this.elevators.floors(inside);
+    const here = this.elevators.floorOf(inside) ?? 0;
+    const target = direction === 'up' ? floors.length - 1 : 0;
+    // Already there: say so rather than silently doing nothing, which reads as a broken button.
+    if (here === target) return false;
+    const car = this.elevators.call(inside, target);
     if (car) {
-      const name = this.elevators.floors(inside)[floor]?.name ?? '';
+      const name = floors[target]?.name ?? (direction === 'up' ? 'the roof' : 'the street');
       this.playCue({ kind: 'checkpoint' });
-      this.options.ui.toast(`LIFT TO ${name.toUpperCase()}`);
+      this.options.ui.toast(`${direction === 'up' ? 'UP TO' : 'DOWN TO'} ${name.toUpperCase()}`);
     }
     return car;
   }
@@ -1904,11 +1929,12 @@ export class Game {
 
   private processActions(): void {
     for (const action of this.options.input.consumeActions()) {
-      // The lift's floor buttons are one action each (`floor1`..`floor8`), so they are
-      // caught here rather than as eight arms of the switch below.
-      const floor = floorFromAction(action);
-      if (floor !== null) {
-        if (this.status === 'playing') this.sendElevator(floor);
+      // **The lift has two buttons, not one per floor.** Up goes to the roof and down goes to the
+      // street - the intermediate floors are places the building has, not places the player is
+      // going. Nine floor keys meant a nine-item prompt and a nine-button phone picker stacked off
+      // the bottom of the screen; two are the whole interaction and they fit a thumb.
+      if (action === 'liftUp' || action === 'liftDown') {
+        if (this.status === 'playing') this.sendElevator(action === 'liftUp' ? 'up' : 'down');
         continue;
       }
 
@@ -1957,6 +1983,31 @@ export class Game {
       }
     }
   }
+}
+
+/**
+ * Which way a lift can go from the floor it is on.
+ *
+ * **Two buttons, and only the ones that do something.** A lift goes to the roof or to the street;
+ * the intermediate floors are places the building has, not places the player is going. At the
+ * street the only useful button is UP, at the roof only DOWN, and in between there are two - which
+ * also means a button is never offered that would send the car to the floor it is already at,
+ * because a dead button reads as a broken lift.
+ *
+ * Extracted as a pure function rather than left inside the prompt builder so the rule can be
+ * tested on its own: the prompt is a DOM concern, the rule about which directions exist is not.
+ */
+export function liftDirections(
+  here: number,
+  floorCount: number,
+): { readonly action: 'liftUp' | 'liftDown'; readonly label: string }[] {
+  if (!Number.isFinite(floorCount) || floorCount < 2) return [];
+  const roof = floorCount - 1;
+  const clamped = Math.min(Math.max(here, 0), roof);
+  const out: { action: 'liftUp' | 'liftDown'; label: string }[] = [];
+  if (clamped < roof) out.push({ action: 'liftUp', label: 'UP' });
+  if (clamped > 0) out.push({ action: 'liftDown', label: 'DOWN' });
+  return out;
 }
 
 /**

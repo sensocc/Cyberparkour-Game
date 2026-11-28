@@ -17,7 +17,7 @@
  */
 
 import { el } from '../ui/dom.js';
-import { FLOOR_ACTIONS, type KeyAction } from './bindings.js';
+import type { KeyAction } from './bindings.js';
 import type { InputState } from './inputState.js';
 import {
   exitFullscreen,
@@ -103,8 +103,16 @@ export interface TouchControlsOptions {
 export interface TouchContext {
   /** The interact button's face, or null to dim it back to a resting "USE". */
   readonly interactLabel: string | null;
-  /** Floor button faces for a lift's floor picker, in order; empty hides the picker. */
-  readonly floors: readonly string[];
+  /**
+   * The lift's direction buttons, each with the action it fires.
+   *
+   * **The action travels with the label, and that is the point.** This used to be a list of floor
+   * *names* mapped to `floorN` actions by array index, which quietly assumed the first entry always
+   * meant floor 1. A lift now offers only the directions it can actually go - up from the street,
+   * down from the roof, both in between - so the first entry is sometimes "DOWN", and an index
+   * would have made that button send the car up. Empty hides the bar.
+   */
+  readonly floors: readonly { readonly action: KeyAction; readonly label: string }[];
 }
 
 /** The resting face of the interact button. */
@@ -240,27 +248,25 @@ export class TouchControls {
     const showFloors = context.floors.length > 0;
     if (this.floorBar.hidden !== !showFloors) this.floorBar.hidden = !showFloors;
 
-    const signature = context.floors.join('\u0000');
+    const signature = context.floors.map((entry) => `${entry.action}:${entry.label}`).join('\u0000');
     if (signature === this.floorSignature) return;
     this.floorSignature = signature;
     this.rebuildFloors(context.floors);
   }
 
-  /** Rebuilds the floor picker: one button per floor, in order. */
-  private rebuildFloors(floors: readonly string[]): void {
+  /** Rebuilds the lift's direction bar: one button per direction it can go. */
+  private rebuildFloors(floors: TouchContext['floors']): void {
     for (const action of this.floorActions) this.buttons.delete(action);
     this.floorActions.clear();
     this.floorBar.replaceChildren();
 
-    floors.forEach((name, index) => {
-      const action = FLOOR_ACTIONS[index];
-      if (!action) return;
-      const button = el('button', { className: 'touch__button touch__button--floor', text: name, attrs: { type: 'button' } });
+    for (const { action, label } of floors) {
+      const button = el('button', { className: 'touch__button touch__button--floor', text: label, attrs: { type: 'button' } });
       button.addEventListener('pointerdown', this.handleButtonDown);
       this.buttons.set(action, button);
       this.floorActions.add(action);
       this.floorBar.append(button);
-    });
+    }
   }
 
   attach(): void {

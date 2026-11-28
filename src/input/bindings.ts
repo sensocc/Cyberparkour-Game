@@ -19,16 +19,9 @@ export type KeyAction =
   | 'mute'
   | 'pause'
   | 'restart'
-  /** The lift's floor buttons, one per floor a car can serve. Each is rebindable. */
-  | 'floor1'
-  | 'floor2'
-  | 'floor3'
-  | 'floor4'
-  | 'floor5'
-  | 'floor6'
-  | 'floor7'
-  | 'floor8'
-  | 'floor9';
+  /** The lift's two direction buttons: up to the roof, down to the street. */
+  | 'liftUp'
+  | 'liftDown';
 
 export type Bindings = Record<KeyAction, readonly string[]>;
 
@@ -50,47 +43,34 @@ export const DEFAULT_BINDINGS: Bindings = {
   mute: ['KeyM'],
   pause: ['Escape'],
   restart: ['KeyR'],
-  // The floor buttons, on the row the hand is already on.
-  floor1: ['Digit1'],
-  floor2: ['Digit2'],
-  floor3: ['Digit3'],
-  floor4: ['Digit4'],
-  floor5: ['Digit5'],
-  floor6: ['Digit6'],
-  floor7: ['Digit7'],
-  floor8: ['Digit8'],
-  floor9: ['Digit9'],
+  // **Two lift buttons, not one per floor.**
+  //
+  // A lift goes to the roof or to the street and nowhere else that matters: the intermediate
+  // floors are places the building has, not places the player is going. Nine floor keys meant a
+  // prompt listing nine floors and a phone picker with nine buttons stacked off the bottom of the
+  // screen. Up and down are the whole interaction, they fit a thumb, and they are on the row the
+  // hand is already using for W and S.
+  //
+  // **Digits 1 and 2, not W and S.** `actionForKey` returns the first action bound to a code, and
+  // `moveForward`/`moveBackward` already own W and S - binding the lift to them would have made
+  // the buttons dead on a keyboard. These are the same two keys the old floor picker used, so the
+  // muscle memory survives the change.
+  liftUp: ['Digit1'],
+  liftDown: ['Digit2'],
 };
 
-/** The lift's floor buttons, in order. */
-export const FLOOR_ACTIONS: readonly KeyAction[] = [
-  'floor1',
-  'floor2',
-  'floor3',
-  'floor4',
-  'floor5',
-  'floor6',
-  'floor7',
-  'floor8',
-  'floor9',
-];
+/** The lift's two direction buttons, in order. */
+export const LIFT_ACTIONS: readonly KeyAction[] = ['liftUp', 'liftDown'];
 
 /**
- * The most floors a lift may serve.
+ * The most floors a car may serve.
  *
- * **One number, two users.** This is how many floor buttons exist, and it is also the ceiling the
- * city generator builds to - a car with more floors than there are buttons is a car whose top
- * floor cannot be selected, which is exactly what five interior towers shipped with in V2.0.2: they
- * had nine floors and there were eight keys. The generator clamps to this, and a test reads it back
- * off the built city, so the two cannot drift apart again.
+ * **No longer tied to the number of buttons.** It used to *be* the button count, because a floor
+ * with no key could not be selected - which is how five towers shipped with nine floors and eight
+ * keys in V2.0.2. With up/down there is no per-floor key to run out of: every car reaches its own
+ * roof from its own street with two buttons, so this is only a sanity ceiling on the generator.
  */
-export const MAX_LIFT_FLOORS: number = FLOOR_ACTIONS.length;
-
-/** Which floor a `floorN` action asks for, or null for anything else. */
-export function floorFromAction(action: KeyAction): number | null {
-  const index = FLOOR_ACTIONS.indexOf(action);
-  return index === -1 ? null : index;
-}
+export const MAX_LIFT_FLOORS = 9;
 
 /**
  * Actions that are held down as part of movement.
@@ -115,7 +95,7 @@ export const UI_ACTIONS: readonly KeyAction[] = [
   'mute',
   'pause',
   'restart',
-  ...FLOOR_ACTIONS,
+  ...LIFT_ACTIONS,
 ];
 
 export function isUiAction(action: KeyAction): boolean {
@@ -154,7 +134,7 @@ export const ACTION_ORDER: readonly KeyAction[] = [
   'restart',
   'toggleDebug',
   'mute',
-  ...FLOOR_ACTIONS,
+  ...LIFT_ACTIONS,
 ];
 
 /** What each action is called where a player can see it. */
@@ -171,15 +151,8 @@ export const ACTION_LABELS: Record<KeyAction, string> = {
   mute: 'Mute',
   pause: 'Pause',
   restart: 'Restart run',
-  floor1: 'Lift floor 1',
-  floor2: 'Lift floor 2',
-  floor3: 'Lift floor 3',
-  floor4: 'Lift floor 4',
-  floor5: 'Lift floor 5',
-  floor6: 'Lift floor 6',
-  floor7: 'Lift floor 7',
-  floor8: 'Lift floor 8',
-  floor9: 'Lift floor 9',
+  liftUp: 'Lift: up to the roof',
+  liftDown: 'Lift: down to the street',
 };
 
 /**

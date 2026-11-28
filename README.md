@@ -8,9 +8,9 @@ TypeScript · three.js · Vite · Vitest. Runs in any modern desktop browser wit
 
 | | |
 | --- | --- |
-| Version | `2.5.0` |
+| Version | `2.5.1` |
 | Stage | Playable — one city, one quest, three trials, and a secret |
-| Tests | 1362 in 53 files |
+| Tests | 1367 in 53 files |
 | Coverage | ~91% of statements |
 | Node | `^22.22.2 \|\| ^24.15.0 \|\| >=26.0.0` |
 
@@ -99,7 +99,13 @@ The enabling change is a quarter-turn prop rotation. Parts are axis-aligned boxe
 
 Five faults were caught by measurement rather than by eye. **(1)** Awnings were placed from a wall position computed from the road's own width, but the gap between two plots is the average of two cells — measured, one canopy hung **15.9 m from any facade** and 161 sat in islands that never reach the ground; they now hang off real wall faces, overlapping by 0.1 m. **(2)** That fix then buried twenty canopies **0.57–0.90 m inside round towers**, whose rings are overlapping segment boxes that reach past the implied facade; there is now an explicit depth guard. **(3)** Three pairs of canopies from perpendicular roads landed exactly on each other at corners. **(4)** The walkable lane was computed as `2·gap − d`, counting a piece's depth once when it narrows the street from *both* sides of the centre line — measured, that left **0.1 m** between two trees facing each other, for a player 0.7 m wide; the rule now judges a slot as a cross-section and drops the deeper piece when both will not fit. **(5)** Street furniture took the street-level citizens with it, because they were placed at road centres — they now retry.
 
-Measured after the fixes: mean lane **5.41 m**, narrowest **2.20 m**, and **0 of 10,240** road-centreline samples blocked in the real collision world. At street level the view costs **307 draw calls and 358k triangles at 60 fps**.
+Measured after the fixes: mean lane **5.41 m**, narrowest **2.20 m**, and **0 of 10,240** road-centreline samples blocked in the real collision world.
+
+V2.5.1 simplifies the lift and fits it on a phone. The nine floor keys (`floor1`-`floor9`) are gone, replaced by **two directions**: UP goes to the roof, DOWN goes to the street. At the street only UP is offered, at the roof only DOWN, and in between both — so the picker never shows a button that would send the car to the floor it is already on, because a dead button reads as a broken lift. `MAX_LIFT_FLOORS` is no longer derived from the button count; there is no per-floor key to run out of, so it is only a ceiling on the generator, and the city is byte-identical to V2.5.0.
+
+**The mobile bug was arithmetic.** The old picker was a *column* starting 200 px from the bottom and adding 56 px per floor, so a nine-floor car needed ~700 px of height on a landscape phone that has 390: the upper floors were off the screen with no way to reach them. It is now a *row* above the button cluster — constant height whatever the car offers — with `flex-wrap` and a `max-width` so it cannot extend past the viewport however many buttons a future lift has. Measured in a real browser at 844×390: the bar is **176×44 at (648,198)-(824,242)**, inside both axes. The buttons also carry their action with their label now rather than being mapped to `floorN` by array index — that index assumed the first entry was always floor 1, so a down-only lift would have sent the car up.
+
+Five tests pin the rule, including every floor of a two- to nine-floor car: UP offered exactly when not at the roof, DOWN exactly when not at the street. At street level the view costs **307 draw calls and 358k triangles at 60 fps**.
 
 ## Movement
 
@@ -138,7 +144,7 @@ Bloom is the one effect a setting can cost. It is a full-screen post chain, so i
 
 ## How it is verified
 
-- `npm run ci` — typecheck, 1362 tests with coverage, production build. Green on Node 22, 24 and 26.
+- `npm run ci` — typecheck, 1367 tests with coverage, production build. Green on Node 22, 24 and 26.
 - Every push to `main` builds and deploys `dist/` to GitHub Pages automatically — the link at the top of this README is that build.
 - The generator's invariants are tests, not hopes: no two buildings in one place, every neighbour inside the jump, every lift car in open air at every floor.
 - **Nothing floats.** A union-find over every prop in the city — 11,736 of them — requires each one to reach the ground through a chain of touching boxes, and reports any island that does not, grouped by what kind of thing it is. V2.0.5 started from 508 such props and ended at none.

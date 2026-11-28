@@ -206,7 +206,13 @@ describe('TouchControls.setContext', () => {
     const { controls } = createHarness();
     const bar = controls.element.querySelector('.touch__floors') as HTMLElement;
 
-    controls.setContext({ interactLabel: null, floors: ['Street', 'Rooftop'] });
+    controls.setContext({
+      interactLabel: null,
+      floors: [
+        { action: 'liftUp', label: 'UP' },
+        { action: 'liftDown', label: 'DOWN' },
+      ],
+    });
     expect(bar.hidden).toBe(false);
     expect(bar.querySelectorAll('button')).toHaveLength(2);
 
@@ -218,10 +224,14 @@ describe('TouchControls.setContext', () => {
   it('does not rebuild the floor bar when the list is unchanged', () => {
     const { controls } = createHarness();
     const bar = controls.element.querySelector('.touch__floors') as HTMLElement;
-    controls.setContext({ interactLabel: null, floors: ['A', 'B'] });
+    const pair = [
+      { action: 'liftUp' as const, label: 'UP' },
+      { action: 'liftDown' as const, label: 'DOWN' },
+    ];
+    controls.setContext({ interactLabel: null, floors: pair });
     const first = bar.querySelector('button');
 
-    controls.setContext({ interactLabel: null, floors: ['A', 'B'] });
+    controls.setContext({ interactLabel: null, floors: pair });
     expect(bar.querySelector('button')).toBe(first);
   });
 });

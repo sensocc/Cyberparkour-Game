@@ -1255,14 +1255,29 @@ body {
   }
 }
 
-/* The floor picker: stacked above the buttons, only while standing inside a lift. */
+/*
+ * The lift's direction bar: a row above the button cluster, only while standing in a lift.
+ *
+ * **This used to stack a column of floor buttons and run off the top of the screen.** It began
+ * 200 px from the bottom and added 56 px per floor, so a nine-floor car needed ~700 px of height
+ * on a landscape phone that has 390: the top floors were simply not on the screen, and there was
+ * no way to scroll to them. Two changes fix it and neither is a tuning knob - the bar is now a
+ * *row* (two directions side by side, so its height is constant) with a short button face, and it
+ * sits directly above the button cluster rather than at a fixed 200 px that assumed one row of
+ * buttons. `flex-wrap` and `max-width` are the belt-and-braces: whatever a future lift offers, it
+ * wraps inside the screen instead of extending past it.
+ */
 .touch__floors {
   position: absolute;
   right: 20px;
-  bottom: 200px;
+  /* Just clear of the button cluster: 30 px bottom + two 48 px rows + a 10 px gap + 12 px. */
+  bottom: 148px;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
+  max-width: calc(100vw - 40px);
   pointer-events: auto;
 }
 
@@ -1311,8 +1326,16 @@ body {
   display: none;
 }
 
+/*
+ * The direction buttons: wide enough to read "UP" across a thumb, short enough that two of them
+ * plus the gap stay inside a 390 px-tall screen with room to spare. 44 px is the platform minimum
+ * for a touch target, so this is as small as it can honestly be.
+ */
 .touch__button--floor {
-  min-width: 110px;
+  min-width: 84px;
+  min-height: 44px;
+  padding: 6px 10px;
+  letter-spacing: 0.16em;
 }
 
 /*

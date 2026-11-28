@@ -20,7 +20,7 @@ import type { AudioOutput } from '../../src/audio/engine.js';
 import type { AudioCue } from '../../src/audio/director.js';
 import { CrashReporter } from '../../src/diagnostics/crashReporter.js';
 import { MemoryCrashSink } from '../../src/diagnostics/crashSinks.js';
-import { bearingTo, Game, type GameStatus } from '../../src/game/game.js';
+import { bearingTo, Game, liftDirections, type GameStatus } from '../../src/game/game.js';
 import { type LevelDefinition, type PropDefinition } from '../../src/game/level/levelData.js';
 import { DEMO_DISTRICT } from '../fixtures/district.js';
 import type { Orientation } from '../../src/game/look.js';
@@ -473,6 +473,41 @@ describe('the loading screen', () => {
     stepFrames(harness, 2);
     expect(harness.game.currentStatus).toBe('crashed');
     expect(document.querySelector('.screen--loading')?.hasAttribute('hidden')).toBe(true);
+  });
+});
+
+describe('the lift buttons', () => {
+  // **The V2.5.1 simplification, as a rule.** A lift goes to the roof or to the street and nowhere
+  // else that matters: the intermediate floors are places the building has, not places the player
+  // is going. Nine floor keys meant a nine-item prompt and a nine-button phone picker that ran off
+  // the bottom of the screen; two directions are the whole interaction.
+  it('offers only UP at the street', () => {
+    expect(liftDirections(0, 3).map((entry) => entry.action)).toEqual(['liftUp']);
+  });
+
+  it('offers only DOWN at the roof', () => {
+    expect(liftDirections(2, 3).map((entry) => entry.action)).toEqual(['liftDown']);
+  });
+
+  it('offers both between them', () => {
+    expect(liftDirections(1, 3).map((entry) => entry.action)).toEqual(['liftUp', 'liftDown']);
+  });
+
+  it('offers nothing at all in a car that serves one floor', () => {
+    // Two buttons that both go nowhere is worse than no buttons: the prompt says so instead.
+    expect(liftDirections(0, 1)).toEqual([]);
+    expect(liftDirections(0, 0)).toEqual([]);
+  });
+
+  it('never offers a direction that would not move the car', () => {
+    // A dead button reads as a broken lift, so the rule holds at every floor of a nine-floor car.
+    for (let floors = 2; floors <= 9; floors += 1) {
+      for (let here = 0; here < floors; here += 1) {
+        const actions = liftDirections(here, floors).map((entry) => entry.action);
+        expect(actions.includes('liftUp'), `up at ${here}/${floors}`).toBe(here < floors - 1);
+        expect(actions.includes('liftDown'), `down at ${here}/${floors}`).toBe(here > 0);
+      }
+    }
   });
 });
 
